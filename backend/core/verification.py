@@ -71,13 +71,21 @@ def create_correction_comparison(
         if img2_corr is None:
             img2_corr = img2_orig.copy()
         
-        # 調整到相同尺寸（使用最大尺寸）
+        # 調整到相同尺寸（使用最大尺寸，但限制最大尺寸以改善顯示）
         h1, w1 = img1.shape[:2]
         h2_orig, w2_orig = img2_orig.shape[:2]
         h2_corr, w2_corr = img2_corr.shape[:2]
         
+        # 計算目標尺寸，但限制最大寬度為 1200px 以改善顯示比例
+        max_display_width = 1200
         target_h = max(h1, h2_orig, h2_corr)
         target_w = max(w1, w2_orig, w2_corr)
+        
+        # 如果圖像太寬，按比例縮放
+        if target_w > max_display_width:
+            scale = max_display_width / target_w
+            target_w = max_display_width
+            target_h = int(target_h * scale)
         
         img1_resized = cv2.resize(img1, (target_w, target_h))
         img2_orig_resized = cv2.resize(img2_orig, (target_w, target_h))
@@ -102,23 +110,34 @@ def create_correction_comparison(
         draw = ImageDraw.Draw(comparison_pil)
         
         # 嘗試載入中文字體，如果失敗則使用默認字體
+        font = None
         try:
-            # 嘗試使用系統中文字體
+            # 嘗試使用系統中文字體（優先順序：Docker 容器 > Linux > macOS > Windows）
             font_paths = [
-                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',  # Linux
+                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',  # Docker/Linux 文泉驛正黑
+                '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',  # Docker/Linux 文泉驛微米黑
+                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Docker/Linux 備用字體
                 '/System/Library/Fonts/PingFang.ttc',  # macOS
                 'C:/Windows/Fonts/msyh.ttc',  # Windows 微軟雅黑
                 'C:/Windows/Fonts/simhei.ttf',  # Windows 黑體
             ]
-            font = None
             for font_path in font_paths:
                 if Path(font_path).exists():
-                    font = ImageFont.truetype(font_path, 24)
-                    break
-            if font is None:
+                    try:
+                        font = ImageFont.truetype(font_path, 24)
+                        break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        
+        # 如果所有字體都無法載入，使用默認字體
+        if font is None:
+            try:
                 font = ImageFont.load_default()
-        except:
-            font = ImageFont.load_default()
+            except Exception:
+                # 最後的備選方案：創建一個簡單的字體
+                font = ImageFont.load_default()
         
         # 圖像1標註
         text1 = "參考圖像 (圖像1)"
@@ -210,11 +229,20 @@ def create_difference_heatmap(
         if img1 is None or img2 is None:
             return None, {}
         
-        # 調整到相同尺寸
+        # 調整到相同尺寸（限制最大尺寸以改善顯示）
         h1, w1 = img1.shape[:2]
         h2, w2 = img2.shape[:2]
+        
+        # 計算目標尺寸，但限制最大寬度為 1200px 以改善顯示比例
+        max_display_width = 1200
         target_h = max(h1, h2)
         target_w = max(w1, w2)
+        
+        # 如果圖像太寬，按比例縮放
+        if target_w > max_display_width:
+            scale = max_display_width / target_w
+            target_w = max_display_width
+            target_h = int(target_h * scale)
         
         img1_resized = cv2.resize(img1, (target_w, target_h))
         img2_resized = cv2.resize(img2, (target_w, target_h))
@@ -280,22 +308,34 @@ def create_difference_heatmap(
         draw = ImageDraw.Draw(final_image_pil)
         
         # 嘗試載入中文字體
+        font = None
         try:
+            # 嘗試使用系統中文字體（優先順序：Docker 容器 > Linux > macOS > Windows）
             font_paths = [
-                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
-                '/System/Library/Fonts/PingFang.ttc',
-                'C:/Windows/Fonts/msyh.ttc',
-                'C:/Windows/Fonts/simhei.ttf',
+                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',  # Docker/Linux 文泉驛正黑
+                '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',  # Docker/Linux 文泉驛微米黑
+                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Docker/Linux 備用字體
+                '/System/Library/Fonts/PingFang.ttc',  # macOS
+                'C:/Windows/Fonts/msyh.ttc',  # Windows 微軟雅黑
+                'C:/Windows/Fonts/simhei.ttf',  # Windows 黑體
             ]
-            font = None
             for font_path in font_paths:
                 if Path(font_path).exists():
-                    font = ImageFont.truetype(font_path, 18)
-                    break
-            if font is None:
+                    try:
+                        font = ImageFont.truetype(font_path, 18)
+                        break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        
+        # 如果所有字體都無法載入，使用默認字體
+        if font is None:
+            try:
                 font = ImageFont.load_default()
-        except:
-            font = ImageFont.load_default()
+            except Exception:
+                # 最後的備選方案：創建一個簡單的字體
+                font = ImageFont.load_default()
         
         y_text = target_h + 20
         

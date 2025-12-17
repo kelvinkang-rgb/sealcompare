@@ -37,6 +37,37 @@ def add_missing_columns():
         except Exception as e:
             print(f"添加 notes 欄位時出錯（可能已存在）: {e}")
             conn.rollback()
+        
+        # 檢查並添加進度相關欄位
+        try:
+            conn.execute(text("""
+                ALTER TABLE comparisons 
+                ADD COLUMN IF NOT EXISTS progress FLOAT
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 progress 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+        
+        try:
+            conn.execute(text("""
+                ALTER TABLE comparisons 
+                ADD COLUMN IF NOT EXISTS progress_message VARCHAR(500)
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 progress_message 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+        
+        try:
+            conn.execute(text("""
+                ALTER TABLE comparisons 
+                ADD COLUMN IF NOT EXISTS current_step VARCHAR(100)
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 current_step 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
 
 # 執行遷移
 try:

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Container,
@@ -23,6 +23,7 @@ function Comparison() {
   const [comparisonId, setComparisonId] = useState(null)
   const [threshold, setThreshold] = useState(0.95)
   const [isViewMode, setIsViewMode] = useState(false)
+  const formRef = useRef(null)
 
   // 從 URL 參數讀取 comparisonId（查看已有記錄）
   useEffect(() => {
@@ -56,6 +57,10 @@ function Comparison() {
     // 重置比對狀態，重新顯示表單
     setComparisonId(null)
     createComparisonMutation.reset()
+    // 重置表單狀態（包括已上傳的圖像）
+    if (formRef.current) {
+      formRef.current.reset()
+    }
   }
 
   return (
@@ -83,7 +88,7 @@ function Comparison() {
                 <Typography variant="h6" gutterBottom>
                   上傳圖像
                 </Typography>
-                <ComparisonForm onSubmit={handleSubmit} />
+                <ComparisonForm ref={formRef} onSubmit={handleSubmit} />
               </Paper>
             </Grid>
 

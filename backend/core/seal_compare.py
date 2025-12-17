@@ -89,10 +89,15 @@ class SealComparator:
         Returns:
             (最佳角度, 旋轉後的圖像2)
         """
-        # 使用縮小圖像進行快速評估（加速搜索）
-        scale_factor = 0.4  # 縮小到40%以平衡速度和準確度
+        # 使用更小的圖像進行快速評估（進一步加速搜索）
+        scale_factor = 0.3  # 縮小到30%以進一步提升速度
         h, w = img1.shape
         small_h, small_w = int(h * scale_factor), int(w * scale_factor)
+        
+        # 確保最小尺寸不小於50像素
+        if small_h < 50 or small_w < 50:
+            scale_factor = max(50 / h, 50 / w)
+            small_h, small_w = int(h * scale_factor), int(w * scale_factor)
         
         img1_small = cv2.resize(img1, (small_w, small_h), interpolation=cv2.INTER_AREA)
         img2_small = cv2.resize(img2, (small_w, small_h), interpolation=cv2.INTER_AREA)
@@ -106,11 +111,11 @@ class SealComparator:
         
         center = (small_w // 2, small_h // 2)
         
-        # 第一階段：粗搜索（每15度）
+        # 第一階段：粗搜索（每20度，減少搜索次數）
         best_angle_coarse = 0.0
         best_score_coarse = 0.0
         
-        for angle in range(0, 360, 15):
+        for angle in range(0, 360, 20):  # 從15度改為20度，減少搜索次數
             M = cv2.getRotationMatrix2D(center, angle, 1.0)
             img2_rotated = cv2.warpAffine(img2_small, M, (small_w, small_h),
                                          borderMode=cv2.BORDER_CONSTANT,
@@ -121,40 +126,48 @@ class SealComparator:
                 best_score_coarse = score
                 best_angle_coarse = angle
         
-        # 第二階段：中等搜索（在最佳角度±15度範圍內，每2度）
-        best_angle_medium = best_angle_coarse
-        best_score_medium = best_score_coarse
-        
-        search_range = range(int(best_angle_coarse - 15), int(best_angle_coarse + 16), 2)
-        
-        for angle in search_range:
-            angle = angle % 360
-            M = cv2.getRotationMatrix2D(center, angle, 1.0)
-            img2_rotated = cv2.warpAffine(img2_small, M, (small_w, small_h),
-                                         borderMode=cv2.BORDER_CONSTANT,
-                                         borderValue=255)
-            score = self._fast_rotation_match(img1_small, img2_rotated)
+        # 早期退出：如果第一階段分數已經很高，跳過後續階段
+        if best_score_coarse > 0.98:
+            best_angle = best_angle_coarse
+        else:
+            # 第二階段：中等搜索（在最佳角度±20度範圍內，每3度）
+            best_angle_medium = best_angle_coarse
+            best_score_medium = best_score_coarse
             
-            if score > best_score_medium:
-                best_score_medium = score
-                best_angle_medium = angle
-        
-        # 第三階段：細搜索（在最佳角度±2度範圍內，每0.5度）
-        best_angle = best_angle_medium
-        best_score = best_score_medium
-        
-        # 使用浮點數角度進行細搜索
-        for offset in np.arange(-2.0, 2.5, 0.5):
-            angle = (best_angle_medium + offset) % 360
-            M = cv2.getRotationMatrix2D(center, angle, 1.0)
-            img2_rotated = cv2.warpAffine(img2_small, M, (small_w, small_h),
-                                         borderMode=cv2.BORDER_CONSTANT,
-                                         borderValue=255)
-            score = self._fast_rotation_match(img1_small, img2_rotated)
+            search_range = range(int(best_angle_coarse - 20), int(best_angle_coarse + 21), 3)
             
-            if score > best_score:
-                best_score = score
-                best_angle = angle
+            for angle in search_range:
+                angle = angle % 360
+                M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                img2_rotated = cv2.warpAffine(img2_small, M, (small_w, small_h),
+                                             borderMode=cv2.BORDER_CONSTANT,
+                                             borderValue=255)
+                score = self._fast_rotation_match(img1_small, img2_rotated)
+                
+                if score > best_score_medium:
+                    best_score_medium = score
+                    best_angle_medium = angle
+            
+            # 早期退出：如果第二階段分數已經很高，跳過細搜索
+            if best_score_medium > 0.98:
+                best_angle = best_angle_medium
+            else:
+                # 第三階段：細搜索（在最佳角度±3度範圍內，每0.5度）
+                best_angle = best_angle_medium
+                best_score = best_score_medium
+                
+                # 使用浮點數角度進行細搜索
+                for offset in np.arange(-3.0, 3.5, 0.5):
+                    angle = (best_angle_medium + offset) % 360
+                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                    img2_rotated = cv2.warpAffine(img2_small, M, (small_w, small_h),
+                                                 borderMode=cv2.BORDER_CONSTANT,
+                                                 borderValue=255)
+                    score = self._fast_rotation_match(img1_small, img2_rotated)
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_angle = angle
         
         # 使用最佳角度旋轉原始尺寸的圖像2
         h2, w2 = img2.shape

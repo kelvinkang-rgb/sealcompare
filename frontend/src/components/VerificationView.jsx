@@ -48,7 +48,14 @@ function VerificationView({ comparisonId }) {
               <img
                 src={visualizationAPI.getComparisonImage(comparisonId)}
                 alt="並排對比"
-                style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px' }}
+                style={{ 
+                  maxWidth: '100%', 
+                  maxHeight: '400px',
+                  width: 'auto',
+                  height: 'auto', 
+                  borderRadius: '4px',
+                  objectFit: 'contain'
+                }}
                 onError={(e) => {
                   e.target.style.display = 'none'
                   e.target.parentElement.innerHTML =
@@ -80,7 +87,14 @@ function VerificationView({ comparisonId }) {
               <img
                 src={visualizationAPI.getHeatmap(comparisonId)}
                 alt="差異熱力圖"
-                style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px' }}
+                style={{ 
+                  maxWidth: '100%', 
+                  maxHeight: '400px',
+                  width: 'auto',
+                  height: 'auto', 
+                  borderRadius: '4px',
+                  objectFit: 'contain'
+                }}
                 onError={(e) => {
                   e.target.style.display = 'none'
                   e.target.parentElement.innerHTML =
@@ -104,13 +118,13 @@ function VerificationView({ comparisonId }) {
               <Grid item xs={12} md={6}>
                 <Box sx={{ textAlign: 'center' }}>
                   <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                    圖像1(藍)疊在圖像2校正(紅)上
+                    圖像1疊在圖像2校正上
                   </Typography>
                   <Box
                     onClick={() =>
                       handleImageClick(
                         visualizationAPI.getOverlay(comparisonId, '1'),
-                        '疊圖1: 圖像1(藍)疊在圖像2校正(紅)上'
+                        '疊圖1: 圖像1疊在圖像2校正上'
                       )
                     }
                     sx={{
@@ -123,7 +137,14 @@ function VerificationView({ comparisonId }) {
                     <img
                       src={visualizationAPI.getOverlay(comparisonId, '1')}
                       alt="疊圖1"
-                      style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px' }}
+                      style={{ 
+                        maxWidth: '100%', 
+                        maxHeight: '300px',
+                        width: 'auto',
+                        height: 'auto', 
+                        borderRadius: '4px',
+                        objectFit: 'contain'
+                      }}
                       onError={(e) => {
                         e.target.style.display = 'none'
                         e.target.parentElement.innerHTML =
@@ -132,20 +153,20 @@ function VerificationView({ comparisonId }) {
                     />
                   </Box>
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    黃色=圖像2多出部分 | 點擊放大
+                    綠色區域表示差異部分 | 點擊放大查看
                   </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} md={6}>
                 <Box sx={{ textAlign: 'center' }}>
                   <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                    圖像2校正(紅)疊在圖像1(藍)上
+                    圖像2校正疊在圖像1上
                   </Typography>
                   <Box
                     onClick={() =>
                       handleImageClick(
                         visualizationAPI.getOverlay(comparisonId, '2'),
-                        '疊圖2: 圖像2校正(紅)疊在圖像1(藍)上'
+                        '疊圖2: 圖像2校正疊在圖像1上'
                       )
                     }
                     sx={{
@@ -158,7 +179,14 @@ function VerificationView({ comparisonId }) {
                     <img
                       src={visualizationAPI.getOverlay(comparisonId, '2')}
                       alt="疊圖2"
-                      style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px' }}
+                      style={{ 
+                        maxWidth: '100%', 
+                        maxHeight: '300px',
+                        width: 'auto',
+                        height: 'auto', 
+                        borderRadius: '4px',
+                        objectFit: 'contain'
+                      }}
                       onError={(e) => {
                         e.target.style.display = 'none'
                         e.target.parentElement.innerHTML =
@@ -167,7 +195,7 @@ function VerificationView({ comparisonId }) {
                     />
                   </Box>
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    黃色=圖像1多出部分 | 點擊放大
+                    綠色區域表示差異部分 | 點擊放大查看
                   </Typography>
                 </Box>
               </Grid>
