@@ -282,13 +282,19 @@ def create_difference_heatmap(
         max_region_diff = 0
         max_region_pos = (0, 0)
         
-        for y in range(0, target_h - window_size, window_size // 2):
-            for x in range(0, target_w - window_size, window_size // 2):
-                region = diff[y:y+window_size, x:x+window_size]
-                region_mean = np.mean(region)
-                if region_mean > max_region_diff:
-                    max_region_diff = region_mean
-                    max_region_pos = (x, y)
+        # 確保窗口大小不超過圖像尺寸，避免無限循環
+        if target_h >= window_size and target_w >= window_size:
+            step = max(1, window_size // 2)  # 確保步長至少為1
+            for y in range(0, max(1, target_h - window_size + 1), step):
+                for x in range(0, max(1, target_w - window_size + 1), step):
+                    # 確保索引不超出範圍
+                    if y + window_size <= target_h and x + window_size <= target_w:
+                        region = diff[y:y+window_size, x:x+window_size]
+                        if region.size > 0:  # 確保區域不為空
+                            region_mean = np.mean(region)
+                            if region_mean > max_region_diff:
+                                max_region_diff = region_mean
+                                max_region_pos = (x, y)
         
         # 在熱力圖上標註最大差異區域
         cv2.rectangle(blended, max_region_pos, 

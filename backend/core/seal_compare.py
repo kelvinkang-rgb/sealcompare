@@ -52,18 +52,34 @@ class SealComparator:
         Returns:
             預處理後的圖像
         """
+        if image is None:
+            raise ValueError("圖像不能為 None")
+        
+        if image.size == 0:
+            raise ValueError("圖像不能為空")
+        
         # 轉換為灰度圖
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
+        elif len(image.shape) == 2:
             gray = image
+        else:
+            raise ValueError(f"不支持的圖像維度: {image.shape}")
         
         # 調整大小到標準尺寸（保持長寬比）
         target_size = 1000
         h, w = gray.shape[:2]
+        
+        if h == 0 or w == 0:
+            raise ValueError("圖像尺寸無效")
+        
         scale = target_size / max(h, w)
         new_w = int(w * scale)
         new_h = int(h * scale)
+        
+        if new_w == 0 or new_h == 0:
+            raise ValueError("調整後的圖像尺寸無效")
+        
         resized = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_AREA)
         
         # 二值化處理
@@ -134,10 +150,20 @@ class SealComparator:
             best_angle_medium = best_angle_coarse
             best_score_medium = best_score_coarse
             
-            search_range = range(int(best_angle_coarse - 20), int(best_angle_coarse + 21), 3)
+            # 確保搜索範圍正確（處理負數和超過360的情況）
+            # 標準化最佳角度到 0-360 範圍
+            best_angle_normalized = best_angle_coarse % 360
             
-            for angle in search_range:
-                angle = angle % 360
+            # 在最佳角度±20度範圍內搜索，每3度
+            angles_to_search = []
+            for offset in range(-20, 21, 3):  # -20 到 +20，每3度
+                angle = (best_angle_normalized + offset) % 360
+                if angle not in angles_to_search:  # 避免重複
+                    angles_to_search.append(angle)
+            
+            # 限制搜索次數，避免無限循環（最多14次：-20到+20，每3度）
+            max_search_count = min(len(angles_to_search), 15)
+            for angle in angles_to_search[:max_search_count]:
                 M = cv2.getRotationMatrix2D(center, angle, 1.0)
                 img2_rotated = cv2.warpAffine(img2_small, M, (small_w, small_h),
                                              borderMode=cv2.BORDER_CONSTANT,
@@ -156,8 +182,9 @@ class SealComparator:
                 best_angle = best_angle_medium
                 best_score = best_score_medium
                 
-                # 使用浮點數角度進行細搜索
-                for offset in np.arange(-3.0, 3.5, 0.5):
+                # 使用浮點數角度進行細搜索，限制搜索次數
+                offsets = np.arange(-3.0, 3.5, 0.5)
+                for offset in offsets:
                     angle = (best_angle_medium + offset) % 360
                     M = cv2.getRotationMatrix2D(center, angle, 1.0)
                     img2_rotated = cv2.warpAffine(img2_small, M, (small_w, small_h),
@@ -224,9 +251,9 @@ class SealComparator:
         
         # 方法3：輪廓匹配（僅對小圖像使用，計算較慢）
         contour_match = 0.0
-        img_size = img1.shape[0] * img1.shape[1]
-        if img_size < 40000:  # 只對小圖像使用（約200x200以下）
-            try:
+        try:
+            img_size = img1.shape[0] * img1.shape[1]
+            if img_size < 40000:  # 只對小圖像使用（約200x200以下）
                 contours1, _ = cv2.findContours(img1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 contours2, _ = cv2.findContours(img2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
@@ -237,8 +264,8 @@ class SealComparator:
                     if cv2.contourArea(c1) > 10 and cv2.contourArea(c2) > 10:
                         match = cv2.matchShapes(c1, c2, cv2.CONTOURS_MATCH_I2, 0)
                         contour_match = 1.0 / (1.0 + match * 10)  # 轉換為相似度
-            except:
-                contour_match = 0.0
+        except Exception:
+            contour_match = 0.0
         
         # 加權組合（邊緣匹配最重要，因為對旋轉敏感）
         if contour_match > 0:
@@ -261,6 +288,20 @@ class SealComparator:
         Returns:
             (是否一致, 相似度, 詳細資訊, 校正後的圖像2)
         """
+        # 輸入驗證
+        if image1 is None or image2 is None:
+            raise ValueError("圖像不能為 None")
+        
+        if image1.size == 0 or image2.size == 0:
+            raise ValueError("圖像不能為空")
+        
+        # 輸入驗證
+        if image1 is None or image2 is None:
+            raise ValueError("圖像不能為 None")
+        
+        if image1.size == 0 or image2.size == 0:
+            raise ValueError("圖像不能為空")
+        
         # 預處理圖像
         img1_processed = self.preprocess_image(image1)
         img2_processed_original = self.preprocess_image(image2)
@@ -433,11 +474,20 @@ class SealComparator:
         Returns:
             (是否一致, 相似度, 詳細資訊, 校正後的圖像2)
         """
+        # 輸入驗證
+        if not image1_path or not image2_path:
+            raise ValueError("圖像路徑不能為空")
+        
         img1 = self.load_image(image1_path)
         img2 = self.load_image(image2_path)
         
         if img1 is None or img2 is None:
-            return False, 0.0, {'error': '無法載入圖像'}, None
+            error_msg = f"無法載入圖像: image1={image1_path}, image2={image2_path}"
+            return False, 0.0, {'error': error_msg}, None
         
-        return self.compare_images(img1, img2, enable_rotation_search=enable_rotation_search)
+        try:
+            return self.compare_images(img1, img2, enable_rotation_search=enable_rotation_search)
+        except Exception as e:
+            error_msg = f"比對過程中發生錯誤: {str(e)}"
+            return False, 0.0, {'error': error_msg}, None
 
