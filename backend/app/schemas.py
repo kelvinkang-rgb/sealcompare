@@ -112,6 +112,7 @@ class ComparisonStatusResponse(BaseModel):
     status: ComparisonStatus
     progress: Optional[float] = None  # 0-100
     message: Optional[str] = None
+    current_step: Optional[str] = None  # 當前處理步驟
 
 
 # 視覺化相關 Schema

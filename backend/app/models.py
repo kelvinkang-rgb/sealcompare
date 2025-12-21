@@ -77,6 +77,11 @@ class Comparison(Base):
     center_offset = Column(Float, nullable=True)
     size_ratio = Column(Float, nullable=True)
     
+    # 進度相關
+    progress = Column(Float, nullable=True)  # 進度百分比 (0-100)
+    progress_message = Column(String(500), nullable=True)  # 當前進度消息
+    current_step = Column(String(100), nullable=True)  # 當前處理步驟
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     deleted_at = Column(DateTime, nullable=True)  # 軟刪除時間戳

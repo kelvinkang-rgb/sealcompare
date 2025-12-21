@@ -113,28 +113,32 @@ def get_comparison_status(
     if not comparison:
         raise HTTPException(status_code=404, detail="比對記錄不存在")
     
-    # 計算進度（簡單實現，可以根據實際處理階段調整）
-    progress = None
-    message = None
+    # 從數據庫獲取進度信息（如果存在）
+    progress = comparison.progress if hasattr(comparison, 'progress') and comparison.progress is not None else None
+    message = comparison.progress_message if hasattr(comparison, 'progress_message') and comparison.progress_message else None
+    current_step = comparison.current_step if hasattr(comparison, 'current_step') and comparison.current_step else None
     
-    if comparison.status == ComparisonStatus.PENDING:
-        progress = 0
-        message = "等待處理"
-    elif comparison.status == ComparisonStatus.PROCESSING:
-        progress = 50
-        message = "正在處理中"
-    elif comparison.status == ComparisonStatus.COMPLETED:
-        progress = 100
-        message = "處理完成"
-    elif comparison.status == ComparisonStatus.FAILED:
-        progress = 0
-        message = "處理失敗"
+    # 如果沒有進度信息，使用默認值
+    if progress is None:
+        if comparison.status == ComparisonStatus.PENDING:
+            progress = 0
+            message = message or "等待處理"
+        elif comparison.status == ComparisonStatus.PROCESSING:
+            progress = 50
+            message = message or "正在處理中"
+        elif comparison.status == ComparisonStatus.COMPLETED:
+            progress = 100
+            message = message or "處理完成"
+        elif comparison.status == ComparisonStatus.FAILED:
+            progress = 0
+            message = message or "處理失敗"
     
     return ComparisonStatusResponse(
         id=comparison.id,
         status=comparison.status,
         progress=progress,
-        message=message
+        message=message,
+        current_step=current_step
     )
 
 

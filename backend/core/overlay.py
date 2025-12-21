@@ -19,6 +19,14 @@ def create_overlay_image(
     """
     創建疊圖比對圖像
     
+    生成兩張疊圖：
+    1. 疊圖1：圖像1疊在圖像2校正上
+    2. 疊圖2：圖像2校正疊在圖像1上
+    
+    顯示規則：
+    - 圖像1和圖像2校正保持原始顏色
+    - 差異區域使用綠色標記
+    
     Args:
         image1_path: 第一個圖像路徑
         image2_path: 第二個圖像路徑（原始）
@@ -27,7 +35,7 @@ def create_overlay_image(
         image2_corrected_path: 校正後的圖像2路徑（如果存在，優先使用）
         
     Returns:
-        (overlay1_url, overlay2_url) - 兩個疊圖的相對路徑，失敗返回 (None, None)
+        (overlay1_url, overlay2_url) - 兩個疊圖的絕對路徑，失敗返回 (None, None)
     """
     # 優先使用校正後的圖像2
     if image2_corrected_path:
@@ -161,24 +169,42 @@ def create_overlay_image(
         binary2 = np.zeros_like(gray2)
         binary2[mask2 > 0] = 255
         
-        # 創建彩色疊圖（OpenCV 使用 BGR 格式）
-        # 圖像1用藍色 [255, 0, 0] (BGR)，圖像2用紅色 [0, 0, 255] (BGR)
-        overlay1_on_2 = np.zeros((target_h, target_w, 3), dtype=np.uint8)  # 圖像1疊在圖像2上
-        overlay2_on_1 = np.zeros((target_h, target_w, 3), dtype=np.uint8)  # 圖像2疊在圖像1上
+        # 固定使用綠色標記差異區域 (BGR格式: [0, 255, 0])
+        diff_color = np.array([0, 255, 0], dtype=np.uint8)  # 綠色
         
         # 計算差異區域
         diff_mask_2_only = (binary2 > 0) & (binary1 == 0)  # 只有圖像2有
         diff_mask_1_only = (binary1 > 0) & (binary2 == 0)  # 只有圖像1有
+        overlap_mask = (binary1 > 0) & (binary2 > 0)  # 兩者重疊區域
         
-        # 疊圖1：圖像1（藍色）疊在圖像2（紅色）上，顯示圖像2多出的部分（黃色）
-        overlay1_on_2[binary2 > 0] = [0, 0, 255]  # 紅色（圖像2，BGR格式）
-        overlay1_on_2[binary1 > 0] = [255, 0, 0]  # 藍色（圖像1，BGR格式）
-        overlay1_on_2[diff_mask_2_only] = [0, 255, 255]  # 黃色（圖像2多出部分，BGR格式）
+        # 計算像素差異（在重疊區域內）
+        diff_threshold = 30  # 差異閾值
+        gray_diff = cv2.absdiff(gray1, gray2)
+        pixel_diff_mask = (gray_diff > diff_threshold) & overlap_mask  # 重疊區域內的像素差異
         
-        # 疊圖2：圖像2（紅色）疊在圖像1（藍色）上，顯示圖像1多出的部分（黃色）
-        overlay2_on_1[binary1 > 0] = [255, 0, 0]  # 藍色（圖像1，BGR格式）
-        overlay2_on_1[binary2 > 0] = [0, 0, 255]  # 紅色（圖像2，BGR格式）
-        overlay2_on_1[diff_mask_1_only] = [0, 255, 255]  # 黃色（圖像1多出部分，BGR格式）
+        # 所有差異區域（包括獨有區域和重疊區域內的像素差異）
+        all_diff_mask = diff_mask_1_only | diff_mask_2_only | pixel_diff_mask
+        
+        # 創建彩色疊圖（OpenCV 使用 BGR 格式）
+        # 圖像1和圖像2校正都保留原始顏色，差異區域用綠色標記
+        overlay1_on_2 = np.zeros((target_h, target_w, 3), dtype=np.uint8)  # 圖像1疊在圖像2校正上
+        overlay2_on_1 = np.zeros((target_h, target_w, 3), dtype=np.uint8)  # 圖像2校正疊在圖像1上
+        
+        # 計算重疊區域且沒有差異的部分
+        overlap_no_diff = overlap_mask & (~pixel_diff_mask)
+        
+        # 疊圖1：圖像1疊在圖像2校正上
+        # 設置重疊區域且沒有差異的部分：使用圖像1的原始顏色（因為圖像1在上層）
+        overlay1_on_2[overlap_no_diff] = img1_resized[overlap_no_diff]
+        # 標記所有差異區域（使用綠色）
+        # 差異區域包括：圖像1獨有區域、圖像2校正獨有區域、重疊區域內的像素差異
+        overlay1_on_2[all_diff_mask] = diff_color
+        
+        # 疊圖2：圖像2校正疊在圖像1上
+        # 設置重疊區域且沒有差異的部分：使用圖像2校正的原始顏色（因為圖像2校正在上層）
+        overlay2_on_1[overlap_no_diff] = img2_resized[overlap_no_diff]
+        # 標記所有差異區域（使用綠色）
+        overlay2_on_1[all_diff_mask] = diff_color
         
         # 創建帶透明背景的疊圖（使用 PNG 格式支持透明度）
         overlay1_rgba = np.zeros((target_h, target_w, 4), dtype=np.uint8)
