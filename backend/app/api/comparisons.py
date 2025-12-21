@@ -2,15 +2,15 @@
 比對相關 API
 """
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.schemas import ComparisonCreate, ComparisonResponse, ComparisonStatusResponse, ComparisonUpdate
 from app.services.comparison_service import ComparisonService
-from app.models import ComparisonStatus
+from app.models import ComparisonStatus, Comparison
 
 router = APIRouter(prefix="/comparisons", tags=["comparisons"])
 
@@ -28,6 +28,7 @@ def create_comparison(
     - **image2_id**: 圖像2 ID
     - **threshold**: 相似度閾值（0-1，預設 0.95）
     - **enable_rotation_search**: 是否啟用旋轉角度搜索（預設 True）
+    - **enable_translation_search**: 是否啟用平移搜索（預設 True，因為人工標記印鑑無法確保中心點都一致）
     """
     comparison_service = ComparisonService(db)
     
@@ -35,11 +36,39 @@ def create_comparison(
         # 創建比對記錄
         comparison = comparison_service.create_comparison(comparison_data)
         
-        # 添加後台任務處理比對
+        # 添加後台任務處理比對（在任務內部創建新的數據庫會話）
+        def process_comparison_task(comp_id: UUID, enable_rot: bool, enable_trans: bool):
+            """後台任務：處理比對（創建新的數據庫會話）"""
+            db = SessionLocal()
+            try:
+                service = ComparisonService(db)
+                service.process_comparison(comp_id, enable_rot, enable_trans)
+            except Exception as e:
+                # 記錄錯誤但不要讓任務失敗
+                print(f"比對處理失敗 {comp_id}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # 更新狀態為失敗
+                try:
+                    db_comparison = db.query(Comparison).filter(Comparison.id == comp_id).first()
+                    if db_comparison:
+                        db_comparison.status = ComparisonStatus.FAILED
+                        if db_comparison.details is None:
+                            db_comparison.details = {}
+                        db_comparison.details['error'] = str(e)
+                        db_comparison.details['error_trace'] = traceback.format_exc()
+                        db.commit()
+                except Exception as db_error:
+                    print(f"更新失敗狀態時出錯: {str(db_error)}")
+                    db.rollback()
+            finally:
+                db.close()
+        
         background_tasks.add_task(
-            comparison_service.process_comparison,
+            process_comparison_task,
             comparison.id,
-            comparison_data.enable_rotation_search
+            comparison_data.enable_rotation_search,
+            comparison_data.enable_translation_search
         )
         
         return comparison
@@ -191,5 +220,70 @@ def restore_comparison(
         raise HTTPException(status_code=404, detail="比對記錄不存在或未被刪除")
     
     comparison = comparison_service.get_comparison(comparison_id, include_deleted=True)
+    return comparison
+
+
+@router.post("/{comparison_id}/retry", response_model=ComparisonResponse)
+def retry_comparison(
+    comparison_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    enable_rotation_search: bool = Query(True, description="是否啟用旋轉角度搜索"),
+    enable_translation_search: bool = Query(True, description="是否啟用平移搜索（預設開啟，因為人工標記印鑑無法確保中心點都一致）")
+):
+    """
+    重新處理比對（用於失敗或卡住的比對）
+    
+    - **comparison_id**: 比對 ID
+    - **enable_rotation_search**: 是否啟用旋轉角度搜索（預設 True）
+    - **enable_translation_search**: 是否啟用平移搜索（預設 True，因為人工標記印鑑無法確保中心點都一致）
+    """
+    comparison_service = ComparisonService(db)
+    comparison = comparison_service.get_comparison(comparison_id)
+    
+    if not comparison:
+        raise HTTPException(status_code=404, detail="比對記錄不存在")
+    
+    # 重置狀態為 PENDING
+    comparison.status = ComparisonStatus.PENDING
+    comparison.details = {}  # 清除之前的錯誤信息
+    db.commit()
+    db.refresh(comparison)
+    
+    # 添加後台任務處理比對（在任務內部創建新的數據庫會話）
+    def process_comparison_task(comp_id: UUID, enable_rot: bool, enable_trans: bool):
+        """後台任務：處理比對（創建新的數據庫會話）"""
+        db = SessionLocal()
+        try:
+            service = ComparisonService(db)
+            service.process_comparison(comp_id, enable_rot, enable_trans)
+        except Exception as e:
+            # 記錄錯誤但不要讓任務失敗
+            print(f"比對處理失敗 {comp_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # 更新狀態為失敗
+            try:
+                db_comparison = db.query(Comparison).filter(Comparison.id == comp_id).first()
+                if db_comparison:
+                    db_comparison.status = ComparisonStatus.FAILED
+                    if db_comparison.details is None:
+                        db_comparison.details = {}
+                    db_comparison.details['error'] = str(e)
+                    db_comparison.details['error_trace'] = traceback.format_exc()
+                    db.commit()
+            except Exception as db_error:
+                print(f"更新失敗狀態時出錯: {str(db_error)}")
+                db.rollback()
+        finally:
+            db.close()
+    
+    background_tasks.add_task(
+        process_comparison_task,
+        comparison.id,
+        enable_rotation_search,
+        enable_translation_search
+    )
+    
     return comparison
 

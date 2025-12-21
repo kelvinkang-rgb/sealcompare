@@ -1,6 +1,9 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+// 在生產環境中，使用相對路徑通過 nginx 代理
+// 在開發環境中，使用完整 URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+  (import.meta.env.PROD ? '/api/v1' : 'http://localhost:8000/api/v1')
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -33,6 +36,16 @@ export const imageAPI = {
   
   delete: async (imageId) => {
     await api.delete(`/images/${imageId}`)
+  },
+  
+  detectSeal: async (imageId) => {
+    const response = await api.post(`/images/${imageId}/detect-seal`)
+    return response.data
+  },
+  
+  updateSealLocation: async (imageId, locationData) => {
+    const response = await api.put(`/images/${imageId}/seal-location`, locationData)
+    return response.data
   },
 }
 
@@ -71,6 +84,11 @@ export const comparisonAPI = {
   
   restore: async (comparisonId) => {
     const response = await api.post(`/comparisons/${comparisonId}/restore`)
+    return response.data
+  },
+  
+  retry: async (comparisonId, enableRotationSearch = true, enableTranslationSearch = true) => {
+    const response = await api.post(`/comparisons/${comparisonId}/retry?enable_rotation_search=${enableRotationSearch}&enable_translation_search=${enableTranslationSearch}`)
     return response.data
   },
 }

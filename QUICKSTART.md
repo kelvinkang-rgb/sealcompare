@@ -181,7 +181,8 @@ curl -X POST "http://localhost:8000/api/v1/comparisons/" \
     "image1_id": "YOUR_IMAGE1_ID",
     "image2_id": "YOUR_IMAGE2_ID",
     "threshold": 0.95,
-    "enable_rotation_search": true
+    "enable_rotation_search": true,
+    "enable_translation_search": true
   }'
 ```
 
@@ -206,6 +207,56 @@ curl -O "http://localhost:8000/api/v1/comparisons/YOUR_COMPARISON_ID/comparison-
 
 # 差異熱力圖
 curl -O "http://localhost:8000/api/v1/comparisons/YOUR_COMPARISON_ID/heatmap"
+
+# 疊圖（overlay_type 可選 1 或 2）
+curl -O "http://localhost:8000/api/v1/comparisons/YOUR_COMPARISON_ID/overlay?overlay_type=1"
+```
+
+#### 7. 查看比對記錄列表
+```bash
+curl -X GET "http://localhost:8000/api/v1/comparisons/?skip=0&limit=10" \
+  -H "accept: application/json"
+```
+
+#### 8. 更新比對記錄（添加備註）
+```bash
+curl -X PUT "http://localhost:8000/api/v1/comparisons/YOUR_COMPARISON_ID" \
+  -H "accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notes": "這是測試比對",
+    "threshold": 0.95
+  }'
+```
+
+#### 9. 重新處理失敗的比對
+```bash
+curl -X POST "http://localhost:8000/api/v1/comparisons/YOUR_COMPARISON_ID/retry?enable_rotation_search=true&enable_translation_search=true" \
+  -H "accept: application/json"
+```
+
+#### 10. 獲取統計資訊
+```bash
+curl -X GET "http://localhost:8000/api/v1/statistics/" \
+  -H "accept: application/json"
+```
+
+#### 11. 檢測圖像中的印鑑位置
+```bash
+curl -X POST "http://localhost:8000/api/v1/images/YOUR_IMAGE_ID/detect-seal" \
+  -H "accept: application/json"
+```
+
+#### 12. 更新印鑑位置（手動調整）
+```bash
+curl -X PUT "http://localhost:8000/api/v1/images/YOUR_IMAGE_ID/seal-location" \
+  -H "accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bbox": {"x": 100, "y": 100, "width": 200, "height": 200},
+    "center": {"center_x": 200, "center_y": 200, "radius": 100},
+    "confidence": 0.95
+  }'
 ```
 
 ## 常見問題

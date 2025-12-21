@@ -1,0 +1,361 @@
+"""
+印鑑位置檢測模組
+用於自動檢測圖像中印鑑的位置（邊界框和中心點）
+"""
+
+import cv2
+import numpy as np
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+
+def detect_seal_location(image_path: str) -> Dict:
+    """
+    檢測圖像中印鑑的位置
+    
+    Args:
+        image_path: 圖像文件路徑
+        
+    Returns:
+        包含檢測結果的字典：
+        {
+            'detected': bool,
+            'confidence': float,
+            'bbox': {'x': int, 'y': int, 'width': int, 'height': int} or None,
+            'center': {'center_x': int, 'center_y': int, 'radius': float} or None
+        }
+    """
+    try:
+        # 讀取圖像
+        if not Path(image_path).exists():
+            return _create_failed_result("圖像文件不存在")
+        
+        image = cv2.imread(image_path)
+        if image is None:
+            return _create_failed_result("無法讀取圖像文件")
+        
+        if image.size == 0:
+            return _create_failed_result("圖像為空")
+        
+        h, w = image.shape[:2]
+        if h == 0 or w == 0:
+            return _create_failed_result("圖像尺寸無效")
+        
+        # 使用混合方法檢測印鑑
+        result = _detect_seal_hybrid(image)
+        
+        return result
+        
+    except Exception as e:
+        return _create_failed_result(f"檢測過程出錯: {str(e)}")
+
+
+def _detect_seal_hybrid(image: np.ndarray) -> Dict:
+    """
+    使用混合方法檢測印鑑（顏色分割 + 輪廓檢測 + 形態學處理）
+    
+    Args:
+        image: 圖像數組
+        
+    Returns:
+        檢測結果字典
+    """
+    h, w = image.shape[:2]
+    
+    # 方法1: 基於顏色的分割
+    result1 = _detect_by_color_segmentation(image)
+    
+    # 方法2: 基於邊緣和輪廓
+    result2 = _detect_by_contours(image)
+    
+    # 方法3: 基於自適應閾值
+    result3 = _detect_by_adaptive_threshold(image)
+    
+    # 合併結果，選擇置信度最高的
+    results = [r for r in [result1, result2, result3] if r['detected']]
+    
+    if not results:
+        return _create_failed_result("未檢測到印鑑")
+    
+    # 選擇置信度最高的結果
+    best_result = max(results, key=lambda x: x['confidence'])
+    
+    # 驗證結果的合理性
+    if _validate_detection(best_result, w, h):
+        return best_result
+    else:
+        return _create_failed_result("檢測結果不合理")
+
+
+def _detect_by_color_segmentation(image: np.ndarray) -> Dict:
+    """基於顏色分割的檢測方法"""
+    try:
+        h, w = image.shape[:2]
+        
+        # 轉換為多種顏色空間
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # 計算圖像的平均亮度和顏色特徵
+        mean_brightness = np.mean(gray)
+        mean_color = np.mean(image, axis=(0, 1))
+        
+        # 根據背景類型選擇不同的策略
+        if mean_brightness > 200:  # 白色或淺色背景
+            # 使用 HSV 的 S 通道（飽和度）來識別彩色印鑑
+            _, s_channel, _ = cv2.split(hsv)
+            _, mask = cv2.threshold(s_channel, 50, 255, cv2.THRESH_BINARY)
+        elif mean_brightness < 50:  # 黑色或深色背景
+            # 使用亮度閾值
+            _, mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
+        else:  # 中等亮度背景
+            # 使用 LAB 顏色空間的 A 和 B 通道
+            _, a_channel, b_channel = cv2.split(lab)
+            # 計算與平均顏色的差異
+            color_diff = np.abs(a_channel.astype(np.float32) - np.mean(a_channel)) + \
+                        np.abs(b_channel.astype(np.float32) - np.mean(b_channel))
+            color_diff = color_diff.astype(np.uint8)
+            _, mask = cv2.threshold(color_diff, 20, 255, cv2.THRESH_BINARY)
+        
+        # 形態學操作
+        mask = _apply_morphology(mask)
+        
+        # 查找輪廓
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return _create_failed_result("未找到輪廓")
+        
+        # 找到最大的輪廓（假設是印鑑）
+        largest_contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest_contour)
+        
+        # 檢查面積是否合理（至少佔圖像的 1%）
+        if area < (w * h * 0.01):
+            return _create_failed_result("檢測區域太小")
+        
+        # 計算邊界框和中心點
+        bbox, center, radius = _calculate_bbox_and_center(largest_contour)
+        
+        # 計算置信度（基於面積和圓度）
+        circularity = _calculate_circularity(largest_contour)
+        area_ratio = area / (w * h)
+        confidence = min(0.9, 0.5 + circularity * 0.3 + min(area_ratio * 5, 0.2))
+        
+        return {
+            'detected': True,
+            'confidence': confidence,
+            'bbox': bbox,
+            'center': center
+        }
+        
+    except Exception as e:
+        return _create_failed_result(f"顏色分割檢測失敗: {str(e)}")
+
+
+def _detect_by_contours(image: np.ndarray) -> Dict:
+    """基於邊緣和輪廓的檢測方法"""
+    try:
+        h, w = image.shape[:2]
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        # 使用 Canny 邊緣檢測
+        edges = cv2.Canny(gray, 50, 150)
+        
+        # 形態學操作連接邊緣
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=2)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=3)
+        
+        # 查找輪廓
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return _create_failed_result("未找到輪廓")
+        
+        # 篩選輪廓（基於面積和圓度）
+        valid_contours = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < (w * h * 0.01):  # 太小
+                continue
+            if area > (w * h * 0.9):  # 太大（可能是整個圖像）
+                continue
+            circularity = _calculate_circularity(contour)
+            if circularity > 0.3:  # 至少有一定的圓度
+                valid_contours.append((contour, area, circularity))
+        
+        if not valid_contours:
+            return _create_failed_result("未找到有效的輪廓")
+        
+        # 選擇面積和圓度加權最大的輪廓
+        best_contour = max(valid_contours, key=lambda x: x[1] * x[2])[0]
+        
+        # 計算邊界框和中心點
+        bbox, center, radius = _calculate_bbox_and_center(best_contour)
+        
+        # 計算置信度
+        area = cv2.contourArea(best_contour)
+        circularity = _calculate_circularity(best_contour)
+        area_ratio = area / (w * h)
+        confidence = min(0.85, 0.4 + circularity * 0.3 + min(area_ratio * 5, 0.15))
+        
+        return {
+            'detected': True,
+            'confidence': confidence,
+            'bbox': bbox,
+            'center': center
+        }
+        
+    except Exception as e:
+        return _create_failed_result(f"輪廓檢測失敗: {str(e)}")
+
+
+def _detect_by_adaptive_threshold(image: np.ndarray) -> Dict:
+    """基於自適應閾值的檢測方法"""
+    try:
+        h, w = image.shape[:2]
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        # 使用自適應閾值
+        binary = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY_INV, 11, 2
+        )
+        
+        # 形態學操作
+        binary = _apply_morphology(binary)
+        
+        # 查找輪廓
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return _create_failed_result("未找到輪廓")
+        
+        # 找到最大的輪廓
+        largest_contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest_contour)
+        
+        if area < (w * h * 0.01):
+            return _create_failed_result("檢測區域太小")
+        
+        # 計算邊界框和中心點
+        bbox, center, radius = _calculate_bbox_and_center(largest_contour)
+        
+        # 計算置信度
+        circularity = _calculate_circularity(largest_contour)
+        area_ratio = area / (w * h)
+        confidence = min(0.8, 0.3 + circularity * 0.3 + min(area_ratio * 5, 0.2))
+        
+        return {
+            'detected': True,
+            'confidence': confidence,
+            'bbox': bbox,
+            'center': center
+        }
+        
+    except Exception as e:
+        return _create_failed_result(f"自適應閾值檢測失敗: {str(e)}")
+
+
+def _apply_morphology(mask: np.ndarray) -> np.ndarray:
+    """應用形態學操作去除噪點"""
+    kernel = np.ones((3, 3), np.uint8)
+    # 開運算：去除小的噪點
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+    # 閉運算：填充小的洞
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    return mask
+
+
+def _calculate_bbox_and_center(contour: np.ndarray) -> Tuple[Dict, Dict, float]:
+    """
+    計算輪廓的邊界框和中心點
+    
+    Returns:
+        (bbox_dict, center_dict, radius)
+    """
+    # 邊界框
+    x, y, w, h = cv2.boundingRect(contour)
+    bbox = {'x': int(x), 'y': int(y), 'width': int(w), 'height': int(h)}
+    
+    # 中心點和半徑
+    M = cv2.moments(contour)
+    if M["m00"] != 0:
+        center_x = int(M["m10"] / M["m00"])
+        center_y = int(M["m01"] / M["m00"])
+    else:
+        # 如果無法計算質心，使用邊界框中心
+        center_x = x + w // 2
+        center_y = y + h // 2
+    
+    # 計算半徑（使用邊界框的對角線長度的一半作為近似）
+    radius = np.sqrt(w**2 + h**2) / 2.0
+    
+    center = {
+        'center_x': int(center_x),
+        'center_y': int(center_y),
+        'radius': float(radius)
+    }
+    
+    return bbox, center, radius
+
+
+def _calculate_circularity(contour: np.ndarray) -> float:
+    """計算輪廓的圓度（0-1，1表示完美圓形）"""
+    area = cv2.contourArea(contour)
+    if area == 0:
+        return 0.0
+    
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter == 0:
+        return 0.0
+    
+    # 圓度 = 4π * 面積 / 周長²
+    circularity = 4 * np.pi * area / (perimeter ** 2)
+    return min(1.0, circularity)
+
+
+def _validate_detection(result: Dict, image_width: int, image_height: int) -> bool:
+    """驗證檢測結果的合理性"""
+    if not result['detected']:
+        return False
+    
+    bbox = result.get('bbox')
+    center = result.get('center')
+    
+    if not bbox or not center:
+        return False
+    
+    # 檢查邊界框是否在圖像範圍內
+    if (bbox['x'] < 0 or bbox['y'] < 0 or 
+        bbox['x'] + bbox['width'] > image_width or
+        bbox['y'] + bbox['height'] > image_height):
+        return False
+    
+    # 檢查中心點是否在圖像範圍內
+    if (center['center_x'] < 0 or center['center_x'] > image_width or
+        center['center_y'] < 0 or center['center_y'] > image_height):
+        return False
+    
+    # 檢查尺寸是否合理
+    if bbox['width'] < 10 or bbox['height'] < 10:
+        return False
+    
+    if bbox['width'] > image_width * 0.95 or bbox['height'] > image_height * 0.95:
+        return False
+    
+    return True
+
+
+def _create_failed_result(reason: str = "") -> Dict:
+    """創建失敗的檢測結果"""
+    return {
+        'detected': False,
+        'confidence': 0.0,
+        'bbox': None,
+        'center': None,
+        'reason': reason
+    }
+

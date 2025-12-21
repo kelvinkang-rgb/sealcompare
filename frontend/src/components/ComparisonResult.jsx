@@ -11,14 +11,16 @@ import {
   IconButton,
 } from '@mui/material'
 import { Refresh as RefreshIcon, Info as InfoIcon } from '@mui/icons-material'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { comparisonAPI, visualizationAPI } from '../services/api'
 import VerificationView from './VerificationView'
 import MetricsExplanationDialog from './MetricsExplanationDialog'
+import ProcessingStages from './ProcessingStages'
 
 function ComparisonResult({ comparisonId, onResetComparison }) {
   const [pollingInterval, setPollingInterval] = useState(1000)
   const [explanationOpen, setExplanationOpen] = useState(false)
+  const queryClient = useQueryClient()
 
   const { data: comparison, isLoading, error } = useQuery({
     queryKey: ['comparison', comparisonId],
@@ -31,6 +33,17 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
     queryFn: () => comparisonAPI.getStatus(comparisonId),
     refetchInterval: pollingInterval,
     enabled: !!comparisonId,
+  })
+
+  // 重試比對的 mutation
+  const retryMutation = useMutation({
+    mutationFn: () => comparisonAPI.retry(comparisonId, true, false),
+    onSuccess: () => {
+      // 重新獲取比對數據
+      queryClient.invalidateQueries({ queryKey: ['comparison', comparisonId] })
+      queryClient.invalidateQueries({ queryKey: ['comparison-status', comparisonId] })
+      setPollingInterval(1000) // 重新開始輪詢
+    },
   })
 
   useEffect(() => {
@@ -77,9 +90,30 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
 
       {isProcessing && (
         <Box sx={{ mb: 2 }}>
-          <Alert severity="info">
+          <Alert 
+            severity="info" 
+            sx={{ mb: 2 }}
+            action={
+              <Button
+                size="small"
+                onClick={() => retryMutation.mutate()}
+                disabled={retryMutation.isPending}
+              >
+                {retryMutation.isPending ? '重試中...' : '重試'}
+              </Button>
+            }
+          >
             處理中... {status?.progress}% - {status?.message}
+            {comparison.details?.processing_stages?.current_stage === 'loading_images' && 
+             comparison.details?.processing_stages?.stages?.[1]?.progress === 10 && (
+              <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                如果長時間卡在載入圖像階段，請點擊重試按鈕
+              </Typography>
+            )}
           </Alert>
+          {comparison.details?.processing_stages && (
+            <ProcessingStages processingStages={comparison.details.processing_stages} />
+          )}
         </Box>
       )}
 
@@ -100,16 +134,23 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
               />
             </Grid>
             <Grid item xs={12} md={6}>
-              {comparison.rotation_angle && (
-                <Typography variant="body2">
-                  旋轉角度: {comparison.rotation_angle}°
-                </Typography>
-              )}
-              {comparison.improvement && (
-                <Typography variant="body2">
-                  改善幅度: {(comparison.improvement * 100).toFixed(2)}%
-                </Typography>
-              )}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                {comparison.rotation_angle !== null && comparison.rotation_angle !== undefined && (
+                  <Typography variant="body2">
+                    旋轉角度: <strong>{comparison.rotation_angle.toFixed(2)}°</strong>
+                  </Typography>
+                )}
+                {comparison.translation_offset && (
+                  <Typography variant="body2">
+                    平移偏移: <strong>X: {comparison.translation_offset.x}px, Y: {comparison.translation_offset.y}px</strong>
+                  </Typography>
+                )}
+                {comparison.improvement && (
+                  <Typography variant="body2">
+                    改善幅度: <strong>{(comparison.improvement * 100).toFixed(2)}%</strong>
+                  </Typography>
+                )}
+              </Box>
             </Grid>
           </Grid>
 
@@ -133,14 +174,24 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
               </Typography>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                 <Typography variant="body2">
-                  SSIM: {(comparison.details.ssim * 100).toFixed(2)}%
+                  SSIM: <strong>{(comparison.details.ssim * 100).toFixed(2)}%</strong>
                 </Typography>
                 <Typography variant="body2">
-                  模板匹配: {(comparison.details.template_match * 100).toFixed(2)}%
+                  模板匹配: <strong>{(comparison.details.template_match * 100).toFixed(2)}%</strong>
                 </Typography>
                 <Typography variant="body2">
-                  像素差異: {(comparison.details.pixel_diff * 100).toFixed(2)}%
+                  像素差異: <strong>{(comparison.details.pixel_diff * 100).toFixed(2)}%</strong>
                 </Typography>
+                {comparison.details.rotation_angle !== null && comparison.details.rotation_angle !== undefined && (
+                  <Typography variant="body2">
+                    旋轉角度: <strong>{comparison.details.rotation_angle.toFixed(2)}°</strong>
+                  </Typography>
+                )}
+                {comparison.details.translation_offset && (
+                  <Typography variant="body2">
+                    平移偏移: <strong>X: {comparison.details.translation_offset.x}px, Y: {comparison.details.translation_offset.y}px</strong>
+                  </Typography>
+                )}
               </Box>
             </Box>
           )}
@@ -156,7 +207,25 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
       )}
 
       {comparison.status === 'failed' && (
-        <Alert severity="error">比對處理失敗</Alert>
+        <Alert 
+          severity="error"
+          action={
+            <Button
+              size="small"
+              onClick={() => retryMutation.mutate()}
+              disabled={retryMutation.isPending}
+            >
+              {retryMutation.isPending ? '重試中...' : '重試'}
+            </Button>
+          }
+        >
+          比對處理失敗
+          {comparison.details?.error && (
+            <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+              錯誤: {comparison.details.error}
+            </Typography>
+          )}
+        </Alert>
       )}
 
       {/* 指標說明對話框 */}
@@ -169,4 +238,6 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
 }
 
 export default ComparisonResult
+
+
 

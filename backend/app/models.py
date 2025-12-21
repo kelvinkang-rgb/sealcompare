@@ -40,6 +40,12 @@ class Image(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # 印鑑檢測相關
+    seal_detected = Column(Boolean, default=False, nullable=False)
+    seal_confidence = Column(Float, nullable=True)
+    seal_bbox = Column(JSON, nullable=True)  # {"x": int, "y": int, "width": int, "height": int}
+    seal_center = Column(JSON, nullable=True)  # {"center_x": int, "center_y": int, "radius": float}
+    
     # 關係
     comparisons_as_image1 = relationship("Comparison", foreign_keys="Comparison.image1_id", back_populates="image1")
     comparisons_as_image2 = relationship("Comparison", foreign_keys="Comparison.image2_id", back_populates="image2")

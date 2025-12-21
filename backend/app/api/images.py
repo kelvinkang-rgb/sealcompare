@@ -8,7 +8,7 @@ from typing import List
 from uuid import UUID
 
 from app.database import get_db
-from app.schemas import ImageResponse
+from app.schemas import ImageResponse, SealDetectionResponse, SealLocationUpdate
 from app.services.image_service import ImageService
 from app.config import settings
 
@@ -112,4 +112,53 @@ def delete_image(
         raise HTTPException(status_code=404, detail="圖像不存在")
     
     return None
+
+
+@router.post("/{image_id}/detect-seal", response_model=SealDetectionResponse)
+def detect_seal(
+    image_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    檢測圖像中的印鑑位置
+    
+    - **image_id**: 圖像 ID
+    """
+    image_service = ImageService(db)
+    try:
+        result = image_service.detect_seal(image_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"檢測失敗: {str(e)}")
+
+
+@router.put("/{image_id}/seal-location", response_model=ImageResponse)
+def update_seal_location(
+    image_id: UUID,
+    location_data: SealLocationUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    更新用戶確認的印鑑位置
+    
+    - **image_id**: 圖像 ID
+    - **bbox**: 邊界框 {"x": int, "y": int, "width": int, "height": int}
+    - **center**: 中心點 {"center_x": int, "center_y": int, "radius": float}
+    - **confidence**: 置信度（可選）
+    """
+    image_service = ImageService(db)
+    try:
+        image = image_service.update_seal_location(
+            image_id,
+            bbox=location_data.bbox,
+            center=location_data.center,
+            confidence=location_data.confidence
+        )
+        return image
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新失敗: {str(e)}")
 

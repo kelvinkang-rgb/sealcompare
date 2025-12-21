@@ -11,6 +11,10 @@ RUN npm install
 # 複製源代碼
 COPY . .
 
+# 設置構建時環境變數（如果未提供，使用默認值）
+ARG VITE_API_BASE_URL=/api/v1
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
 # 構建應用
 RUN npm run build
 

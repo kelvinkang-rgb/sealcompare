@@ -2,7 +2,7 @@
 Pydantic 數據模型（用於 API 請求和響應）
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
 from uuid import UUID
@@ -28,9 +28,29 @@ class ImageResponse(ImageBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
+    seal_detected: bool = False
+    seal_confidence: Optional[float] = None
+    seal_bbox: Optional[Dict[str, int]] = None
+    seal_center: Optional[Dict[str, Any]] = None
     
     class Config:
         from_attributes = True
+
+
+class SealDetectionResponse(BaseModel):
+    """印鑑檢測響應模型"""
+    detected: bool
+    confidence: float
+    bbox: Optional[Dict[str, int]] = None
+    center: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+
+
+class SealLocationUpdate(BaseModel):
+    """更新印鑑位置請求"""
+    bbox: Optional[Dict[str, int]] = Field(None, description="邊界框 {x, y, width, height}")
+    center: Optional[Dict[str, Any]] = Field(None, description="中心點 {center_x, center_y, radius}")
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="置信度")
 
 
 # 比對相關 Schema
@@ -44,6 +64,7 @@ class ComparisonBase(BaseModel):
 class ComparisonCreate(ComparisonBase):
     """創建比對請求"""
     enable_rotation_search: bool = True
+    enable_translation_search: bool = True  # 預設開啟，因為人工標記印鑑無法確保中心點都一致
 
 
 class ComparisonUpdate(BaseModel):
@@ -61,6 +82,7 @@ class ComparisonResponse(ComparisonBase):
     is_match: Optional[bool] = None
     similarity: Optional[float] = None
     rotation_angle: Optional[float] = None
+    translation_offset: Optional[Dict[str, int]] = None  # {"x": int, "y": int}
     similarity_before_correction: Optional[float] = None
     improvement: Optional[float] = None
     details: Optional[Dict[str, Any]] = None
@@ -70,6 +92,14 @@ class ComparisonResponse(ComparisonBase):
     created_at: datetime
     completed_at: Optional[datetime] = None
     deleted_at: Optional[datetime] = None
+    
+    @model_validator(mode='after')
+    def extract_translation_offset(self):
+        """從 details 中提取 translation_offset"""
+        if self.details and isinstance(self.details, dict) and 'translation_offset' in self.details:
+            if self.translation_offset is None:
+                self.translation_offset = self.details.get('translation_offset')
+        return self
     
     class Config:
         from_attributes = True

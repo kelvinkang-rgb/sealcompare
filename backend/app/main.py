@@ -37,6 +37,47 @@ def add_missing_columns():
         except Exception as e:
             print(f"添加 notes 欄位時出錯（可能已存在）: {e}")
             conn.rollback()
+        
+        # 檢查並添加印鑑檢測相關欄位到 images 表
+        try:
+            conn.execute(text("""
+                ALTER TABLE images 
+                ADD COLUMN IF NOT EXISTS seal_detected BOOLEAN DEFAULT FALSE NOT NULL
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 seal_detected 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+        
+        try:
+            conn.execute(text("""
+                ALTER TABLE images 
+                ADD COLUMN IF NOT EXISTS seal_confidence REAL
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 seal_confidence 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+        
+        try:
+            conn.execute(text("""
+                ALTER TABLE images 
+                ADD COLUMN IF NOT EXISTS seal_bbox JSONB
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 seal_bbox 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+        
+        try:
+            conn.execute(text("""
+                ALTER TABLE images 
+                ADD COLUMN IF NOT EXISTS seal_center JSONB
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 seal_center 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
 
 # 執行遷移
 try:

@@ -17,7 +17,8 @@ def create_correction_comparison(
     image2_corrected_path: Optional[str],
     output_path: Path,
     record_id: int,
-    rotation_angle: Optional[float] = None
+    rotation_angle: Optional[float] = None,
+    translation_offset: Optional[Dict[str, int]] = None
 ) -> Optional[str]:
     """
     生成校正前後對比圖（三圖並排）
@@ -29,6 +30,7 @@ def create_correction_comparison(
         output_path: 輸出目錄
         record_id: 記錄 ID
         rotation_angle: 旋轉角度（度）
+        translation_offset: 平移偏移量 {"x": int, "y": int}
         
     Returns:
         生成的對比圖相對路徑，失敗返回 None
@@ -79,9 +81,10 @@ def create_correction_comparison(
         target_h = max(h1, h2_orig, h2_corr)
         target_w = max(w1, w2_orig, w2_corr)
         
-        img1_resized = cv2.resize(img1, (target_w, target_h))
-        img2_orig_resized = cv2.resize(img2_orig, (target_w, target_h))
-        img2_corr_resized = cv2.resize(img2_corr, (target_w, target_h))
+        # 使用 INTER_LINEAR 插值以保持高質量（與 overlay.py 保持一致）
+        img1_resized = cv2.resize(img1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        img2_orig_resized = cv2.resize(img2_orig, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        img2_corr_resized = cv2.resize(img2_corr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         
         # 創建並排對比圖
         gap = 20  # 圖像間距
@@ -135,8 +138,14 @@ def create_correction_comparison(
         draw.text((text_x2, 10), text2, fill=(0, 0, 0), font=font)
         
         # 圖像2校正標註
+        correction_parts = []
         if rotation_angle is not None and rotation_angle != 0:
-            text3 = f"校正後圖像 (旋轉 {rotation_angle:.2f}度)"
+            correction_parts.append(f"旋轉 {rotation_angle:.2f}度")
+        if translation_offset and (translation_offset.get('x', 0) != 0 or translation_offset.get('y', 0) != 0):
+            correction_parts.append(f"平移 ({translation_offset.get('x', 0)}, {translation_offset.get('y', 0)})")
+        
+        if correction_parts:
+            text3 = f"校正後圖像 ({', '.join(correction_parts)})"
         else:
             text3 = "校正後圖像"
         bbox = draw.textbbox((0, 0), text3, font=font)
@@ -151,10 +160,11 @@ def create_correction_comparison(
         line_y = y_offset - 10
         cv2.line(comparison, (0, line_y), (comparison_width, line_y), (200, 200, 200), 2)
         
-        # 保存對比圖
+        # 保存對比圖（使用高質量 JPEG，確保解析度與疊圖一致）
         output_path.mkdir(parents=True, exist_ok=True)
         comparison_file = output_path / f"comparison_{record_id}.jpg"
-        cv2.imwrite(str(comparison_file), comparison)
+        # 使用 JPEG 質量 95（高質量）以確保解析度一致
+        cv2.imwrite(str(comparison_file), comparison, [cv2.IMWRITE_JPEG_QUALITY, 95])
         
         # 返回相對路徑（相對於 logs 目錄）
         return f"comparisons/comparison_{record_id}.jpg"
@@ -210,14 +220,15 @@ def create_difference_heatmap(
         if img1 is None or img2 is None:
             return None, {}
         
-        # 調整到相同尺寸
+        # 調整到相同尺寸（使用高質量插值，與其他視覺化保持一致）
         h1, w1 = img1.shape[:2]
         h2, w2 = img2.shape[:2]
         target_h = max(h1, h2)
         target_w = max(w1, w2)
         
-        img1_resized = cv2.resize(img1, (target_w, target_h))
-        img2_resized = cv2.resize(img2, (target_w, target_h))
+        # 使用 INTER_LINEAR 插值以保持高質量
+        img1_resized = cv2.resize(img1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        img2_resized = cv2.resize(img2, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         
         # 轉換為灰度圖
         gray1 = cv2.cvtColor(img1_resized, cv2.COLOR_BGR2GRAY)
@@ -334,10 +345,11 @@ def create_difference_heatmap(
         # 轉回 OpenCV 格式
         final_image = cv2.cvtColor(np.array(final_image_pil), cv2.COLOR_RGB2BGR)
         
-        # 保存熱力圖
+        # 保存熱力圖（使用高質量 JPEG，確保解析度與其他視覺化一致）
         output_path.mkdir(parents=True, exist_ok=True)
         heatmap_file = output_path / f"heatmap_{record_id}.jpg"
-        cv2.imwrite(str(heatmap_file), final_image)
+        # 使用 JPEG 質量 95（高質量）以確保解析度一致
+        cv2.imwrite(str(heatmap_file), final_image, [cv2.IMWRITE_JPEG_QUALITY, 95])
         
         # 差異統計
         stats = {
@@ -361,7 +373,8 @@ def calculate_alignment_metrics(
     image1: np.ndarray,
     image2_original: np.ndarray,
     image2_corrected: Optional[np.ndarray],
-    rotation_angle: Optional[float]
+    rotation_angle: Optional[float],
+    translation_offset: Optional[Dict[str, int]] = None
 ) -> Dict:
     """
     計算對齊精度指標
@@ -371,6 +384,7 @@ def calculate_alignment_metrics(
         image2_original: 原始圖像2
         image2_corrected: 校正後圖像2（如果存在）
         rotation_angle: 旋轉角度（度）
+        translation_offset: 平移偏移量 {"x": int, "y": int}
         
     Returns:
         包含對齊指標的字典
@@ -378,6 +392,7 @@ def calculate_alignment_metrics(
     try:
         metrics = {
             'rotation_angle': round(rotation_angle, 2) if rotation_angle is not None else 0.0,
+            'translation_offset': translation_offset if translation_offset else {'x': 0, 'y': 0},
             'center_offset': 0.0,
             'size_ratio': 1.0,
             'has_correction': image2_corrected is not None
@@ -401,8 +416,9 @@ def calculate_alignment_metrics(
             target_h = max(h1, h2)
             target_w = max(w1, w2)
             
-            gray1_resized = cv2.resize(gray1, (target_w, target_h))
-            gray2_resized = cv2.resize(gray2_corr, (target_w, target_h))
+            # 使用 INTER_LINEAR 插值以保持高質量
+            gray1_resized = cv2.resize(gray1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            gray2_resized = cv2.resize(gray2_corr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
             
             # 找到印章中心點（使用輪廓）
             def find_seal_center(img):

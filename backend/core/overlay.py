@@ -60,14 +60,15 @@ def create_overlay_image(
         if img1 is None or img2 is None:
             return None, None
         
-        # 調整到相同尺寸
+        # 調整到相同尺寸（使用高質量插值，與並排比對截圖保持一致）
         h1, w1 = img1.shape[:2]
         h2, w2 = img2.shape[:2]
         target_h = max(h1, h2)
         target_w = max(w1, w2)
         
-        img1_resized = cv2.resize(img1, (target_w, target_h))
-        img2_resized = cv2.resize(img2, (target_w, target_h))
+        # 使用 INTER_LINEAR 插值以保持高質量（與 verification.py 保持一致）
+        img1_resized = cv2.resize(img1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        img2_resized = cv2.resize(img2, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         
         # 背景移除和透明化處理
         def remove_background_and_make_transparent(img):
@@ -191,13 +192,15 @@ def create_overlay_image(
         overlay2_rgba[:, :, :3] = overlay2_on_1
         overlay2_rgba[:, :, 3] = np.maximum(binary1, binary2)
         
-        # 保存疊圖
+        # 保存疊圖（使用高質量 PNG 壓縮，確保解析度與並排比對截圖一致）
         overlay_dir.mkdir(parents=True, exist_ok=True)
         overlay1_file = overlay_dir / f"overlay_{record_id}_img1_on_img2.png"
         overlay2_file = overlay_dir / f"overlay_{record_id}_img2_on_img1.png"
         
-        cv2.imwrite(str(overlay1_file), overlay1_rgba)
-        cv2.imwrite(str(overlay2_file), overlay2_rgba)
+        # 使用 PNG 壓縮級別 1（最高質量，接近無損）以確保解析度一致
+        # cv2.IMWRITE_PNG_COMPRESSION 的範圍是 0-9，0 是無損，1 是最高質量
+        cv2.imwrite(str(overlay1_file), overlay1_rgba, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        cv2.imwrite(str(overlay2_file), overlay2_rgba, [cv2.IMWRITE_PNG_COMPRESSION, 1])
         
         # 返回絕對路徑（用於資料庫存儲）
         return str(overlay1_file), str(overlay2_file)

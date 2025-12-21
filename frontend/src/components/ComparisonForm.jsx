@@ -1,19 +1,99 @@
-import React, { useState } from 'react'
-import { Button, Box, Alert } from '@mui/material'
-import { useMutation } from '@tanstack/react-query'
+import React, { useState, useEffect } from 'react'
+import { Button, Box, Alert, Dialog, DialogTitle, DialogContent, Grid, Typography, Divider, ToggleButton, ToggleButtonGroup } from '@mui/material'
+import { ContentCopy as ContentCopyIcon, ViewAgenda as ViewAgendaIcon } from '@mui/icons-material'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { imageAPI } from '../services/api'
+import SealDetectionBox from './SealDetectionBox'
+import ImagePreview from './ImagePreview'
+import BatchSealAdjustment from './BatchSealAdjustment'
 
 function ComparisonForm({ onSubmit }) {
+  const queryClient = useQueryClient()
   const [image1, setImage1] = useState(null)
   const [image2, setImage2] = useState(null)
   const [enableRotation, setEnableRotation] = useState(true)
+  const [showSealDialog, setShowSealDialog] = useState(false)
+  const [sealDetectionResult, setSealDetectionResult] = useState(null)
+  const [isDetecting, setIsDetecting] = useState(false)
+  const [showSealDialog2, setShowSealDialog2] = useState(false)
+  const [sealDetectionResult2, setSealDetectionResult2] = useState(null)
+  const [isDetecting2, setIsDetecting2] = useState(false)
+  const [batchMode, setBatchMode] = useState(false)
+  const [showBatchDialog, setShowBatchDialog] = useState(false)
 
   const uploadImage1Mutation = useMutation({
     mutationFn: imageAPI.upload,
+    onSuccess: async (data) => {
+      setImage1(data)
+      // 自動檢測印鑑
+      setIsDetecting(true)
+      try {
+        const detectionResult = await imageAPI.detectSeal(data.id)
+        setSealDetectionResult(detectionResult)
+        // 無論檢測是否成功，都顯示對話框
+        setShowSealDialog(true)
+      } catch (error) {
+        console.error('檢測失敗:', error)
+        // 檢測失敗時設置為 null，SealDetectionBox 會使用默認值
+        setSealDetectionResult({ detected: false, bbox: null, center: null })
+        // 仍然顯示對話框，讓用戶手動框選
+        setShowSealDialog(true)
+      } finally {
+        setIsDetecting(false)
+      }
+    },
   })
 
   const uploadImage2Mutation = useMutation({
     mutationFn: imageAPI.upload,
+    onSuccess: async (data) => {
+      setImage2(data)
+      // 自動檢測印鑑
+      setIsDetecting2(true)
+      try {
+        const detectionResult = await imageAPI.detectSeal(data.id)
+        setSealDetectionResult2(detectionResult)
+        // 無論檢測是否成功，都顯示對話框
+        setShowSealDialog2(true)
+      } catch (error) {
+        console.error('檢測失敗:', error)
+        // 檢測失敗時設置為 null，SealDetectionBox 會使用默認值
+        setSealDetectionResult2({ detected: false, bbox: null, center: null })
+        // 仍然顯示對話框，讓用戶手動框選
+        setShowSealDialog2(true)
+      } finally {
+        setIsDetecting2(false)
+      }
+    },
+  })
+
+  const updateSealLocationMutation = useMutation({
+    mutationFn: ({ imageId, locationData }) => imageAPI.updateSealLocation(imageId, locationData),
+    onSuccess: (data, variables) => {
+      // 根據 imageId 判斷關閉哪個對話框
+      if (variables.imageId === uploadImage1Mutation.data?.id) {
+        setShowSealDialog(false)
+        // 更新 image1 狀態
+        setImage1(data)
+        // 更新 mutation 的 data，確保按鈕狀態正確
+        // 通過直接修改 mutation 的內部狀態
+        if (uploadImage1Mutation.data) {
+          Object.assign(uploadImage1Mutation.data, data)
+        }
+      }
+    },
+  })
+  
+  const updateSealLocationMutation2 = useMutation({
+    mutationFn: ({ imageId, locationData }) => imageAPI.updateSealLocation(imageId, locationData),
+    onSuccess: (data) => {
+      setShowSealDialog2(false)
+      setImage2(data)
+      // 更新 mutation 的 data，確保按鈕狀態正確
+      if (uploadImage2Mutation.data) {
+        Object.assign(uploadImage2Mutation.data, data)
+      }
+    },
   })
 
   const handleImage1Change = (e) => {
@@ -44,79 +124,474 @@ function ComparisonForm({ onSubmit }) {
     }
   }
 
+  const handleSealConfirm = async (locationData) => {
+    if (uploadImage1Mutation.data?.id) {
+      try {
+        // 確保數據格式正確
+        const normalizedLocationData = {
+          bbox: locationData.bbox ? {
+            x: Math.round(locationData.bbox.x),
+            y: Math.round(locationData.bbox.y),
+            width: Math.round(locationData.bbox.width),
+            height: Math.round(locationData.bbox.height)
+          } : null,
+          center: locationData.center ? {
+            center_x: Math.round(locationData.center.center_x),
+            center_y: Math.round(locationData.center.center_y),
+            radius: typeof locationData.center.radius === 'number' ? locationData.center.radius : 0
+          } : null,
+          confidence: locationData.confidence || 1.0
+        }
+        
+        await updateSealLocationMutation.mutateAsync({
+          imageId: uploadImage1Mutation.data.id,
+          locationData: normalizedLocationData
+        })
+      } catch (error) {
+        console.error('更新印鑑位置失敗:', error)
+        alert('更新印鑑位置失敗，請重試')
+      }
+    }
+  }
+
+  const handleSealCancel = () => {
+    setShowSealDialog(false)
+  }
+
+  const handleSealConfirm2 = async (locationData) => {
+    if (uploadImage2Mutation.data?.id) {
+      try {
+        // 確保數據格式正確
+        const normalizedLocationData = {
+          bbox: locationData.bbox ? {
+            x: Math.round(locationData.bbox.x),
+            y: Math.round(locationData.bbox.y),
+            width: Math.round(locationData.bbox.width),
+            height: Math.round(locationData.bbox.height)
+          } : null,
+          center: locationData.center ? {
+            center_x: Math.round(locationData.center.center_x),
+            center_y: Math.round(locationData.center.center_y),
+            radius: typeof locationData.center.radius === 'number' ? locationData.center.radius : 0
+          } : null,
+          confidence: locationData.confidence || 1.0
+        }
+        
+        await updateSealLocationMutation2.mutateAsync({
+          imageId: uploadImage2Mutation.data.id,
+          locationData: normalizedLocationData
+        })
+      } catch (error) {
+        console.error('更新印鑑位置失敗:', error)
+        alert('更新印鑑位置失敗，請重試')
+      }
+    }
+  }
+
+  const handleSealCancel2 = () => {
+    setShowSealDialog2(false)
+  }
+
+  // 處理使用同一張照片
+  const handleUseSameImage = async () => {
+    if (!uploadImage1Mutation.data) {
+      alert('請先上傳圖像1')
+      return
+    }
+
+    if (!image1?.seal_bbox) {
+      alert('請先為圖像1標記印鑑位置')
+      return
+    }
+
+    try {
+      // 獲取圖像1的文件並重新上傳作為圖像2
+      const image1Data = uploadImage1Mutation.data
+      const image1FileUrl = imageAPI.getFile(image1Data.id)
+      
+      // 從 URL 獲取文件並重新上傳
+      const response = await fetch(image1FileUrl)
+      const blob = await response.blob()
+      const file = new File([blob], image1Data.filename || 'image.jpg', { type: blob.type })
+      
+      // 上傳作為圖像2
+      uploadImage2Mutation.mutate(file, {
+        onSuccess: async (uploadedImage2) => {
+          // 複製圖像1的印鑑位置到圖像2
+          try {
+            await updateSealLocationMutation2.mutateAsync({
+              imageId: uploadedImage2.id,
+              locationData: {
+                bbox: image1Data.seal_bbox,
+                center: image1Data.seal_center,
+                confidence: image1Data.seal_confidence || 1.0
+              }
+            })
+          } catch (error) {
+            console.error('複製印鑑位置失敗:', error)
+            // 即使複製失敗，也顯示對話框讓用戶手動確認
+            setShowSealDialog2(true)
+          }
+        }
+      })
+    } catch (error) {
+      console.error('使用同一張照片失敗:', error)
+      alert('操作失敗，請重試')
+    }
+  }
+
+  // 處理清除圖像
+  const handleClearImage1 = () => {
+    setImage1(null)
+    setSealDetectionResult(null)
+    uploadImage1Mutation.reset()
+  }
+
+  const handleClearImage2 = () => {
+    setImage2(null)
+    setSealDetectionResult2(null)
+    uploadImage2Mutation.reset()
+  }
+
+  // 處理編輯圖像1的印鑑位置
+  const handleEditImage1Seal = () => {
+    if (uploadImage1Mutation.data?.id) {
+      if (batchMode && uploadImage2Mutation.data?.id) {
+        setShowBatchDialog(true)
+      } else {
+        setShowSealDialog(true)
+      }
+    }
+  }
+
+  // 處理編輯圖像2的印鑑位置
+  const handleEditImage2Seal = () => {
+    if (uploadImage2Mutation.data?.id) {
+      if (batchMode) {
+        setShowBatchDialog(true)
+      } else {
+        setShowSealDialog2(true)
+      }
+    }
+  }
+
+  // 處理批量確認
+  const handleBatchConfirm = async (locationData) => {
+    try {
+      // 確認圖像1
+      if (locationData.image1 && uploadImage1Mutation.data?.id) {
+        const normalizedLocationData1 = {
+          bbox: locationData.image1.bbox ? {
+            x: Math.round(locationData.image1.bbox.x),
+            y: Math.round(locationData.image1.bbox.y),
+            width: Math.round(locationData.image1.bbox.width),
+            height: Math.round(locationData.image1.bbox.height)
+          } : null,
+          center: locationData.image1.center ? {
+            center_x: Math.round(locationData.image1.center.center_x),
+            center_y: Math.round(locationData.image1.center.center_y),
+            radius: typeof locationData.image1.center.radius === 'number' ? locationData.image1.center.radius : 0
+          } : null,
+          confidence: 1.0
+        }
+        await updateSealLocationMutation.mutateAsync({
+          imageId: uploadImage1Mutation.data.id,
+          locationData: normalizedLocationData1
+        })
+      }
+
+      // 確認圖像2
+      if (locationData.image2 && uploadImage2Mutation.data?.id) {
+        const normalizedLocationData2 = {
+          bbox: locationData.image2.bbox ? {
+            x: Math.round(locationData.image2.bbox.x),
+            y: Math.round(locationData.image2.bbox.y),
+            width: Math.round(locationData.image2.bbox.width),
+            height: Math.round(locationData.image2.bbox.height)
+          } : null,
+          center: locationData.image2.center ? {
+            center_x: Math.round(locationData.image2.center.center_x),
+            center_y: Math.round(locationData.image2.center.center_y),
+            radius: typeof locationData.image2.center.radius === 'number' ? locationData.image2.center.radius : 0
+          } : null,
+          confidence: 1.0
+        }
+        await updateSealLocationMutation2.mutateAsync({
+          imageId: uploadImage2Mutation.data.id,
+          locationData: normalizedLocationData2
+        })
+      }
+
+      setShowBatchDialog(false)
+    } catch (error) {
+      console.error('批量確認失敗:', error)
+      alert('批量確認失敗，請重試')
+    }
+  }
+
+  const handleBatchCancel = () => {
+    setShowBatchDialog(false)
+  }
+
+  // 處理複製圖像1的印鑑位置到圖像2
+  const handleCopySealLocation = async () => {
+    if (!uploadImage1Mutation.data || !uploadImage2Mutation.data) {
+      alert('請先上傳兩個圖像')
+      return
+    }
+
+    // 使用 mutation data 或 state，確保獲取最新的印鑑位置
+    const image1Data = image1 || uploadImage1Mutation.data
+    if (!image1Data?.seal_bbox) {
+      alert('圖像1還沒有標記印鑑位置')
+      return
+    }
+
+    try {
+      await updateSealLocationMutation2.mutateAsync({
+        imageId: uploadImage2Mutation.data.id,
+        locationData: {
+          bbox: image1Data.seal_bbox,
+          center: image1Data.seal_center,
+          confidence: image1Data.seal_confidence || 1.0
+        }
+      })
+    } catch (error) {
+      console.error('複製印鑑位置失敗:', error)
+      alert('複製印鑑位置失敗，請重試')
+    }
+  }
+
   return (
     <Box component="form" onSubmit={handleSubmit}>
-      <Box sx={{ mb: 2 }}>
-        <input
-          accept="image/*"
-          style={{ display: 'none' }}
-          id="image1-upload"
-          type="file"
-          onChange={handleImage1Change}
-        />
-        <label htmlFor="image1-upload">
-          <Button
-            variant="outlined"
-            component="span"
-            fullWidth
-            disabled={uploadImage1Mutation.isPending}
-          >
-            {uploadImage1Mutation.isPending
-              ? '上傳中...'
-              : uploadImage1Mutation.data
-              ? `圖像1: ${uploadImage1Mutation.data.filename}`
-              : '選擇圖像1'}
-          </Button>
-        </label>
-        {uploadImage1Mutation.isError && (
-          <Alert severity="error" sx={{ mt: 1 }}>
-            上傳失敗
-          </Alert>
-        )}
-      </Box>
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        {/* 圖像1區域 */}
+        <Grid item xs={12} md={6}>
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle1" gutterBottom fontWeight="bold">
+              圖像1
+            </Typography>
+            <input
+              accept="image/*"
+              style={{ display: 'none' }}
+              id="image1-upload"
+              type="file"
+              onChange={handleImage1Change}
+            />
+            <label htmlFor="image1-upload">
+              <Button
+                variant="outlined"
+                component="span"
+                fullWidth
+                disabled={uploadImage1Mutation.isPending || isDetecting}
+                sx={{ mb: 1 }}
+              >
+                {uploadImage1Mutation.isPending
+                  ? '上傳中...'
+                  : isDetecting
+                  ? '檢測印鑑中...'
+                  : '選擇圖像1'}
+              </Button>
+            </label>
+            {uploadImage1Mutation.isError && (
+              <Alert severity="error" sx={{ mt: 1 }}>
+                上傳失敗
+              </Alert>
+            )}
+            {uploadImage1Mutation.data && (
+              <Button
+                variant="text"
+                size="small"
+                onClick={handleClearImage1}
+                sx={{ mt: 0.5 }}
+              >
+                清除
+              </Button>
+            )}
+          </Box>
+          
+          {/* 圖像預覽 */}
+          <ImagePreview
+            image={image1}
+            label="圖像1預覽"
+            onEdit={handleEditImage1Seal}
+            showSealIndicator={true}
+          />
+        </Grid>
 
-      <Box sx={{ mb: 2 }}>
-        <input
-          accept="image/*"
-          style={{ display: 'none' }}
-          id="image2-upload"
-          type="file"
-          onChange={handleImage2Change}
-        />
-        <label htmlFor="image2-upload">
-          <Button
-            variant="outlined"
-            component="span"
-            fullWidth
-            disabled={uploadImage2Mutation.isPending}
-          >
-            {uploadImage2Mutation.isPending
-              ? '上傳中...'
-              : uploadImage2Mutation.data
-              ? `圖像2: ${uploadImage2Mutation.data.filename}`
-              : '選擇圖像2'}
-          </Button>
-        </label>
-        {uploadImage2Mutation.isError && (
-          <Alert severity="error" sx={{ mt: 1 }}>
-            上傳失敗
-          </Alert>
-        )}
-      </Box>
+        {/* 圖像2區域 */}
+        <Grid item xs={12} md={6}>
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle1" gutterBottom fontWeight="bold">
+              圖像2
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+              <input
+                accept="image/*"
+                style={{ display: 'none' }}
+                id="image2-upload"
+                type="file"
+                onChange={handleImage2Change}
+              />
+              <label htmlFor="image2-upload" style={{ flex: 1 }}>
+                <Button
+                  variant="outlined"
+                  component="span"
+                  fullWidth
+                  disabled={uploadImage2Mutation.isPending || isDetecting2}
+                >
+                  {uploadImage2Mutation.isPending
+                    ? '上傳中...'
+                    : isDetecting2
+                    ? '檢測印鑑中...'
+                    : '選擇圖像2'}
+                </Button>
+              </label>
+              {uploadImage1Mutation.data && (
+                <Button
+                  variant="outlined"
+                  startIcon={<ContentCopyIcon />}
+                  onClick={handleUseSameImage}
+                  disabled={!image1?.seal_bbox}
+                  title="使用圖像1作為圖像2（需要先標記圖像1的印鑑位置）"
+                >
+                  使用同一張
+                </Button>
+              )}
+            </Box>
+            {uploadImage2Mutation.isError && (
+              <Alert severity="error" sx={{ mt: 1 }}>
+                上傳失敗
+              </Alert>
+            )}
+            {uploadImage2Mutation.data && (
+              <Button
+                variant="text"
+                size="small"
+                onClick={handleClearImage2}
+                sx={{ mt: 0.5 }}
+              >
+                清除
+              </Button>
+            )}
+          </Box>
+          
+          {/* 圖像預覽 */}
+          <ImagePreview
+            image={image2}
+            label="圖像2預覽"
+            onEdit={handleEditImage2Seal}
+            showSealIndicator={true}
+          />
+          
+          {/* 複製印鑑位置按鈕 */}
+          {uploadImage1Mutation.data && 
+           uploadImage2Mutation.data && 
+           (image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox) && 
+           !(image2?.seal_bbox || uploadImage2Mutation.data?.seal_bbox) && (
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<ContentCopyIcon />}
+              onClick={handleCopySealLocation}
+              fullWidth
+              sx={{ mt: 1 }}
+              title="複製圖像1的印鑑位置到圖像2"
+            >
+              複製圖像1的印鑑位置
+            </Button>
+          )}
+        </Grid>
+      </Grid>
+
+      <Divider sx={{ my: 2 }} />
 
       <Button
         type="submit"
         variant="contained"
         fullWidth
+        size="large"
         disabled={
           !uploadImage1Mutation.data ||
           !uploadImage2Mutation.data ||
           uploadImage1Mutation.isPending ||
-          uploadImage2Mutation.isPending
+          uploadImage2Mutation.isPending ||
+          showSealDialog ||
+          showSealDialog2 ||
+          showBatchDialog ||
+          !(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox) ||
+          !(image2?.seal_bbox || uploadImage2Mutation.data?.seal_bbox)
         }
       >
         開始比對
       </Button>
+
+      <Dialog
+        open={showSealDialog}
+        onClose={() => {}} // 不允許點擊外部關閉
+        disableEscapeKeyDown={true} // 不允許按 ESC 關閉
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>調整圖像1印鑑位置</DialogTitle>
+        <DialogContent>
+          {uploadImage1Mutation.data?.id && (
+            <SealDetectionBox
+              imageId={uploadImage1Mutation.data.id}
+              initialBbox={sealDetectionResult?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
+              initialCenter={sealDetectionResult?.center || uploadImage1Mutation.data?.seal_center || null}
+              onConfirm={handleSealConfirm}
+              onCancel={handleSealCancel}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={showSealDialog2}
+        onClose={() => {}} // 不允許點擊外部關閉
+        disableEscapeKeyDown={true} // 不允許按 ESC 關閉
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>調整圖像2印鑑位置</DialogTitle>
+        <DialogContent>
+          {uploadImage2Mutation.data?.id && (
+            <SealDetectionBox
+              imageId={uploadImage2Mutation.data.id}
+              initialBbox={sealDetectionResult2?.bbox || uploadImage2Mutation.data?.seal_bbox || null}
+              initialCenter={sealDetectionResult2?.center || uploadImage2Mutation.data?.seal_center || null}
+              onConfirm={handleSealConfirm2}
+              onCancel={handleSealCancel2}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* 批量調整對話框 */}
+      <Dialog
+        open={showBatchDialog}
+        onClose={() => {}} // 不允許點擊外部關閉
+        disableEscapeKeyDown={true} // 不允許按 ESC 關閉
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>批量調整印鑑位置</DialogTitle>
+        <DialogContent>
+          {uploadImage1Mutation.data?.id && uploadImage2Mutation.data?.id && (
+            <BatchSealAdjustment
+              image1Id={uploadImage1Mutation.data.id}
+              image2Id={uploadImage2Mutation.data.id}
+              image1InitialBbox={sealDetectionResult?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
+              image1InitialCenter={sealDetectionResult?.center || uploadImage1Mutation.data?.seal_center || null}
+              image2InitialBbox={sealDetectionResult2?.bbox || uploadImage2Mutation.data?.seal_bbox || null}
+              image2InitialCenter={sealDetectionResult2?.center || uploadImage2Mutation.data?.seal_center || null}
+              onConfirm={handleBatchConfirm}
+              onCancel={handleBatchCancel}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </Box>
   )
 }

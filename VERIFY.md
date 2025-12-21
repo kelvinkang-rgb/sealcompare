@@ -78,25 +78,44 @@ http://localhost:3000
 1. 訪問 http://localhost:8000/docs
 2. 展開 `POST /api/v1/images/upload`
 3. 點擊「Try it out」
-4. 選擇一個測試圖像文件
+4. 選擇一個測試圖像文件（例如：`test_images/seal_original_1.jpg`）
 5. 點擊「Execute」
-6. 複製返回的 `id`
+6. 複製返回的 `id` 作為 `image1_id`
 
-重複上傳第二個圖像，然後：
+重複上傳第二個圖像（例如：`test_images/seal_rotated_medium.jpg`），複製 `id` 作為 `image2_id`，然後：
 
 1. 展開 `POST /api/v1/comparisons/`
 2. 點擊「Try it out」
-3. 填入兩個圖像的 ID
+3. 填入：
+   - `image1_id`: 第一個圖像的 ID
+   - `image2_id`: 第二個圖像的 ID
+   - `threshold`: 0.95（可選，預設值）
+   - `enable_rotation_search`: true（可選，預設值）
+   - `enable_translation_search`: true（可選，預設值）
 4. 點擊「Execute」
-5. 複製返回的 `comparison_id`
+5. 複製返回的 `id` 作為 `comparison_id`
 
-最後：
+查詢比對狀態：
+
+1. 展開 `GET /api/v1/comparisons/{comparison_id}/status`
+2. 點擊「Try it out」
+3. 填入 `comparison_id`
+4. 點擊「Execute」
+5. 查看狀態（pending/processing/completed/failed）和進度
+
+獲取比對結果：
 
 1. 展開 `GET /api/v1/comparisons/{comparison_id}`
 2. 點擊「Try it out」
-3. 填入 comparison_id
+3. 填入 `comparison_id`
 4. 點擊「Execute」
-5. 查看比對結果
+5. 查看比對結果（相似度、是否匹配、詳細指標等）
+
+獲取視覺化圖像：
+
+1. 展開 `GET /api/v1/comparisons/{comparison_id}/comparison-image` - 查看並排對比圖
+2. 展開 `GET /api/v1/comparisons/{comparison_id}/heatmap` - 查看差異熱力圖
+3. 展開 `GET /api/v1/comparisons/{comparison_id}/overlay` - 查看疊圖（可選參數 `overlay_type=1` 或 `2`）
 
 ## ✅ 步驟 5: 查看比對記錄
 

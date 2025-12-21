@@ -49,6 +49,7 @@ function Comparison() {
       image2_id: image2Id,
       threshold: threshold,
       enable_rotation_search: enableRotation,
+      enable_translation_search: true,  // 預設開啟，因為人工標記印鑑無法確保中心點都一致
     })
   }
 
