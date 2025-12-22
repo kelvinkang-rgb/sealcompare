@@ -1,457 +1,380 @@
-<svg width="1600" height="2450" xmlns="http://www.w3.org/2000/svg">
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="2000" height="3800" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <style>
-      .title { font-family: Arial, sans-serif; font-size: 24px; font-weight: bold; fill: #2c3e50; }
-      .stage-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #34495e; }
-      .box-label { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #2c3e50; }
-      .text { font-family: Arial, sans-serif; font-size: 12px; fill: #34495e; }
-      .input-label { font-family: Arial, sans-serif; font-size: 11px; fill: #27ae60; font-weight: bold; }
-      .output-label { font-family: Arial, sans-serif; font-size: 11px; fill: #e74c3c; font-weight: bold; }
-      .process-label { font-family: Arial, sans-serif; font-size: 11px; fill: #3498db; font-weight: bold; }
-      .arrow { stroke: #34495e; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
-      .stage-box { fill: #ecf0f1; stroke: #bdc3c7; stroke-width: 2; rx: 5; }
-      .process-box { fill: #e8f4f8; stroke: #3498db; stroke-width: 2; rx: 3; }
-      .input-box { fill: #e8f5e9; stroke: #27ae60; stroke-width: 2; rx: 3; }
-      .output-box { fill: #ffe8e8; stroke: #e74c3c; stroke-width: 2; rx: 3; }
-      .warning-box { fill: #fff3cd; stroke: #ffc107; stroke-width: 2; rx: 3; }
+      .stage-box { fill: #e3f2fd; stroke: #1976d2; stroke-width: 2; rx: 5; }
+      .process-box { fill: #fff3e0; stroke: #f57c00; stroke-width: 1.5; rx: 3; }
+      .input-box { fill: #e8f5e9; stroke: #388e3c; stroke-width: 1.5; rx: 3; }
+      .output-box { fill: #fce4ec; stroke: #c2185b; stroke-width: 1.5; rx: 3; }
+      .arrow { stroke: #424242; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .text { font-family: Arial, sans-serif; font-size: 11px; }
+      .title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; }
+      .stage-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; }
+      .note { fill: #fff9c4; stroke: #f9a825; stroke-width: 1.5; rx: 3; }
+      .error-note { fill: #ffcdd2; stroke: #d32f2f; stroke-width: 1.5; rx: 3; }
+      .optimization-note { fill: #c8e6c9; stroke: #388e3c; stroke-width: 1.5; rx: 3; }
     </style>
     <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-      <polygon points="0 0, 10 3, 0 6" fill="#34495e" />
+      <polygon points="0 0, 10 3, 0 6" fill="#424242" />
     </marker>
   </defs>
   
   <!-- 標題 -->
-  <text x="800" y="30" text-anchor="middle" class="title">印鑑圖像比對流程圖</text>
+  <text x="1000" y="30" text-anchor="middle" class="title">印鑑比對系統流程圖（優化後）</text>
   
-  <!-- 階段1: API接收請求 -->
+  <!-- 階段1: 初始化 -->
   <g id="stage1">
-    <rect x="50" y="60" width="1500" height="120" class="stage-box"/>
-    <text x="800" y="85" text-anchor="middle" class="stage-title">階段1: API接收請求與初始化</text>
+    <rect x="50" y="60" width="1900" height="80" class="stage-box"/>
+    <text x="1000" y="85" text-anchor="middle" class="stage-title">階段1: 初始化</text>
     
-    <!-- Input -->
-    <rect x="70" y="100" width="200" height="70" class="input-box"/>
-    <text x="170" y="120" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="140" text-anchor="middle" class="text">image1_id</text>
-    <text x="170" y="155" text-anchor="middle" class="text">image2_id</text>
-    <text x="170" y="170" text-anchor="middle" class="text">threshold</text>
+    <rect x="100" y="100" width="400" height="30" class="input-box"/>
+    <text x="300" y="120" text-anchor="middle" class="text">Input: comparison_id, enable_rotation_search, enable_translation_search</text>
     
-    <!-- Process -->
-    <rect x="290" y="100" width="200" height="70" class="process-box"/>
-    <text x="390" y="120" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="140" text-anchor="middle" class="text">create_comparison()</text>
-    <text x="390" y="155" text-anchor="middle" class="text">驗證圖像存在</text>
-    <text x="390" y="170" text-anchor="middle" class="text">創建比對記錄</text>
+    <rect x="600" y="100" width="400" height="30" class="process-box"/>
+    <text x="800" y="120" text-anchor="middle" class="text">Process: 創建 processing_stages，設置狀態為 PROCESSING</text>
     
-    <!-- Output -->
-    <rect x="510" y="100" width="200" height="70" class="output-box"/>
-    <text x="610" y="120" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="140" text-anchor="middle" class="text">Comparison記錄</text>
-    <text x="610" y="155" text-anchor="middle" class="text">status=PENDING</text>
-    <text x="610" y="170" text-anchor="middle" class="text">觸發後台任務</text>
+    <rect x="1200" y="100" width="400" height="30" class="output-box"/>
+    <text x="1400" y="120" text-anchor="middle" class="text">Output: processing_stages 結構，狀態更新</text>
     
-    <!-- 箭頭 -->
-    <line x1="270" y1="135" x2="290" y2="135" class="arrow"/>
-    <line x1="490" y1="135" x2="510" y2="135" class="arrow"/>
+    <line x1="500" y1="115" x2="600" y2="115" class="arrow"/>
+    <line x1="1000" y1="115" x2="1200" y2="115" class="arrow"/>
   </g>
   
   <!-- 階段2: 載入圖像 -->
   <g id="stage2">
-    <rect x="50" y="200" width="1500" height="180" class="stage-box"/>
-    <text x="800" y="225" text-anchor="middle" class="stage-title">階段2: 載入與驗證圖像</text>
+    <rect x="50" y="180" width="1900" height="200" class="stage-box"/>
+    <text x="1000" y="205" text-anchor="middle" class="stage-title">階段2: 載入圖像</text>
     
-    <!-- Input -->
-    <rect x="70" y="250" width="200" height="120" class="input-box"/>
-    <text x="170" y="270" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="290" text-anchor="middle" class="text">image1.file_path</text>
-    <text x="170" y="310" text-anchor="middle" class="text">image2.file_path</text>
-    <text x="170" y="330" text-anchor="middle" class="text">image1.seal_bbox</text>
-    <text x="170" y="350" text-anchor="middle" class="text">image2.seal_bbox</text>
+    <!-- 2.1 獲取路徑 -->
+    <rect x="100" y="220" width="350" height="30" class="input-box"/>
+    <text x="275" y="240" text-anchor="middle" class="text">Input: db_comparison.image1.file_path, image2.file_path</text>
     
-    <!-- Process -->
-    <rect x="290" y="250" width="200" height="120" class="process-box"/>
-    <text x="390" y="270" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="290" text-anchor="middle" class="text">驗證文件存在</text>
-    <text x="390" y="310" text-anchor="middle" class="text">cv2.imread()</text>
-    <text x="390" y="330" text-anchor="middle" class="text">讀取bbox信息</text>
-    <text x="390" y="350" text-anchor="middle" class="text">驗證文件格式</text>
+    <rect x="550" y="220" width="350" height="30" class="process-box"/>
+    <text x="725" y="240" text-anchor="middle" class="text">Process: 標準化路徑，驗證文件存在</text>
     
-    <!-- Output -->
-    <rect x="510" y="250" width="200" height="120" class="output-box"/>
-    <text x="610" y="270" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="290" text-anchor="middle" class="text">img1_original</text>
-    <text x="610" y="310" text-anchor="middle" class="text">img2_original</text>
-    <text x="610" y="330" text-anchor="middle" class="text">bbox1 (可選)</text>
-    <text x="610" y="350" text-anchor="middle" class="text">bbox2 (可選)</text>
+    <rect x="1000" y="220" width="350" height="30" class="output-box"/>
+    <text x="1175" y="240" text-anchor="middle" class="text">Output: image1_path_obj, image2_path_obj</text>
     
-    <!-- 箭頭 -->
-    <line x1="270" y1="310" x2="290" y2="310" class="arrow"/>
-    <line x1="490" y1="310" x2="510" y2="310" class="arrow"/>
+    <line x1="450" y1="235" x2="550" y2="235" class="arrow"/>
+    <line x1="900" y1="235" x2="1000" y2="235" class="arrow"/>
+    
+    <!-- 2.2 讀取 bbox -->
+    <rect x="100" y="270" width="350" height="30" class="input-box"/>
+    <text x="275" y="290" text-anchor="middle" class="text">Input: image1.seal_bbox, image2.seal_bbox</text>
+    
+    <rect x="550" y="270" width="350" height="30" class="process-box"/>
+    <text x="725" y="290" text-anchor="middle" class="text">Process: 讀取裁切區域信息（可選）</text>
+    
+    <rect x="1000" y="270" width="350" height="30" class="output-box"/>
+    <text x="1175" y="290" text-anchor="middle" class="text">Output: bbox1, bbox2 (可為 None)</text>
+    
+    <line x1="450" y1="285" x2="550" y2="285" class="arrow"/>
+    <line x1="900" y1="285" x2="1000" y2="285" class="arrow"/>
+    
+    <!-- 2.3 載入並裁切 -->
+    <rect x="100" y="320" width="350" height="30" class="input-box"/>
+    <text x="275" y="340" text-anchor="middle" class="text">Input: image1_path_obj, image2_path_obj, bbox1, bbox2</text>
+    
+    <rect x="550" y="320" width="350" height="30" class="process-box"/>
+    <text x="725" y="340" text-anchor="middle" class="text">Process: cv2.imread(), 根據 bbox 裁切（如有）</text>
+    
+    <rect x="1000" y="320" width="350" height="30" class="output-box"/>
+    <text x="1175" y="340" text-anchor="middle" class="text">Output: img1_cropped, img2_cropped</text>
+    
+    <line x1="450" y1="335" x2="550" y2="335" class="arrow"/>
+    <line x1="900" y1="335" x2="1000" y2="335" class="arrow"/>
   </g>
   
-  <!-- 階段3: 裁切圖像 -->
+  <!-- 階段3: 圖像1去背景 -->
   <g id="stage3">
-    <rect x="50" y="400" width="1500" height="150" class="stage-box"/>
-    <text x="800" y="425" text-anchor="middle" class="stage-title">階段3: 裁切圖像（如果有bbox）</text>
+    <rect x="50" y="420" width="1900" height="120" class="stage-box"/>
+    <text x="1000" y="445" text-anchor="middle" class="stage-title">階段3: 圖像1去背景（已移除對齊步驟）</text>
     
-    <!-- Input -->
-    <rect x="70" y="450" width="200" height="90" class="input-box"/>
-    <text x="170" y="470" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="490" text-anchor="middle" class="text">img1_original</text>
-    <text x="170" y="510" text-anchor="middle" class="text">img2_original</text>
-    <text x="170" y="530" text-anchor="middle" class="text">bbox1, bbox2</text>
+    <rect x="100" y="460" width="400" height="30" class="input-box"/>
+    <text x="300" y="480" text-anchor="middle" class="text">Input: img1_cropped</text>
     
-    <!-- Process -->
-    <rect x="290" y="450" width="200" height="90" class="process-box"/>
-    <text x="390" y="470" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="490" text-anchor="middle" class="text">檢查bbox有效性</text>
-    <text x="390" y="510" text-anchor="middle" class="text">img[y:y+h, x:x+w]</text>
-    <text x="390" y="530" text-anchor="middle" class="text">邊界檢查</text>
+    <rect x="600" y="460" width="400" height="30" class="process-box"/>
+    <text x="800" y="480" text-anchor="middle" class="text">Process: _auto_detect_bounds_and_remove_background()</text>
     
-    <!-- Output -->
-    <rect x="510" y="450" width="200" height="90" class="output-box"/>
-    <text x="610" y="470" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="490" text-anchor="middle" class="text">img1_cropped</text>
-    <text x="610" y="510" text-anchor="middle" class="text">img2_cropped</text>
-    <text x="610" y="530" text-anchor="middle" class="text">(無bbox則使用原圖)</text>
+    <rect x="1200" y="460" width="400" height="30" class="output-box"/>
+    <text x="1400" y="480" text-anchor="middle" class="text">Output: img1_no_bg (去背景後的圖像1)</text>
     
-    <!-- 箭頭 -->
-    <line x1="270" y1="495" x2="290" y2="495" class="arrow"/>
-    <line x1="490" y1="495" x2="510" y2="495" class="arrow"/>
+    <line x1="500" y1="475" x2="600" y2="475" class="arrow"/>
+    <line x1="1000" y1="475" x2="1200" y2="475" class="arrow"/>
+    
+    <!-- 保存圖像1 -->
+    <rect x="100" y="500" width="400" height="30" class="process-box"/>
+    <text x="300" y="520" text-anchor="middle" class="text">Process: 保存 img1_no_bg 到 image1_cropped_path</text>
+    
+    <rect x="600" y="500" width="400" height="30" class="output-box"/>
+    <text x="800" y="520" text-anchor="middle" class="text">Output: image1_for_comparison (文件路徑)</text>
+    
+    <line x1="500" y1="515" x2="600" y2="515" class="arrow"/>
+    
+    <!-- 注意 -->
+    <rect x="1450" y="460" width="400" height="70" class="note"/>
+    <text x="1650" y="480" text-anchor="middle" class="text" style="font-weight: bold;">注意</text>
+    <text x="1650" y="500" text-anchor="middle" class="text" style="font-size: 10px;">圖像1只進行去背景處理</text>
+    <text x="1650" y="520" text-anchor="middle" class="text" style="font-size: 10px;">不對齊（_align_image1已移除）</text>
   </g>
   
-  <!-- 階段4: 去背景 -->
+  <!-- 階段4: 圖像2去背景和對齊 -->
   <g id="stage4">
-    <rect x="50" y="570" width="1500" height="200" class="stage-box"/>
-    <text x="800" y="595" text-anchor="middle" class="stage-title">階段4: 自動偵測邊界並移除背景</text>
+    <rect x="50" y="580" width="1900" height="200" class="stage-box"/>
+    <text x="1000" y="605" text-anchor="middle" class="stage-title">階段4: 圖像2去背景和對齊（相對於圖像1優化）</text>
     
-    <!-- Input -->
-    <rect x="70" y="620" width="200" height="130" class="input-box"/>
-    <text x="170" y="640" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="660" text-anchor="middle" class="text">img1_cropped</text>
-    <text x="170" y="680" text-anchor="middle" class="text">img2_cropped</text>
+    <!-- 4.1 去背景 -->
+    <rect x="100" y="630" width="350" height="30" class="input-box"/>
+    <text x="275" y="650" text-anchor="middle" class="text">Input: img2_cropped</text>
     
-    <!-- Process -->
-    <rect x="290" y="620" width="200" height="130" class="process-box"/>
-    <text x="390" y="640" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="660" text-anchor="middle" class="text">_auto_detect_bounds_and_</text>
-    <text x="390" y="675" text-anchor="middle" class="text">remove_background()</text>
-    <text x="390" y="695" text-anchor="middle" class="text">1. 檢測邊緣背景顏色</text>
-    <text x="390" y="715" text-anchor="middle" class="text">2. OTSU二值化</text>
-    <text x="390" y="735" text-anchor="middle" class="text">3. 輪廓檢測+裁切</text>
+    <rect x="550" y="630" width="350" height="30" class="process-box"/>
+    <text x="725" y="650" text-anchor="middle" class="text">Process: _auto_detect_bounds_and_remove_background()</text>
     
-    <!-- Output -->
-    <rect x="510" y="620" width="200" height="130" class="output-box"/>
-    <text x="610" y="640" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="660" text-anchor="middle" class="text">img1_no_bg</text>
-    <text x="610" y="680" text-anchor="middle" class="text">img2_no_bg</text>
-    <text x="610" y="700" text-anchor="middle" class="text">背景設為白色(255)</text>
-    <text x="610" y="720" text-anchor="middle" class="text">自動裁切邊界</text>
-    <text x="610" y="740" text-anchor="middle" class="text">保留印章區域</text>
+    <rect x="1000" y="630" width="350" height="30" class="output-box"/>
+    <text x="1175" y="650" text-anchor="middle" class="text">Output: img2_no_bg (去背景後的圖像2)</text>
     
-    <!-- 箭頭 -->
-    <line x1="270" y1="685" x2="290" y2="685" class="arrow"/>
-    <line x1="490" y1="685" x2="510" y2="685" class="arrow"/>
+    <line x1="450" y1="645" x2="550" y2="645" class="arrow"/>
+    <line x1="900" y1="645" x2="1000" y2="645" class="arrow"/>
+    
+    <!-- 4.2 對齊優化 -->
+    <rect x="100" y="680" width="350" height="30" class="input-box"/>
+    <text x="275" y="700" text-anchor="middle" class="text">Input: img1_no_bg (參考), img2_no_bg (待對齊)</text>
+    
+    <rect x="550" y="680" width="350" height="30" class="process-box"/>
+    <text x="725" y="700" text-anchor="middle" class="text">Process: _align_image2_to_image1()</text>
+    
+    <rect x="1000" y="680" width="350" height="30" class="output-box"/>
+    <text x="1175" y="700" text-anchor="middle" class="text">Output: img2_aligned, rotation_angle, translation_offset</text>
+    
+    <line x1="450" y1="695" x2="550" y2="695" class="arrow"/>
+    <line x1="900" y1="695" x2="1000" y2="695" class="arrow"/>
+    
+    <!-- 4.3 對齊優化詳細流程 -->
+    <rect x="100" y="730" width="800" height="40" class="process-box"/>
+    <text x="500" y="750" text-anchor="middle" class="text" style="font-weight: bold;">_align_image2_to_image1 詳細流程：</text>
+    <text x="500" y="765" text-anchor="middle" class="text" style="font-size: 10px;">階段1: 粗搜索（縮放0.2，角度步長3°，偏移步長8px，提前終止>0.95）</text>
+    <text x="500" y="780" text-anchor="middle" class="text" style="font-size: 10px;">階段2: 完整尺寸評估（動態候選數量3-7個）</text>
+    <text x="500" y="795" text-anchor="middle" class="text" style="font-size: 10px;">階段3: 細搜索優化（±2度，±10像素，步長0.5度/1px）</text>
+    
+    <!-- 保存對齊結果 -->
+    <rect x="1000" y="730" width="400" height="40" class="output-box"/>
+    <text x="1200" y="750" text-anchor="middle" class="text">保存 alignment_optimization 到 details</text>
+    <text x="1200" y="770" text-anchor="middle" class="text" style="font-size: 10px;">包含: rotation_angle, translation_offset,</text>
+    <text x="1200" y="785" text-anchor="middle" class="text" style="font-size: 10px;">similarity, similarity_metrics</text>
+    
+    <line x1="900" y1="750" x2="1000" y2="750" class="arrow"/>
+    
+    <!-- 保存圖像2 -->
+    <rect x="100" y="780" width="400" height="30" class="process-box"/>
+    <text x="300" y="800" text-anchor="middle" class="text">Process: 保存 img2_aligned 到 image2_cropped_path</text>
+    
+    <rect x="600" y="780" width="400" height="30" class="output-box"/>
+    <text x="800" y="800" text-anchor="middle" class="text">Output: image2_for_comparison (文件路徑)</text>
+    
+    <line x1="500" y1="795" x2="600" y2="795" class="arrow"/>
   </g>
   
-  <!-- 階段5: 圖像1去背景（已移除對齊） -->
+  <!-- 階段5: 計算相似度 -->
   <g id="stage5">
-    <rect x="50" y="790" width="1500" height="150" class="stage-box"/>
-    <text x="800" y="815" text-anchor="middle" class="stage-title">階段5: 圖像1去背景（已移除對齊步驟）</text>
+    <rect x="50" y="820" width="1900" height="200" class="stage-box"/>
+    <text x="1000" y="845" text-anchor="middle" class="stage-title">階段5: 計算相似度（圖像已對齊，不需要旋轉/平移搜索）</text>
     
-    <!-- Input -->
-    <rect x="70" y="840" width="200" height="90" class="input-box"/>
-    <text x="170" y="860" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="880" text-anchor="middle" class="text">img1_cropped</text>
+    <rect x="100" y="870" width="350" height="30" class="input-box"/>
+    <text x="275" y="890" text-anchor="middle" class="text">Input: image1_for_comparison, image2_for_comparison</text>
     
-    <!-- Process -->
-    <rect x="290" y="840" width="200" height="90" class="process-box"/>
-    <text x="390" y="860" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="880" text-anchor="middle" class="text">_remove_background_and_align()</text>
-    <text x="390" y="900" text-anchor="middle" class="text">只去背景，不對齊</text>
-    <text x="390" y="920" text-anchor="middle" class="text">（_align_image1已移除調用）</text>
+    <rect x="550" y="870" width="350" height="30" class="process-box"/>
+    <text x="725" y="890" text-anchor="middle" class="text">Process: compare_files() - 載入圖像並轉換為灰度</text>
     
-    <!-- Output -->
-    <rect x="510" y="840" width="200" height="90" class="output-box"/>
-    <text x="610" y="860" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="880" text-anchor="middle" class="text">img1_no_bg</text>
-    <text x="610" y="900" text-anchor="middle" class="text">(直接返回，不對齊)</text>
+    <rect x="1000" y="870" width="350" height="30" class="output-box"/>
+    <text x="1175" y="890" text-anchor="middle" class="text">Output: img1_processed, img2_processed (灰度圖)</text>
     
-    <!-- 箭頭 -->
-    <line x1="270" y1="885" x2="290" y2="885" class="arrow"/>
-    <line x1="490" y1="885" x2="510" y2="885" class="arrow"/>
+    <line x1="450" y1="885" x2="550" y2="885" class="arrow"/>
+    <line x1="900" y1="885" x2="1000" y2="885" class="arrow"/>
     
-    <!-- 註釋框 -->
-    <rect x="730" y="840" width="800" height="90" class="warning-box"/>
-    <text x="1130" y="860" text-anchor="middle" class="box-label">ℹ️ 變更說明</text>
-    <text x="1130" y="880" text-anchor="middle" class="text">_align_image1() 函數定義仍保留在代碼中，但已不再調用</text>
-    <text x="1130" y="900" text-anchor="middle" class="text">圖像1只進行去背景處理，直接返回 img1_no_bg</text>
-    <text x="1130" y="920" text-anchor="middle" class="text">圖像2將使用 img1_no_bg 作為參考進行對齊</text>
+    <!-- 相似度計算指標 -->
+    <rect x="100" y="920" width="350" height="30" class="input-box"/>
+    <text x="275" y="940" text-anchor="middle" class="text">Input: img1_final, img2_final (原始尺寸，不調整)</text>
+    
+    <rect x="550" y="920" width="350" height="30" class="process-box"/>
+    <text x="725" y="940" text-anchor="middle" class="text">Process: 計算多種相似度指標</text>
+    
+    <rect x="1000" y="920" width="350" height="30" class="output-box"/>
+    <text x="1175" y="940" text-anchor="middle" class="text">Output: similarity_ssim, similarity_template, pixel_similarity, histogram_similarity</text>
+    
+    <line x1="450" y1="935" x2="550" y2="935" class="arrow"/>
+    <line x1="900" y1="935" x2="1000" y2="935" class="arrow"/>
+    
+    <!-- 最終相似度 -->
+    <rect x="100" y="970" width="350" height="30" class="input-box"/>
+    <text x="275" y="990" text-anchor="middle" class="text">Input: 各項相似度指標</text>
+    
+    <rect x="550" y="970" width="350" height="30" class="process-box"/>
+    <text x="725" y="990" text-anchor="middle" class="text">Process: 加權組合 (SSIM:0.4, Template:0.3, Pixel:0.2, Hist:0.1)</text>
+    
+    <rect x="1000" y="970" width="350" height="30" class="output-box"/>
+    <text x="1175" y="990" text-anchor="middle" class="text">Output: similarity (最終相似度), is_match (是否匹配)</text>
+    
+    <line x1="450" y1="985" x2="550" y2="985" class="arrow"/>
+    <line x1="900" y1="985" x2="1000" y2="985" class="arrow"/>
+    
+    <!-- 優化說明 -->
+    <rect x="1450" y="920" width="400" height="80" class="optimization-note"/>
+    <text x="1650" y="940" text-anchor="middle" class="text" style="font-weight: bold;">優化說明</text>
+    <text x="1650" y="960" text-anchor="middle" class="text" style="font-size: 10px;">✓ 移除尺寸調整（避免圖像變形）</text>
+    <text x="1650" y="975" text-anchor="middle" class="text" style="font-size: 10px;">✓ 移除未使用的指標計算</text>
+    <text x="1650" y="990" text-anchor="middle" class="text" style="font-size: 10px;">✓ 圖像已對齊，不需要旋轉/平移搜索</text>
   </g>
   
-  <!-- 階段6: 對齊圖像2 -->
+  <!-- 階段6: 保存校正後圖像 -->
   <g id="stage6">
-    <rect x="50" y="960" width="1500" height="250" class="stage-box"/>
-    <text x="800" y="985" text-anchor="middle" class="stage-title">階段6: 對齊圖像2（相對於圖像1優化）</text>
+    <rect x="50" y="1060" width="1900" height="100" class="stage-box"/>
+    <text x="1000" y="1085" text-anchor="middle" class="stage-title">階段6: 保存校正後圖像</text>
     
-    <!-- Input -->
-    <rect x="70" y="1010" width="200" height="180" class="input-box"/>
-    <text x="170" y="1030" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="1050" text-anchor="middle" class="text">img2_no_bg</text>
-    <text x="170" y="1070" text-anchor="middle" class="text">img1_no_bg (參考)</text>
-    <text x="170" y="1090" text-anchor="middle" class="text">(已去背景，未對齊)</text>
+    <rect x="100" y="1100" width="400" height="30" class="input-box"/>
+    <text x="300" y="1120" text-anchor="middle" class="text">Input: img1_corrected, img2_corrected (從 compare_files 返回)</text>
     
-    <!-- Process -->
-    <rect x="290" y="1010" width="200" height="180" class="process-box"/>
-    <text x="390" y="1030" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="1050" text-anchor="middle" class="text">_align_image2_to_image1()</text>
-    <text x="390" y="1070" text-anchor="middle" class="text">階段1: 粗搜索</text>
-    <text x="390" y="1090" text-anchor="middle" class="text">  - 縮小圖像(30%)</text>
-    <text x="390" y="1110" text-anchor="middle" class="text">  - 角度: ±45°, 每5°</text>
-    <text x="390" y="1130" text-anchor="middle" class="text">  - 平移: ±100px, 每10px</text>
-    <text x="390" y="1150" text-anchor="middle" class="text">階段2: 細搜索(±2°, ±10px)</text>
-    <text x="390" y="1170" text-anchor="middle" class="text">階段3: 評估相似度</text>
-    <text x="390" y="1190" text-anchor="middle" class="text">使用 _fast_rotation_match()</text>
+    <rect x="600" y="1100" width="400" height="30" class="process-box"/>
+    <text x="800" y="1120" text-anchor="middle" class="text">Process: cv2.imwrite() 保存到 corrected_images 目錄</text>
     
-    <!-- Output -->
-    <rect x="510" y="1010" width="200" height="180" class="output-box"/>
-    <text x="610" y="1030" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="1050" text-anchor="middle" class="text">img2_aligned</text>
-    <text x="610" y="1070" text-anchor="middle" class="text">best_rotation_angle</text>
-    <text x="610" y="1090" text-anchor="middle" class="text">best_translation_offset</text>
-    <text x="610" y="1110" text-anchor="middle" class="text">alignment_similarity</text>
-    <text x="610" y="1130" text-anchor="middle" class="text">alignment_metrics</text>
+    <rect x="1200" y="1100" width="400" height="30" class="output-box"/>
+    <text x="1400" y="1120" text-anchor="middle" class="text">Output: image1_corrected_path, image2_corrected_path</text>
     
-    <!-- 箭頭 -->
-    <line x1="270" y1="1100" x2="290" y2="1100" class="arrow"/>
-    <line x1="490" y1="1100" x2="510" y2="1100" class="arrow"/>
+    <line x1="500" y1="1115" x2="600" y2="1115" class="arrow"/>
+    <line x1="1000" y1="1115" x2="1200" y2="1115" class="arrow"/>
     
-    <!-- 警告框 -->
-    <rect x="730" y="1010" width="800" height="180" class="warning-box"/>
-    <text x="1130" y="1030" text-anchor="middle" class="box-label">⚠️ 潛在問題</text>
-    <text x="1130" y="1055" text-anchor="middle" class="text">1. 粗搜索範圍可能不夠大（±45°可能不足）</text>
-    <text x="1130" y="1075" text-anchor="middle" class="text">2. 縮小圖像可能損失細節（30%可能太小）</text>
-    <text x="1130" y="1095" text-anchor="middle" class="text">3. 搜索步長可能不夠細（5°、10px可能太粗）</text>
-    <text x="1130" y="1115" text-anchor="middle" class="text">4. 沒有迭代優化機制（只搜索一次）</text>
-    <text x="1130" y="1135" text-anchor="middle" class="text">5. 相似度評估方法可能不夠準確</text>
-    <text x="1130" y="1155" text-anchor="middle" class="text">6. 沒有考慮尺度變化（只有旋轉+平移）</text>
-    <text x="1130" y="1175" text-anchor="middle" class="text">7. 圖像1未對齊可能影響對齊精度</text>
+    <!-- 更新資料庫 -->
+    <rect x="100" y="1140" width="400" height="30" class="process-box"/>
+    <text x="300" y="1160" text-anchor="middle" class="text">Process: 更新 db_comparison.details，提取 alignment_optimization</text>
+    
+    <rect x="600" y="1140" width="400" height="30" class="output-box"/>
+    <text x="800" y="1160" text-anchor="middle" class="text">Output: details 包含頂層 translation_offset 和 rotation_angle</text>
+    
+    <line x1="500" y1="1155" x2="600" y2="1155" class="arrow"/>
   </g>
   
-  <!-- 階段7: 相似度計算 -->
+  <!-- 階段7: 生成視覺化 -->
   <g id="stage7">
-    <rect x="50" y="1230" width="1500" height="280" class="stage-box"/>
-    <text x="800" y="1255" text-anchor="middle" class="stage-title">階段7: 計算相似度指標（已移除 _calculate_enhanced_similarity）</text>
+    <rect x="50" y="1200" width="1900" height="120" class="stage-box"/>
+    <text x="1000" y="1225" text-anchor="middle" class="stage-title">階段7: 生成視覺化圖表</text>
     
-    <!-- Input -->
-    <rect x="70" y="1280" width="200" height="210" class="input-box"/>
-    <text x="170" y="1300" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="1320" text-anchor="middle" class="text">img1_no_bg</text>
-    <text x="170" y="1340" text-anchor="middle" class="text">img2_aligned</text>
+    <rect x="100" y="1250" width="400" height="30" class="input-box"/>
+    <text x="300" y="1270" text-anchor="middle" class="text">Input: image1_path_for_viz, image2_path_for_viz, image2_corrected_path</text>
     
-    <!-- Process - 直接計算各個指標 -->
-    <rect x="290" y="1280" width="200" height="210" class="process-box"/>
-    <text x="390" y="1300" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="1320" text-anchor="middle" class="text">直接計算各個指標:</text>
-    <text x="390" y="1340" text-anchor="middle" class="text">1. _calculate_ssim()</text>
-    <text x="390" y="1360" text-anchor="middle" class="text">2. _template_match()</text>
-    <text x="390" y="1380" text-anchor="middle" class="text">3. _pixel_difference()</text>
-    <text x="390" y="1400" text-anchor="middle" class="text">4. calcHist() 比較</text>
-    <text x="390" y="1420" text-anchor="middle" class="text">5. _calculate_edge_</text>
-    <text x="390" y="1435" text-anchor="middle" class="text">   similarity_advanced()</text>
-    <text x="390" y="1455" text-anchor="middle" class="text">6. 精確匹配率</text>
-    <text x="390" y="1475" text-anchor="middle" class="text">7. MSE相似度</text>
+    <rect x="600" y="1250" width="400" height="30" class="process-box"/>
+    <text x="800" y="1270" text-anchor="middle" class="text">Process: _generate_visualizations()</text>
     
-    <!-- Output -->
-    <rect x="510" y="1280" width="200" height="210" class="output-box"/>
-    <text x="610" y="1300" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="1320" text-anchor="middle" class="text">各個指標值:</text>
-    <text x="610" y="1340" text-anchor="middle" class="text">ssim, template_match,</text>
-    <text x="610" y="1355" text-anchor="middle" class="text">pixel_similarity,</text>
-    <text x="610" y="1370" text-anchor="middle" class="text">histogram_similarity,</text>
-    <text x="610" y="1385" text-anchor="middle" class="text">edge_similarity,</text>
-    <text x="610" y="1400" text-anchor="middle" class="text">exact_match_ratio,</text>
-    <text x="610" y="1415" text-anchor="middle" class="text">mse_similarity</text>
+    <rect x="1200" y="1250" width="400" height="30" class="output-box"/>
+    <text x="1400" y="1270" text-anchor="middle" class="text">Output: comparison_image, heatmap, overlay1, overlay2</text>
     
-    <!-- 最終相似度計算 -->
-    <rect x="730" y="1280" width="200" height="210" class="process-box"/>
-    <text x="830" y="1300" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="830" y="1320" text-anchor="middle" class="text">簡單加權組合</text>
-    <text x="830" y="1340" text-anchor="middle" class="text">(不使用 _calculate_</text>
-    <text x="830" y="1355" text-anchor="middle" class="text">final_similarity)</text>
-    <text x="830" y="1375" text-anchor="middle" class="text">加權組合:</text>
-    <text x="830" y="1395" text-anchor="middle" class="text">- SSIM: 40%</text>
-    <text x="830" y="1415" text-anchor="middle" class="text">- Template: 30%</text>
-    <text x="830" y="1435" text-anchor="middle" class="text">- Pixel: 20%</text>
-    <text x="830" y="1455" text-anchor="middle" class="text">- Histogram: 10%</text>
+    <line x1="500" y1="1265" x2="600" y2="1265" class="arrow"/>
+    <line x1="1000" y1="1265" x2="1200" y2="1265" class="arrow"/>
     
-    <!-- 最終輸出 -->
-    <rect x="950" y="1280" width="200" height="210" class="output-box"/>
-    <text x="1050" y="1300" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="1050" y="1320" text-anchor="middle" class="text">final_similarity</text>
-    <text x="1050" y="1340" text-anchor="middle" class="text">(0.0 - 1.0)</text>
-    <text x="1050" y="1360" text-anchor="middle" class="text">is_match</text>
-    <text x="1050" y="1380" text-anchor="middle" class="text">(similarity >= threshold)</text>
-    <text x="1050" y="1400" text-anchor="middle" class="text">details (包含所有指標)</text>
-    
-    <!-- 箭頭 -->
-    <line x1="270" y1="1385" x2="290" y2="1385" class="arrow"/>
-    <line x1="490" y1="1385" x2="510" y2="1385" class="arrow"/>
-    <line x1="710" y1="1385" x2="730" y2="1385" class="arrow"/>
-    <line x1="930" y1="1385" x2="950" y2="1385" class="arrow"/>
-    
-    <!-- 警告框 -->
-    <rect x="1170" y="1280" width="360" height="210" class="warning-box"/>
-    <text x="1350" y="1300" text-anchor="middle" class="box-label">ℹ️ 變更說明</text>
-    <text x="1350" y="1325" text-anchor="middle" class="text">_calculate_enhanced_similarity()</text>
-    <text x="1350" y="1345" text-anchor="middle" class="text">函數定義仍保留，但已移除調用</text>
-    <text x="1350" y="1365" text-anchor="middle" class="text">現在直接計算各個指標</text>
-    <text x="1350" y="1385" text-anchor="middle" class="text">使用簡單的加權組合</text>
-    <text x="1350" y="1405" text-anchor="middle" class="text">不再使用複雜的</text>
-    <text x="1350" y="1425" text-anchor="middle" class="text">_calculate_final_similarity()</text>
-    <text x="1350" y="1445" text-anchor="middle" class="text">⚠️ 權重分配簡化</text>
-    <text x="1350" y="1465" text-anchor="middle" class="text">   (Edge等指標未納入)</text>
-    <text x="1350" y="1485" text-anchor="middle" class="text">⚠️ 圖像1未對齊可能影響</text>
-    <text x="1350" y="1505" text-anchor="middle" class="text">   相似度計算準確度</text>
+    <!-- 視覺化詳細 -->
+    <rect x="100" y="1290" width="800" height="20" class="process-box"/>
+    <text x="500" y="1305" text-anchor="middle" class="text" style="font-size: 10px;">create_correction_comparison() | create_difference_heatmap() | create_overlay_image()</text>
   </g>
   
-  <!-- 階段8: 生成視覺化 -->
+  <!-- 階段8: 完成 -->
   <g id="stage8">
-    <rect x="50" y="1530" width="1500" height="280" class="stage-box"/>
-    <text x="800" y="1555" text-anchor="middle" class="stage-title">階段8: 生成視覺化圖表</text>
+    <rect x="50" y="1360" width="1900" height="80" class="stage-box"/>
+    <text x="1000" y="1385" text-anchor="middle" class="stage-title">階段8: 完成</text>
     
-    <!-- Input -->
-    <rect x="70" y="1580" width="200" height="210" class="input-box"/>
-    <text x="170" y="1600" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="1620" text-anchor="middle" class="text">img1_no_bg</text>
-    <text x="170" y="1640" text-anchor="middle" class="text">img2_aligned</text>
-    <text x="170" y="1660" text-anchor="middle" class="text">rotation_angle</text>
-    <text x="170" y="1680" text-anchor="middle" class="text">translation_offset</text>
+    <rect x="100" y="1400" width="400" height="30" class="input-box"/>
+    <text x="300" y="1420" text-anchor="middle" class="text">Input: 所有處理結果</text>
     
-    <!-- 並排對比圖 -->
-    <rect x="290" y="1580" width="200" height="100" class="process-box"/>
-    <text x="390" y="1600" text-anchor="middle" class="process-label">PROCESS 1</text>
-    <text x="390" y="1620" text-anchor="middle" class="text">create_correction_</text>
-    <text x="390" y="1635" text-anchor="middle" class="text">comparison()</text>
-    <text x="390" y="1655" text-anchor="middle" class="text">三圖並排顯示</text>
-    <text x="390" y="1670" text-anchor="middle" class="text">(參考/原始/校正後)</text>
+    <rect x="600" y="1400" width="400" height="30" class="process-box"/>
+    <text x="800" y="1420" text-anchor="middle" class="text">Process: 更新狀態為 COMPLETED，保存所有結果</text>
     
-    <!-- 差異熱力圖 -->
-    <rect x="290" y="1690" width="200" height="100" class="process-box"/>
-    <text x="390" y="1710" text-anchor="middle" class="process-label">PROCESS 2</text>
-    <text x="390" y="1730" text-anchor="middle" class="text">create_difference_</text>
-    <text x="390" y="1745" text-anchor="middle" class="text">heatmap()</text>
-    <text x="390" y="1765" text-anchor="middle" class="text">計算像素差異</text>
-    <text x="390" y="1780" text-anchor="middle" class="text">JET顏色映射</text>
+    <rect x="1200" y="1400" width="400" height="30" class="output-box"/>
+    <text x="1400" y="1420" text-anchor="middle" class="text">Output: 完整的比對記錄（包含所有 details）</text>
     
-    <!-- 疊圖 -->
-    <rect x="510" y="1580" width="200" height="210" class="process-box"/>
-    <text x="610" y="1600" text-anchor="middle" class="process-label">PROCESS 3</text>
-    <text x="610" y="1620" text-anchor="middle" class="text">create_overlay_image()</text>
-    <text x="610" y="1640" text-anchor="middle" class="text">1. 移除背景</text>
-    <text x="610" y="1660" text-anchor="middle" class="text">2. 創建透明圖像</text>
-    <text x="610" y="1680" text-anchor="middle" class="text">3. 計算差異區域</text>
-    <text x="610" y="1700" text-anchor="middle" class="text">4. 綠色標記差異</text>
-    <text x="610" y="1720" text-anchor="middle" class="text">5. 生成兩張疊圖</text>
-    <text x="610" y="1740" text-anchor="middle" class="text">   (img1_on_img2,</text>
-    <text x="610" y="1755" text-anchor="middle" class="text">    img2_on_img1)</text>
-    
-    <!-- Output -->
-    <rect x="730" y="1580" width="200" height="210" class="output-box"/>
-    <text x="830" y="1600" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="830" y="1620" text-anchor="middle" class="text">comparison_image.jpg</text>
-    <text x="830" y="1640" text-anchor="middle" class="text">heatmap_image.jpg</text>
-    <text x="830" y="1660" text-anchor="middle" class="text">overlay1.png</text>
-    <text x="830" y="1680" text-anchor="middle" class="text">overlay2.png</text>
-    <text x="830" y="1700" text-anchor="middle" class="text">存儲到資料庫</text>
-    
-    <!-- 箭頭 -->
-    <line x1="270" y1="1635" x2="290" y2="1635" class="arrow"/>
-    <line x1="270" y1="1740" x2="290" y2="1740" class="arrow"/>
-    <line x1="490" y1="1635" x2="510" y2="1635" class="arrow"/>
-    <line x1="490" y1="1740" x2="510" y2="1740" class="arrow"/>
-    <line x1="710" y1="1685" x2="730" y2="1685" class="arrow"/>
-    
-    <!-- 警告框 -->
-    <rect x="950" y="1630" width="580" height="210" class="warning-box"/>
-    <text x="1240" y="1650" text-anchor="middle" class="box-label">⚠️ 潛在問題</text>
-    <text x="1240" y="1675" text-anchor="middle" class="text">1. 疊圖的背景移除可能不準確（邊緣檢測方法簡單）</text>
-    <text x="1240" y="1695" text-anchor="middle" class="text">2. 差異閾值固定(30)可能不適用所有圖像</text>
-    <text x="1240" y="1715" text-anchor="middle" class="text">3. 熱力圖的高斯模糊參數固定(15x15)</text>
-    <text x="1240" y="1735" text-anchor="middle" class="text">4. 沒有考慮顏色空間轉換的一致性</text>
-    <text x="1240" y="1755" text-anchor="middle" class="text">5. PNG壓縮級別固定(1)，可能檔案過大</text>
-    <text x="1240" y="1775" text-anchor="middle" class="text">6. 視覺化生成失敗時沒有重試機制</text>
-    <text x="1240" y="1795" text-anchor="middle" class="text">7. 沒有提供視覺化的品質指標</text>
+    <line x1="500" y1="1415" x2="600" y2="1415" class="arrow"/>
+    <line x1="1000" y1="1415" x2="1200" y2="1415" class="arrow"/>
   </g>
   
-  <!-- 階段9: 完成 -->
-  <g id="stage9">
-    <rect x="50" y="1830" width="1500" height="120" class="stage-box"/>
-    <text x="800" y="1855" text-anchor="middle" class="stage-title">階段9: 保存結果並完成</text>
-    
-    <!-- Input -->
-    <rect x="70" y="1880" width="200" height="60" class="input-box"/>
-    <text x="170" y="1900" text-anchor="middle" class="input-label">INPUT</text>
-    <text x="170" y="1920" text-anchor="middle" class="text">所有計算結果</text>
-    <text x="170" y="1935" text-anchor="middle" class="text">視覺化文件路徑</text>
-    
-    <!-- Process -->
-    <rect x="290" y="1880" width="200" height="60" class="process-box"/>
-    <text x="390" y="1900" text-anchor="middle" class="process-label">PROCESS</text>
-    <text x="390" y="1920" text-anchor="middle" class="text">更新資料庫記錄</text>
-    <text x="390" y="1935" text-anchor="middle" class="text">status=COMPLETED</text>
-    
-    <!-- Output -->
-    <rect x="510" y="1880" width="200" height="60" class="output-box"/>
-    <text x="610" y="1900" text-anchor="middle" class="output-label">OUTPUT</text>
-    <text x="610" y="1920" text-anchor="middle" class="text">Comparison記錄</text>
-    <text x="610" y="1935" text-anchor="middle" class="text">包含完整結果</text>
-    
-    <!-- 箭頭 -->
-    <line x1="270" y1="1910" x2="290" y2="1910" class="arrow"/>
-    <line x1="490" y1="1910" x2="510" y2="1910" class="arrow"/>
-  </g>
+  <!-- 流程連接線 -->
+  <line x1="1000" y1="140" x2="1000" y2="180" class="arrow"/>
+  <line x1="1000" y1="380" x2="1000" y2="420" class="arrow"/>
+  <line x1="1000" y1="540" x2="1000" y2="580" class="arrow"/>
+  <line x1="1000" y1="780" x2="1000" y2="820" class="arrow"/>
+  <line x1="1000" y1="1020" x2="1000" y2="1060" class="arrow"/>
+  <line x1="1000" y1="1160" x2="1000" y2="1200" class="arrow"/>
+  <line x1="1000" y1="1320" x2="1000" y2="1360" class="arrow"/>
   
-  <!-- 流程連接箭頭 -->
-  <line x1="800" y1="180" x2="800" y2="200" class="arrow"/>
-  <line x1="800" y1="380" x2="800" y2="400" class="arrow"/>
-  <line x1="800" y1="550" x2="800" y2="570" class="arrow"/>
-  <line x1="800" y1="940" x2="800" y2="960" class="arrow"/>
-  <line x1="800" y1="1210" x2="800" y2="1230" class="arrow"/>
-  <line x1="800" y1="1510" x2="800" y2="1530" class="arrow"/>
-  <line x1="800" y1="1810" x2="800" y2="1830" class="arrow"/>
+  <!-- 潛在問題和優化建議 -->
+  <g id="issues">
+    <rect x="50" y="1480" width="1900" height="300" class="error-note"/>
+    <text x="1000" y="1505" text-anchor="middle" class="text" style="font-weight: bold; font-size: 14px;">潛在問題和優化建議</text>
+    
+    <!-- 問題1 -->
+    <rect x="100" y="1520" width="850" height="60" class="note"/>
+    <text x="525" y="1540" text-anchor="middle" class="text" style="font-weight: bold;">問題1: 圖像1未對齊</text>
+    <text x="525" y="1555" text-anchor="middle" class="text" style="font-size: 10px;">圖像1只進行了去背景處理，沒有對齊（_align_image1已移除調用）</text>
+    <text x="525" y="1570" text-anchor="middle" class="text" style="font-size: 10px;">這可能導致圖像1和圖像2的基準不一致，影響比對準確度</text>
+    <text x="525" y="1585" text-anchor="middle" class="text" style="font-size: 10px; font-weight: bold;">建議: 考慮對圖像1也進行基本對齊（中心對齊），或確保圖像1已經是標準化狀態</text>
+    
+    <!-- 問題2 -->
+    <rect x="1050" y="1520" width="850" height="60" class="note"/>
+    <text x="1475" y="1540" text-anchor="middle" class="text" style="font-weight: bold;">問題2: 對齊搜索可能較慢</text>
+    <text x="1475" y="1555" text-anchor="middle" class="text" style="font-size: 10px;">_align_image2_to_image1 使用三階段搜索，雖然已優化（縮放0.2，角度3度）</text>
+    <text x="1475" y="1570" text-anchor="middle" class="text" style="font-size: 10px;">但對於大圖像，粗搜索階段仍可能較慢</text>
+    <text x="1475" y="1585" text-anchor="middle" class="text" style="font-size: 10px; font-weight: bold;">建議: 考慮使用多線程或GPU加速，或進一步優化搜索策略</text>
+    
+    <!-- 問題3 -->
+    <rect x="100" y="1600" width="850" height="60" class="note"/>
+    <text x="525" y="1620" text-anchor="middle" class="text" style="font-weight: bold;">問題3: 相似度計算未考慮尺寸差異</text>
+    <text x="525" y="1635" text-anchor="middle" class="text" style="font-size: 10px;">當前流程移除了尺寸調整，直接使用原始尺寸計算相似度</text>
+    <text x="525" y="1650" text-anchor="middle" class="text" style="font-size: 10px;">如果兩個圖像尺寸差異很大，可能影響相似度計算準確度</text>
+    <text x="525" y="1665" text-anchor="middle" class="text" style="font-size: 10px; font-weight: bold;">建議: 考慮在計算相似度前進行智能尺寸標準化（保持長寬比）</text>
+    
+    <!-- 問題4 -->
+    <rect x="1050" y="1600" width="850" height="60" class="note"/>
+    <text x="1475" y="1620" text-anchor="middle" class="text" style="font-weight: bold;">問題4: 圖像保存重複</text>
+    <text x="1475" y="1635" text-anchor="middle" class="text" style="font-size: 10px;">圖像在載入階段保存一次（image1_cropped_path, image2_cropped_path）</text>
+    <text x="1475" y="1650" text-anchor="middle" class="text" style="font-size: 10px;">在保存階段又保存一次（image1_corrected_path, image2_corrected_path）</text>
+    <text x="1475" y="1665" text-anchor="middle" class="text" style="font-size: 10px; font-weight: bold;">建議: 統一保存邏輯，避免重複保存相同圖像</text>
+    
+    <!-- 優化建議 -->
+    <rect x="100" y="1680" width="1800" height="80" class="optimization-note"/>
+    <text x="1000" y="1700" text-anchor="middle" class="text" style="font-weight: bold; font-size: 12px;">優化建議總結</text>
+    <text x="100" y="1720" class="text" style="font-size: 10px;">1. 考慮對圖像1進行基本對齊，確保基準一致</text>
+    <text x="100" y="1735" class="text" style="font-size: 10px;">2. 優化對齊搜索：使用多線程、GPU加速，或進一步縮小搜索範圍</text>
+    <text x="100" y="1750" class="text" style="font-size: 10px;">3. 智能尺寸標準化：在保持長寬比的前提下進行尺寸調整，用於相似度計算</text>
+    <text x="1000" y="1720" class="text" style="font-size: 10px;">4. 統一圖像保存邏輯，避免重複保存</text>
+    <text x="1000" y="1735" class="text" style="font-size: 10px;">5. 緩存中間結果，減少重複計算（如去背景結果）</text>
+    <text x="1000" y="1750" class="text" style="font-size: 10px;">6. 考慮使用異步處理，提高並發性能</text>
+  </g>
   
   <!-- 圖例 -->
   <g id="legend">
-    <rect x="50" y="1970" width="1500" height="400" fill="#f8f9fa" stroke="#dee2e6" stroke-width="2" rx="5"/>
-    <text x="800" y="1995" text-anchor="middle" class="stage-title">流程說明與優化建議</text>
+    <rect x="50" y="1800" width="1900" height="150" class="stage-box"/>
+    <text x="1000" y="1825" text-anchor="middle" class="stage-title">圖例</text>
     
-    <!-- 流程說明 -->
-    <text x="100" y="2025" class="box-label">主要流程：</text>
-    <text x="100" y="2045" class="text">1. API接收請求 → 創建比對記錄 → 觸發後台任務</text>
-    <text x="100" y="2065" class="text">2. 載入原始圖像 → 驗證文件存在與格式</text>
-    <text x="100" y="2085" class="text">3. 裁切圖像（如果有bbox標記）</text>
-    <text x="100" y="2105" class="text">4. 自動偵測邊界並移除背景 → 保留印章區域</text>
-    <text x="100" y="2125" class="text">5. 圖像1：只去背景，不對齊（_align_image1已移除調用）</text>
-    <text x="100" y="2145" class="text">6. 對齊圖像2：相對於圖像1優化（使用_fast_rotation_match評估）</text>
-    <text x="100" y="2165" class="text">7. 直接計算各個相似度指標 → 簡單加權組合 → 最終相似度</text>
-    <text x="100" y="2185" class="text">8. 生成視覺化（並排對比圖、差異熱力圖、疊圖）</text>
-    <text x="100" y="2205" class="text">9. 保存結果到資料庫 → 標記完成</text>
+    <rect x="100" y="1840" width="150" height="30" class="input-box"/>
+    <text x="175" y="1860" text-anchor="middle" class="text">Input</text>
     
-    <!-- 關鍵變更 -->
-    <text x="100" y="2235" class="box-label">最新變更（已實施）：</text>
-    <text x="100" y="2255" class="text">✓ 移除圖像1的對齊步驟（_align_image1不再調用，但函數定義保留）</text>
-    <text x="100" y="2275" class="text">✓ 圖像2對齊改為直接使用img1_no_bg和img2_no_bg（不再對參考圖像再次去背景）</text>
-    <text x="100" y="2295" class="text">✓ 移除 _calculate_enhanced_similarity 的調用（函數定義保留）</text>
-    <text x="100" y="2315" class="text">✓ 對齊優化改用 _fast_rotation_match 評估相似度</text>
-    <text x="100" y="2335" class="text">✓ 最終相似度計算改為直接計算各個指標，使用簡單加權組合</text>
+    <rect x="300" y="1840" width="150" height="30" class="process-box"/>
+    <text x="375" y="1860" text-anchor="middle" class="text">Process</text>
     
-    <!-- 關鍵問題 -->
-    <text x="100" y="2325" class="box-label">關鍵問題與優化建議：</text>
-    <text x="100" y="2345" class="text">• 對齊階段6：搜索範圍和步長可能需要調整，建議增加迭代優化機制</text>
-    <text x="100" y="2365" class="text">• 相似度計算階段7：權重分配可能需要根據實際情況動態調整</text>
-    <text x="100" y="2385" class="text">• 視覺化階段8：背景移除和差異檢測的參數可能需要自適應調整</text>
-    <text x="100" y="2405" class="text">• 整體流程：缺少錯誤恢復機制，某些步驟失敗時無法優雅降級</text>
-    <text x="100" y="2425" class="text">• 新問題：圖像1未對齊可能影響圖像2的對齊精度和最終相似度計算</text>
+    <rect x="500" y="1840" width="150" height="30" class="output-box"/>
+    <text x="575" y="1860" text-anchor="middle" class="text">Output</text>
+    
+    <rect x="700" y="1840" width="150" height="30" class="note"/>
+    <text x="775" y="1860" text-anchor="middle" class="text">注意/說明</text>
+    
+    <rect x="900" y="1840" width="150" height="30" class="optimization-note"/>
+    <text x="975" y="1860" text-anchor="middle" class="text">優化說明</text>
+    
+    <rect x="1100" y="1840" width="150" height="30" class="error-note"/>
+    <text x="1175" y="1860" text-anchor="middle" class="text">問題/錯誤</text>
+    
+    <!-- 最新變更 -->
+    <rect x="1300" y="1840" width="600" height="100" class="optimization-note"/>
+    <text x="1600" y="1860" text-anchor="middle" class="text" style="font-weight: bold;">最新變更（已實施）</text>
+    <text x="1600" y="1880" text-anchor="middle" class="text" style="font-size: 10px;">• 圖像1：只去背景，不對齊（_align_image1 已移除調用）</text>
+    <text x="1600" y="1895" text-anchor="middle" class="text" style="font-size: 10px;">• 圖像2：去背景 + 對齊優化（使用 _align_image2_to_image1）</text>
+    <text x="1600" y="1910" text-anchor="middle" class="text" style="font-size: 10px;">• 對齊搜索優化：縮放0.2，角度3度，偏移8px，提前終止，動態候選</text>
+    <text x="1600" y="1925" text-anchor="middle" class="text" style="font-size: 10px;">• 移除尺寸調整：直接使用原始尺寸計算相似度</text>
+    <text x="1600" y="1940" text-anchor="middle" class="text" style="font-size: 10px;">• 移除未使用的指標計算（edge_similarity, exact_match_ratio, mse_similarity）</text>
   </g>
 </svg>
-

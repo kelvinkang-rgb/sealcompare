@@ -135,17 +135,17 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
             </Grid>
             <Grid item xs={12} md={6}>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                {comparison.rotation_angle !== null && comparison.rotation_angle !== undefined && (
+                {comparison.rotation_angle !== null && comparison.rotation_angle !== undefined && comparison.rotation_angle !== 0 && (
                   <Typography variant="body2">
                     旋轉角度: <strong>{comparison.rotation_angle.toFixed(2)}°</strong>
                   </Typography>
                 )}
-                {comparison.translation_offset && (
+                {comparison.translation_offset && comparison.translation_offset.x !== 0 && comparison.translation_offset.y !== 0 && (
                   <Typography variant="body2">
                     平移偏移: <strong>X: {comparison.translation_offset.x}px, Y: {comparison.translation_offset.y}px</strong>
                   </Typography>
                 )}
-                {comparison.improvement && (
+                {comparison.improvement !== null && comparison.improvement !== undefined && (
                   <Typography variant="body2">
                     改善幅度: <strong>{(comparison.improvement * 100).toFixed(2)}%</strong>
                   </Typography>
@@ -173,16 +173,32 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
                 以下指標基於校正後的圖像計算，與下方校正驗證圖表完全對應
               </Typography>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                <Typography variant="body2">
-                  SSIM: <strong>{(comparison.details.ssim * 100).toFixed(2)}%</strong>
-                </Typography>
-                <Typography variant="body2">
-                  模板匹配: <strong>{(comparison.details.template_match * 100).toFixed(2)}%</strong>
-                </Typography>
-                <Typography variant="body2">
-                  像素差異: <strong>{(comparison.details.pixel_diff * 100).toFixed(2)}%</strong>
-                </Typography>
-                {comparison.details.rotation_angle !== null && comparison.details.rotation_angle !== undefined && (
+                {comparison.details.ssim !== null && comparison.details.ssim !== undefined && (
+                  <Typography variant="body2">
+                    SSIM: <strong>{(comparison.details.ssim * 100).toFixed(2)}%</strong>
+                  </Typography>
+                )}
+                {comparison.details.template_match !== null && comparison.details.template_match !== undefined && (
+                  <Typography variant="body2">
+                    模板匹配: <strong>{(comparison.details.template_match * 100).toFixed(2)}%</strong>
+                  </Typography>
+                )}
+                {comparison.details.pixel_diff !== null && comparison.details.pixel_diff !== undefined && (
+                  <Typography variant="body2">
+                    像素差異: <strong>{(comparison.details.pixel_diff * 100).toFixed(2)}%</strong>
+                  </Typography>
+                )}
+                {comparison.details.pixel_similarity !== null && comparison.details.pixel_similarity !== undefined && (
+                  <Typography variant="body2">
+                    像素相似度: <strong>{(comparison.details.pixel_similarity * 100).toFixed(2)}%</strong>
+                  </Typography>
+                )}
+                {comparison.details.histogram_similarity !== null && comparison.details.histogram_similarity !== undefined && (
+                  <Typography variant="body2">
+                    直方圖相似度: <strong>{(comparison.details.histogram_similarity * 100).toFixed(2)}%</strong>
+                  </Typography>
+                )}
+                {comparison.details.rotation_angle !== null && comparison.details.rotation_angle !== undefined && comparison.details.rotation_angle !== 0 && (
                   <Typography variant="body2">
                     旋轉角度: <strong>{comparison.details.rotation_angle.toFixed(2)}°</strong>
                   </Typography>

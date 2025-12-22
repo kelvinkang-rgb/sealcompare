@@ -13,20 +13,23 @@ from PIL import Image, ImageDraw, ImageFont
 
 def create_correction_comparison(
     image1_path: str,
-    image2_original_path: str,
-    image2_corrected_path: Optional[str],
+    image2_corrected_path: str,
     output_path: Path,
     record_id: int,
     rotation_angle: Optional[float] = None,
     translation_offset: Optional[Dict[str, int]] = None
 ) -> Optional[str]:
     """
-    生成校正前後對比圖（三圖並排）
+    生成校正對比圖（兩圖並排：只顯示最後比對的兩個圖檔，已裁切與去背）
+    
+    圖像處理：
+    - 保留圖像原始尺寸，不進行尺寸調整（resize）
+    - 兩個圖像並排顯示，各自保持原始大小
+    - 畫布高度使用兩個圖像中較大的高度
     
     Args:
-        image1_path: 原始圖像1路徑
-        image2_original_path: 原始圖像2路徑
-        image2_corrected_path: 校正後圖像2路徑（如果存在）
+        image1_path: 圖像1路徑（已裁切和去背景）
+        image2_corrected_path: 圖像2路徑（已裁切、去背景和對齊）
         output_path: 輸出目錄
         record_id: 記錄 ID
         rotation_angle: 旋轉角度（度）
@@ -46,58 +49,37 @@ def create_correction_comparison(
             return Path(s)
         
         img1_path = normalize_path(image1_path)
-        img2_orig_path = normalize_path(image2_original_path)
-        img2_corr_path = normalize_path(image2_corrected_path) if image2_corrected_path else None
+        img2_corr_path = normalize_path(image2_corrected_path)
         
-        if not img1_path or not img2_orig_path:
+        if not img1_path or not img2_corr_path:
             return None
         
         # 檢查檔案是否存在
-        if not img1_path.exists() or not img2_orig_path.exists():
+        if not img1_path.exists() or not img2_corr_path.exists():
             return None
         
         # 讀取圖像
         img1 = cv2.imread(str(img1_path), cv2.IMREAD_COLOR)
-        img2_orig = cv2.imread(str(img2_orig_path), cv2.IMREAD_COLOR)
+        img2_corr = cv2.imread(str(img2_corr_path), cv2.IMREAD_COLOR)
         
-        if img1 is None or img2_orig is None:
+        if img1 is None or img2_corr is None:
             return None
         
-        # 讀取校正後圖像（如果存在）
-        if img2_corr_path and img2_corr_path.exists():
-            img2_corr = cv2.imread(str(img2_corr_path), cv2.IMREAD_COLOR)
-        else:
-            # 如果沒有校正圖像，使用原始圖像2
-            img2_corr = img2_orig.copy()
-        
-        if img2_corr is None:
-            img2_corr = img2_orig.copy()
-        
-        # 調整到相同尺寸（使用最大尺寸）
+        # 獲取圖像尺寸（保留原始大小）
         h1, w1 = img1.shape[:2]
-        h2_orig, w2_orig = img2_orig.shape[:2]
         h2_corr, w2_corr = img2_corr.shape[:2]
         
-        target_h = max(h1, h2_orig, h2_corr)
-        target_w = max(w1, w2_orig, w2_corr)
-        
-        # 使用 INTER_LINEAR 插值以保持高質量（與 overlay.py 保持一致）
-        img1_resized = cv2.resize(img1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        img2_orig_resized = cv2.resize(img2_orig, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        img2_corr_resized = cv2.resize(img2_corr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        
-        # 創建並排對比圖
+        # 創建並排對比圖（兩圖並排，使用原始尺寸）
         gap = 20  # 圖像間距
-        comparison_width = target_w * 3 + gap * 2
-        comparison_height = target_h + 100  # 額外空間用於標註
+        comparison_width = w1 + w2_corr + gap
+        comparison_height = max(h1, h2_corr) + 100  # 額外空間用於標註
         
         comparison = np.ones((comparison_height, comparison_width, 3), dtype=np.uint8) * 255
         
-        # 放置圖像
+        # 放置圖像（使用原始尺寸）
         y_offset = 50  # 頂部留白用於標註
-        comparison[y_offset:y_offset+target_h, 0:target_w] = img1_resized
-        comparison[y_offset:y_offset+target_h, target_w+gap:target_w*2+gap] = img2_orig_resized
-        comparison[y_offset:y_offset+target_h, target_w*2+gap*2:target_w*3+gap*2] = img2_corr_resized
+        comparison[y_offset:y_offset+h1, 0:w1] = img1
+        comparison[y_offset:y_offset+h2_corr, w1+gap:w1+gap+w2_corr] = img2_corr
         
         # 添加標註文字（使用 PIL 支持中文）
         # 將 OpenCV 圖像轉換為 PIL 圖像
@@ -127,15 +109,8 @@ def create_correction_comparison(
         text1 = "參考圖像 (圖像1)"
         bbox = draw.textbbox((0, 0), text1, font=font)
         text_width = bbox[2] - bbox[0]
-        text_x1 = (target_w - text_width) // 2
+        text_x1 = (w1 - text_width) // 2
         draw.text((text_x1, 10), text1, fill=(0, 0, 0), font=font)
-        
-        # 圖像2原始標註
-        text2 = "待校正圖像 (圖像2原始)"
-        bbox = draw.textbbox((0, 0), text2, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_x2 = target_w + gap + (target_w - text_width) // 2
-        draw.text((text_x2, 10), text2, fill=(0, 0, 0), font=font)
         
         # 圖像2校正標註
         correction_parts = []
@@ -145,13 +120,13 @@ def create_correction_comparison(
             correction_parts.append(f"平移 ({translation_offset.get('x', 0)}, {translation_offset.get('y', 0)})")
         
         if correction_parts:
-            text3 = f"校正後圖像 ({', '.join(correction_parts)})"
+            text2 = f"校正後圖像 (圖像2, {', '.join(correction_parts)})"
         else:
-            text3 = "校正後圖像"
-        bbox = draw.textbbox((0, 0), text3, font=font)
+            text2 = "校正後圖像 (圖像2)"
+        bbox = draw.textbbox((0, 0), text2, font=font)
         text_width = bbox[2] - bbox[0]
-        text_x3 = target_w * 2 + gap * 2 + (target_w - text_width) // 2
-        draw.text((text_x3, 10), text3, fill=(0, 0, 0), font=font)
+        text_x2 = w1 + gap + (w2_corr - text_width) // 2
+        draw.text((text_x2, 10), text2, fill=(0, 0, 0), font=font)
         
         # 轉回 OpenCV 格式
         comparison = cv2.cvtColor(np.array(comparison_pil), cv2.COLOR_RGB2BGR)
@@ -183,6 +158,12 @@ def create_difference_heatmap(
 ) -> Tuple[Optional[str], Dict]:
     """
     生成差異熱力圖
+    
+    圖像處理：
+    - 如果兩個圖像尺寸不同，會調整到相同尺寸（使用最大尺寸）
+    - 使用 INTER_LINEAR 插值以保持高質量
+    - 計算像素差異並生成熱力圖（JET 顏色映射：藍→綠→黃→紅）
+    - 使用 alpha 混合（0.6）將熱力圖疊加在原圖上
     
     Args:
         image1_path: 圖像1路徑
@@ -379,6 +360,12 @@ def calculate_alignment_metrics(
     """
     計算對齊精度指標
     
+    圖像處理：
+    - 如果兩個圖像尺寸不同，會調整到相同尺寸（使用最大尺寸）
+    - 使用 INTER_LINEAR 插值以保持高質量
+    - 使用輪廓檢測找到印章中心點
+    - 計算中心點偏移距離
+    
     Args:
         image1: 圖像1
         image2_original: 原始圖像2
@@ -387,7 +374,7 @@ def calculate_alignment_metrics(
         translation_offset: 平移偏移量 {"x": int, "y": int}
         
     Returns:
-        包含對齊指標的字典
+        包含對齊指標的字典（rotation_angle, translation_offset, center_offset, size_ratio, has_correction）
     """
     try:
         metrics = {

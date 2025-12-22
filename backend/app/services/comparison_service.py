@@ -430,22 +430,23 @@ class ComparisonService:
                     self.db.commit()
                     break
             
-            # 使用裁切後的圖像路徑生成視覺化（所有處理都使用裁切後的圖像）
-            # image1_path_for_viz: 優先使用校正後的圖像1，否則使用裁切後的圖像1
-            if image1_corrected_path and Path(image1_corrected_path).exists():
-                image1_path_for_viz = str(image1_corrected_path)
-            else:
-                image1_path_for_viz = str(image1_cropped_path)
+            # 使用最後比對的兩個圖檔（已裁切與去背）生成視覺化
+            # image1_for_comparison: 已裁切和去背景的圖像1
+            # image2_for_comparison: 已裁切、去背景和對齊的圖像2
             
-            # image2_path_for_viz: 使用裁切後的圖像2作為原始圖像2（用於並排對比顯示）
-            image2_path_for_viz = str(image2_cropped_path)
+            # 從 details 中獲取 rotation_angle（優先從頂層，否則從 alignment_optimization）
+            rotation_angle_for_viz = details.get('rotation_angle')
+            if not rotation_angle_for_viz and db_comparison.details and isinstance(db_comparison.details, dict):
+                alignment_opt = db_comparison.details.get('alignment_optimization', {})
+                if alignment_opt and 'rotation_angle' in alignment_opt:
+                    rotation_angle_for_viz = alignment_opt.get('rotation_angle')
             
             self._generate_visualizations(
                 db_comparison,
-                image1_path_for_viz,
-                image2_path_for_viz,
-                str(image2_corrected_path) if image2_corrected_path and Path(image2_corrected_path).exists() else None,
-                details.get('rotation_angle')
+                image1_for_comparison,  # 已裁切和去背景的圖像1
+                image2_for_comparison,  # 已裁切、去背景和對齊的圖像2（作為 image2_corrected_path）
+                str(image2_corrected_path) if image2_corrected_path and Path(image2_corrected_path).exists() else image2_for_comparison,
+                rotation_angle_for_viz
             )
             
             for idx, stage in enumerate(processing_stages['stages']):
@@ -538,14 +539,9 @@ class ComparisonService:
                 )
                 return image_aligned, angle, offset, similarity, metrics
             except Exception as e:
-                print(f"警告：圖像2對齊優化失敗，使用基本對齊: {str(e)}")
-                # 回退到基本對齊
-                try:
-                    image_aligned, _, _ = comparator._align_image1(image, bbox=None)
-                    return image_aligned, None, None, None, None
-                except Exception as e2:
-                    print(f"警告：基本對齊也失敗，使用原圖: {str(e2)}")
-                    return image, None, None, None, None
+                print(f"警告：圖像2對齊優化失敗，使用原圖: {str(e)}")
+                # 如果對齊失敗，直接返回原圖
+                return image, None, None, None, None
         else:
             # 圖像1：只去背景，不對齊
             return image, None, None, None, None
@@ -581,10 +577,12 @@ class ComparisonService:
                 if alignment_opt:
                     translation_offset = alignment_opt.get('translation_offset')
         
+        # 確保 image2_corrected_path 存在，如果不存在則使用 image2_path 作為備用
+        image2_for_comparison = image2_corrected_path if image2_corrected_path and Path(image2_corrected_path).exists() else image2_path
+        
         comparison_url = create_correction_comparison(
             image1_path,
-            image2_path,
-            image2_corrected_path,
+            image2_for_comparison,
             comparison_path,
             record_id,
             rotation_angle,

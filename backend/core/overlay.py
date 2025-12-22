@@ -24,8 +24,10 @@ def create_overlay_image(
     2. 疊圖2：圖像2校正疊在圖像1上
     
     顯示規則：
-    - 圖像1和圖像2校正保持原始顏色
-    - 差異區域使用綠色標記
+    - 如果兩個圖像尺寸不同，會裁剪到較小圖像的尺寸（從左上角開始），只比較重疊區域
+    - 重疊區域且沒有差異的部分：使用原始圖像顏色呈現（疊圖1使用圖像1顏色，疊圖2使用圖像2顏色）
+    - 差異區域（包括圖像1獨有區域、圖像2獨有區域、重疊區域內的像素差異）：使用黑色標記
+    - 背景區域：透明（PNG 格式支持透明度）
     
     Args:
         image1_path: 第一個圖像路徑
@@ -68,15 +70,17 @@ def create_overlay_image(
         if img1 is None or img2 is None:
             return None, None
         
-        # 調整到相同尺寸（使用高質量插值，與並排比對截圖保持一致）
+        # 獲取圖像尺寸
         h1, w1 = img1.shape[:2]
         h2, w2 = img2.shape[:2]
-        target_h = max(h1, h2)
-        target_w = max(w1, w2)
         
-        # 使用 INTER_LINEAR 插值以保持高質量（與 verification.py 保持一致）
-        img1_resized = cv2.resize(img1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        img2_resized = cv2.resize(img2, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        # 裁剪到較小圖像的尺寸（只比較重疊區域）
+        min_h = min(h1, h2)
+        min_w = min(w1, w2)
+        
+        # 從左上角開始裁剪
+        img1_cropped = img1[0:min_h, 0:min_w]
+        img2_cropped = img2[0:min_h, 0:min_w]
         
         # 背景移除和透明化處理
         def remove_background_and_make_transparent(img):
@@ -155,12 +159,12 @@ def create_overlay_image(
             return seal_mask, rgba
         
         # 處理兩個圖像
-        mask1, img1_rgba = remove_background_and_make_transparent(img1_resized)
-        mask2, img2_rgba = remove_background_and_make_transparent(img2_resized)
+        mask1, img1_rgba = remove_background_and_make_transparent(img1_cropped)
+        mask2, img2_rgba = remove_background_and_make_transparent(img2_cropped)
         
         # 轉換為灰度圖以便比對
-        gray1 = cv2.cvtColor(img1_resized, cv2.COLOR_BGR2GRAY) if len(img1_resized.shape) == 3 else img1_resized
-        gray2 = cv2.cvtColor(img2_resized, cv2.COLOR_BGR2GRAY) if len(img2_resized.shape) == 3 else img2_resized
+        gray1 = cv2.cvtColor(img1_cropped, cv2.COLOR_BGR2GRAY) if len(img1_cropped.shape) == 3 else img1_cropped
+        gray2 = cv2.cvtColor(img2_cropped, cv2.COLOR_BGR2GRAY) if len(img2_cropped.shape) == 3 else img2_cropped
         
         # 使用 mask 來獲取印章部分的二值化圖像
         binary1 = np.zeros_like(gray1)
@@ -169,8 +173,8 @@ def create_overlay_image(
         binary2 = np.zeros_like(gray2)
         binary2[mask2 > 0] = 255
         
-        # 固定使用綠色標記差異區域 (BGR格式: [0, 255, 0])
-        diff_color = np.array([0, 255, 0], dtype=np.uint8)  # 綠色
+        # 差異區域使用黑色 (BGR格式: [0, 0, 0])
+        diff_color = np.array([0, 0, 0], dtype=np.uint8)  # 黑色
         
         # 計算差異區域
         diff_mask_2_only = (binary2 > 0) & (binary1 == 0)  # 只有圖像2有
@@ -186,29 +190,29 @@ def create_overlay_image(
         all_diff_mask = diff_mask_1_only | diff_mask_2_only | pixel_diff_mask
         
         # 創建彩色疊圖（OpenCV 使用 BGR 格式）
-        # 圖像1和圖像2校正都保留原始顏色，差異區域用綠色標記
-        overlay1_on_2 = np.zeros((target_h, target_w, 3), dtype=np.uint8)  # 圖像1疊在圖像2校正上
-        overlay2_on_1 = np.zeros((target_h, target_w, 3), dtype=np.uint8)  # 圖像2校正疊在圖像1上
+        # 重疊區域用原色呈現，差異區域用黑色標記
+        overlay1_on_2 = np.zeros((min_h, min_w, 3), dtype=np.uint8)  # 圖像1疊在圖像2校正上
+        overlay2_on_1 = np.zeros((min_h, min_w, 3), dtype=np.uint8)  # 圖像2校正疊在圖像1上
         
         # 計算重疊區域且沒有差異的部分
         overlap_no_diff = overlap_mask & (~pixel_diff_mask)
         
         # 疊圖1：圖像1疊在圖像2校正上
         # 設置重疊區域且沒有差異的部分：使用圖像1的原始顏色（因為圖像1在上層）
-        overlay1_on_2[overlap_no_diff] = img1_resized[overlap_no_diff]
-        # 標記所有差異區域（使用綠色）
+        overlay1_on_2[overlap_no_diff] = img1_cropped[overlap_no_diff]
+        # 標記所有差異區域（使用黑色）
         # 差異區域包括：圖像1獨有區域、圖像2校正獨有區域、重疊區域內的像素差異
         overlay1_on_2[all_diff_mask] = diff_color
         
         # 疊圖2：圖像2校正疊在圖像1上
         # 設置重疊區域且沒有差異的部分：使用圖像2校正的原始顏色（因為圖像2校正在上層）
-        overlay2_on_1[overlap_no_diff] = img2_resized[overlap_no_diff]
-        # 標記所有差異區域（使用綠色）
+        overlay2_on_1[overlap_no_diff] = img2_cropped[overlap_no_diff]
+        # 標記所有差異區域（使用黑色）
         overlay2_on_1[all_diff_mask] = diff_color
         
         # 創建帶透明背景的疊圖（使用 PNG 格式支持透明度）
-        overlay1_rgba = np.zeros((target_h, target_w, 4), dtype=np.uint8)
-        overlay2_rgba = np.zeros((target_h, target_w, 4), dtype=np.uint8)
+        overlay1_rgba = np.zeros((min_h, min_w, 4), dtype=np.uint8)
+        overlay2_rgba = np.zeros((min_h, min_w, 4), dtype=np.uint8)
         
         # 疊圖1
         overlay1_rgba[:, :, :3] = overlay1_on_2

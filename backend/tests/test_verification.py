@@ -46,13 +46,12 @@ class TestVerification:
         return str(img1_path), str(img2_path)
     
     def test_create_correction_comparison(self, test_images, temp_output_dir):
-        """測試並排對比圖生成"""
+        """測試並排對比圖生成（兩圖並排）"""
         img1_path, img2_path = test_images
         
         result = create_correction_comparison(
             img1_path,
-            img2_path,
-            img2_path,  # 使用相同圖像作為校正後圖像
+            img2_path,  # 圖像2（已裁切、去背景和對齊）
             temp_output_dir,
             1,
             rotation_angle=0.0
@@ -61,20 +60,21 @@ class TestVerification:
         assert result is not None
         assert Path(temp_output_dir / Path(result).name).exists()
     
-    def test_create_correction_comparison_no_corrected(self, test_images, temp_output_dir):
-        """測試並排對比圖生成（無校正圖像）"""
+    def test_create_correction_comparison_with_alignment(self, test_images, temp_output_dir):
+        """測試並排對比圖生成（帶對齊參數）"""
         img1_path, img2_path = test_images
         
         result = create_correction_comparison(
             img1_path,
             img2_path,
-            None,  # 無校正圖像
             temp_output_dir,
             2,
-            rotation_angle=None
+            rotation_angle=5.5,
+            translation_offset={'x': 10, 'y': -5}
         )
         
         assert result is not None
+        assert Path(temp_output_dir / Path(result).name).exists()
     
     def test_create_difference_heatmap(self, test_images, temp_output_dir):
         """測試差異熱力圖生成"""
