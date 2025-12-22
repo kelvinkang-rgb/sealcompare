@@ -95,10 +95,16 @@ class ComparisonResponse(ComparisonBase):
     
     @model_validator(mode='after')
     def extract_translation_offset(self):
-        """從 details 中提取 translation_offset"""
-        if self.details and isinstance(self.details, dict) and 'translation_offset' in self.details:
-            if self.translation_offset is None:
+        """從 details 中提取 translation_offset（優先從頂層，否則從 alignment_optimization）"""
+        if self.details and isinstance(self.details, dict):
+            # 優先從頂層獲取
+            if 'translation_offset' in self.details and self.translation_offset is None:
                 self.translation_offset = self.details.get('translation_offset')
+            # 如果頂層沒有，從 alignment_optimization 獲取
+            elif self.translation_offset is None:
+                alignment_opt = self.details.get('alignment_optimization', {})
+                if alignment_opt and 'translation_offset' in alignment_opt:
+                    self.translation_offset = alignment_opt.get('translation_offset')
         return self
     
     class Config:

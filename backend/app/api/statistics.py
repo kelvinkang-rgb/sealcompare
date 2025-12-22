@@ -19,23 +19,26 @@ def get_statistics(
     """
     獲取統計資訊
     """
+    # 基礎查詢：只包含未刪除的記錄
+    base_query = db.query(Comparison).filter(Comparison.deleted_at.is_(None))
+    
     # 總比對次數
-    total_comparisons = db.query(Comparison).count()
+    total_comparisons = base_query.count()
     
     # 匹配次數
-    match_count = db.query(Comparison).filter(Comparison.is_match == True).count()
+    match_count = base_query.filter(Comparison.is_match == True).count()
     
     # 不匹配次數
-    mismatch_count = db.query(Comparison).filter(Comparison.is_match == False).count()
+    mismatch_count = base_query.filter(Comparison.is_match == False).count()
     
     # 平均相似度
-    avg_similarity_result = db.query(func.avg(Comparison.similarity)).filter(
+    avg_similarity_result = base_query.filter(
         Comparison.similarity.isnot(None)
-    ).scalar()
+    ).with_entities(func.avg(Comparison.similarity)).scalar()
     average_similarity = float(avg_similarity_result) if avg_similarity_result else 0.0
     
     # 最近的比對記錄（最近10條）
-    recent_comparisons = db.query(Comparison).order_by(
+    recent_comparisons = base_query.order_by(
         Comparison.created_at.desc()
     ).limit(10).all()
     

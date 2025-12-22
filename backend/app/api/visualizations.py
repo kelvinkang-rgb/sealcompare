@@ -2,7 +2,7 @@
 視覺化相關 API
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -24,9 +24,12 @@ def get_comparison_image(
     
     - **comparison_id**: 比對 ID
     """
-    comparison = db.query(Comparison).filter(Comparison.id == comparison_id).first()
+    comparison = db.query(Comparison).filter(
+        Comparison.id == comparison_id,
+        Comparison.deleted_at.is_(None)
+    ).first()
     if not comparison:
-        raise HTTPException(status_code=404, detail="比對記錄不存在")
+        raise HTTPException(status_code=404, detail="比對記錄不存在或已刪除")
     
     vis = db.query(ComparisonVisualization).filter(
         ComparisonVisualization.comparison_id == comparison_id,
@@ -57,9 +60,12 @@ def get_heatmap(
     
     - **comparison_id**: 比對 ID
     """
-    comparison = db.query(Comparison).filter(Comparison.id == comparison_id).first()
+    comparison = db.query(Comparison).filter(
+        Comparison.id == comparison_id,
+        Comparison.deleted_at.is_(None)
+    ).first()
     if not comparison:
-        raise HTTPException(status_code=404, detail="比對記錄不存在")
+        raise HTTPException(status_code=404, detail="比對記錄不存在或已刪除")
     
     vis = db.query(ComparisonVisualization).filter(
         ComparisonVisualization.comparison_id == comparison_id,
@@ -83,7 +89,7 @@ def get_heatmap(
 @router.get("/{comparison_id}/overlay")
 def get_overlay(
     comparison_id: UUID,
-    overlay_type: str = "1",  # "1" 或 "2"
+    overlay_type: str = Query("1", description="疊圖類型（'1' 或 '2'）"),
     db: Session = Depends(get_db)
 ):
     """
@@ -92,9 +98,12 @@ def get_overlay(
     - **comparison_id**: 比對 ID
     - **overlay_type**: 疊圖類型（"1" 或 "2"）
     """
-    comparison = db.query(Comparison).filter(Comparison.id == comparison_id).first()
+    comparison = db.query(Comparison).filter(
+        Comparison.id == comparison_id,
+        Comparison.deleted_at.is_(None)
+    ).first()
     if not comparison:
-        raise HTTPException(status_code=404, detail="比對記錄不存在")
+        raise HTTPException(status_code=404, detail="比對記錄不存在或已刪除")
     
     vis_type = VisualizationType.OVERLAY1 if overlay_type == "1" else VisualizationType.OVERLAY2
     

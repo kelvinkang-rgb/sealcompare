@@ -86,6 +86,9 @@ class Comparison(Base):
     completed_at = Column(DateTime, nullable=True)
     deleted_at = Column(DateTime, nullable=True)  # 軟刪除時間戳
     
+    # 備註
+    notes = Column(String(500), nullable=True)  # 備註或標籤
+    
     # 關係
     image1 = relationship("Image", foreign_keys=[image1_id], back_populates="comparisons_as_image1")
     image2 = relationship("Image", foreign_keys=[image2_id], back_populates="comparisons_as_image2")

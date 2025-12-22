@@ -4,7 +4,7 @@
 
 from pathlib import Path
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Tuple, Dict
 from uuid import UUID
 import cv2
 import numpy as np
@@ -21,10 +21,8 @@ sys.path.insert(0, str(core_path))
 from seal_compare import SealComparator
 from verification import (
     create_correction_comparison,
-    create_difference_heatmap,
-    calculate_alignment_metrics
+    create_difference_heatmap
 )
-from overlay import create_overlay_image
 from overlay import create_overlay_image
 
 
@@ -93,7 +91,6 @@ class ComparisonService:
             'stages': [
                 {'name': 'initializing', 'label': '初始化', 'status': 'completed', 'progress': 100},
                 {'name': 'loading_images', 'label': '載入圖像', 'status': 'in_progress', 'progress': 10},
-                {'name': 'preprocessing', 'label': '圖像預處理', 'status': 'pending', 'progress': 0},
             ]
         }
         
@@ -116,7 +113,6 @@ class ComparisonService:
         processing_stages['stages'].extend([
             {'name': 'similarity_calculation', 'label': '計算相似度', 'status': 'pending', 'progress': 0},
             {'name': 'saving_corrected', 'label': '保存校正後圖像', 'status': 'pending', 'progress': 0},
-            {'name': 'alignment_metrics', 'label': '計算對齊指標', 'status': 'pending', 'progress': 0},
             {'name': 'generating_visualizations', 'label': '生成視覺化圖表', 'status': 'pending', 'progress': 0},
             {'name': 'completed', 'label': '完成', 'status': 'pending', 'progress': 0},
         ])
@@ -256,12 +252,12 @@ class ComparisonService:
                 # 沒有 bbox，使用整個圖像
                 img1_cropped = img1_original.copy()
             
-            # 對圖像1進行去背景和對齊
-            img1_cropped = self._remove_background_and_align(img1_cropped)
+            # 對圖像1進行去背景（不對齊）
+            img1_no_bg, _, _, _, _ = self._remove_background_and_align(img1_cropped)
             
-            # 保存裁切並對齊後的圖像1
+            # 保存去背景後的圖像1
             image1_cropped_path = corrected_dir / f"image1_cropped_{comparison_id}.jpg"
-            cv2.imwrite(str(image1_cropped_path), img1_cropped)
+            cv2.imwrite(str(image1_cropped_path), img1_no_bg)
             image1_for_comparison = str(image1_cropped_path)
             
             # 處理圖像2：裁切或保存整個圖像
@@ -282,8 +278,27 @@ class ComparisonService:
                 # 沒有 bbox，使用整個圖像
                 img2_cropped = img2_original.copy()
             
-            # 對圖像2進行去背景和對齊
-            img2_cropped = self._remove_background_and_align(img2_cropped)
+            # 對圖像2進行去背景和對齊（相對於圖像1優化）
+            img2_cropped, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics = self._remove_background_and_align(
+                img2_cropped, 
+                reference_image=img1_no_bg,  # 傳入去背景後的圖像1作為參考
+                is_image2=True
+            )
+            
+            # 保存對齊優化結果到 details
+            if alignment_angle is not None and alignment_offset is not None:
+                if db_comparison.details is None:
+                    db_comparison.details = {}
+                db_comparison.details['alignment_optimization'] = {
+                    'rotation_angle': float(alignment_angle),
+                    'translation_offset': {
+                        'x': int(alignment_offset[0]),
+                        'y': int(alignment_offset[1])
+                    },
+                    'similarity': float(alignment_similarity) if alignment_similarity is not None else None,
+                    'similarity_metrics': alignment_metrics if alignment_metrics else {}
+                }
+                self.db.commit()
             
             # 保存裁切並對齊後的圖像2
             image2_cropped_path = corrected_dir / f"image2_cropped_{comparison_id}.jpg"
@@ -300,25 +315,16 @@ class ComparisonService:
             db_comparison.details['processing_stages'] = processing_stages
             self.db.commit()
             
-            # 階段2: 圖像預處理（已完成，因為圖像已經在載入階段完成去背景和對齊）
-            processing_stages['current_stage'] = 'preprocessing'
-            processing_stages['stages'][2]['status'] = 'completed'
-            processing_stages['stages'][2]['progress'] = 100
-            db_comparison.details['processing_stages'] = processing_stages
-            self.db.commit()
-            
             # 執行比對（使用裁切並對齊後的圖像路徑，bbox 設為 None）
             comparator = SealComparator(threshold=db_comparison.threshold)
             
             # 標記旋轉搜索和平移搜索階段為完成（因為圖像已經對齊，不需要這些搜索）
-            stage_index = 3
             if enable_rotation_search:
                 for idx, stage in enumerate(processing_stages['stages']):
                     if stage['name'] == 'rotation_search':
                         processing_stages['stages'][idx]['status'] = 'completed'
                         processing_stages['stages'][idx]['progress'] = 100
                         break
-                stage_index += 1
             
             if enable_translation_search:
                 for idx, stage in enumerate(processing_stages['stages']):
@@ -326,7 +332,6 @@ class ComparisonService:
                         processing_stages['stages'][idx]['status'] = 'completed'
                         processing_stages['stages'][idx]['progress'] = 100
                         break
-                stage_index += 1
             
             db_comparison.details['processing_stages'] = processing_stages
             self.db.commit()
@@ -395,56 +400,25 @@ class ComparisonService:
             db_comparison.is_match = is_match
             db_comparison.similarity = similarity
             db_comparison.rotation_angle = details.get('rotation_angle')
-            # 存儲平移偏移量（如果存在）
-            translation_offset = details.get('translation_offset')
-            if translation_offset:
-                # 將 translation_offset 存儲在 details 中，同時也可以單獨存儲
-                pass  # 目前存儲在 details 中，如果需要可以添加到模型欄位
+            
+            # 從 alignment_optimization 中提取 translation_offset 和 rotation_angle
+            # 確保保留 alignment_optimization（如果存在）
+            if db_comparison.details and isinstance(db_comparison.details, dict):
+                alignment_opt = db_comparison.details.get('alignment_optimization', {})
+                if alignment_opt:
+                    # 將 alignment_optimization 中的值也存儲到 details 的頂層，方便前端訪問
+                    if 'translation_offset' in alignment_opt and details.get('translation_offset') is None:
+                        details['translation_offset'] = alignment_opt['translation_offset']
+                    if 'rotation_angle' in alignment_opt and (details.get('rotation_angle') is None or details.get('rotation_angle') == 0.0):
+                        details['rotation_angle'] = alignment_opt['rotation_angle']
+                        db_comparison.rotation_angle = alignment_opt['rotation_angle']
+                    # 確保 alignment_optimization 被保留在 details 中
+                    details['alignment_optimization'] = alignment_opt
+            
             db_comparison.similarity_before_correction = details.get('similarity_before_correction')
             db_comparison.improvement = details.get('improvement')
             details['processing_stages'] = processing_stages
             db_comparison.details = details
-            
-            # 階段: 計算對齊指標
-            processing_stages['current_stage'] = 'alignment_metrics'
-            for idx, stage in enumerate(processing_stages['stages']):
-                if stage['name'] == 'alignment_metrics':
-                    processing_stages['stages'][idx]['status'] = 'in_progress'
-                    processing_stages['stages'][idx]['progress'] = 50
-                    db_comparison.details['processing_stages'] = processing_stages
-                    self.db.commit()
-                    break
-            
-            # 使用校正後的圖像計算對齊指標
-            # 優先使用校正後的圖像，否則使用裁切後的圖像（所有處理都使用裁切後的圖像）
-            if image1_corrected_path and Path(image1_corrected_path).exists():
-                img1_corr = cv2.imread(str(image1_corrected_path))
-            else:
-                # 使用裁切後的圖像1
-                img1_corr = cv2.imread(str(image1_cropped_path))
-            
-            # 使用裁切後的圖像2作為原始圖像2
-            img2_orig = cv2.imread(str(image2_cropped_path))
-            
-            # 使用校正後的圖像2（如果存在）
-            if image2_corrected_path and Path(image2_corrected_path).exists():
-                img2_corr = cv2.imread(str(image2_corrected_path))
-            else:
-                img2_corr = None
-            
-            alignment_metrics = calculate_alignment_metrics(
-                img1_corr, img2_orig, img2_corr, 
-                details.get('rotation_angle'),
-                details.get('translation_offset')
-            )
-            db_comparison.center_offset = alignment_metrics.get('center_offset', 0.0)
-            db_comparison.size_ratio = details.get('size_ratio', 1.0)
-            
-            for idx, stage in enumerate(processing_stages['stages']):
-                if stage['name'] == 'alignment_metrics':
-                    processing_stages['stages'][idx]['status'] = 'completed'
-                    processing_stages['stages'][idx]['progress'] = 100
-                    break
             
             # 階段: 生成視覺化
             processing_stages['current_stage'] = 'generating_visualizations'
@@ -524,15 +498,25 @@ class ComparisonService:
             self.db.commit()
             raise e
     
-    def _remove_background_and_align(self, image: np.ndarray) -> np.ndarray:
+    def _remove_background_and_align(
+        self, 
+        image: np.ndarray, 
+        reference_image: Optional[np.ndarray] = None,
+        is_image2: bool = False
+    ) -> Tuple[np.ndarray, Optional[float], Optional[Tuple[int, int]], Optional[float], Optional[Dict[str, float]]]:
         """
         去背景並對齊圖像
         
         Args:
-            image: 裁切後的圖像（numpy array）
+            image: 待處理圖像（numpy array）
+            reference_image: 參考圖像（用於圖像2的對齊優化，應該是已去背景的圖像）
+            is_image2: 是否為圖像2（需要相對於圖像1優化）
             
         Returns:
-            去背景並對齊後的圖像
+            如果 is_image2=True 且 reference_image 不為 None:
+                (對齊後的圖像, 旋轉角度, (x偏移, y偏移), 相似度, 詳細指標)
+            否則:
+                (去背景後的圖像, None, None, None, None)
         """
         comparator = SealComparator()
         
@@ -544,14 +528,27 @@ class ComparisonService:
             # 如果處理失敗，使用原圖繼續處理
             pass
         
-        # 對齊（使用 _align_image1 的邏輯，因為兩個圖像都需要平移+旋轉）
-        try:
-            image_aligned, _, _ = comparator._align_image1(image, bbox=None)
-            return image_aligned
-        except Exception as e:
-            print(f"警告：圖像對齊失敗，使用原圖: {str(e)}")
-            # 如果對齊失敗，返回去背景後的圖像
-            return image
+        # 對齊處理
+        if is_image2 and reference_image is not None:
+            # 圖像2：相對於圖像1進行優化對齊
+            try:
+                # reference_image 已經是去背景後的圖像（img1_no_bg），不需要再次處理
+                image_aligned, angle, offset, similarity, metrics = comparator._align_image2_to_image1(
+                    reference_image, image, rotation_range=45.0, translation_range=100
+                )
+                return image_aligned, angle, offset, similarity, metrics
+            except Exception as e:
+                print(f"警告：圖像2對齊優化失敗，使用基本對齊: {str(e)}")
+                # 回退到基本對齊
+                try:
+                    image_aligned, _, _ = comparator._align_image1(image, bbox=None)
+                    return image_aligned, None, None, None, None
+                except Exception as e2:
+                    print(f"警告：基本對齊也失敗，使用原圖: {str(e2)}")
+                    return image, None, None, None, None
+        else:
+            # 圖像1：只去背景，不對齊
+            return image, None, None, None, None
     
     def _generate_visualizations(
         self,
@@ -575,10 +572,14 @@ class ComparisonService:
         
         # 生成並排對比圖
         comparison_path = self.logs_dir / "comparisons"
-        # 從 details 中獲取平移信息
+        # 從 details 中獲取平移信息（優先從頂層，否則從 alignment_optimization）
         translation_offset = None
         if comparison.details and isinstance(comparison.details, dict):
             translation_offset = comparison.details.get('translation_offset')
+            if not translation_offset:
+                alignment_opt = comparison.details.get('alignment_optimization', {})
+                if alignment_opt:
+                    translation_offset = alignment_opt.get('translation_offset')
         
         comparison_url = create_correction_comparison(
             image1_path,
