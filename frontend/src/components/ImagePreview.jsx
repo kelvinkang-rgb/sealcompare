@@ -1,87 +1,102 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Box, Paper, Typography, IconButton, Chip } from '@mui/material'
 import { Edit as EditIcon, CheckCircle as CheckCircleIcon } from '@mui/icons-material'
 import { imageAPI } from '../services/api'
 
 function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
-  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
-  const [croppedImageUrl, setCroppedImageUrl] = useState(null)
   const imgRef = useRef(null)
   const containerRef = useRef(null)
+  const canvasRef = useRef(null)
 
-  useEffect(() => {
-    const updateSize = () => {
-      if (containerRef.current) {
-        setContainerSize({
-          width: containerRef.current.offsetWidth,
-          height: containerRef.current.offsetHeight,
-        })
-      }
-    }
-    updateSize()
-    window.addEventListener('resize', updateSize)
-    return () => window.removeEventListener('resize', updateSize)
-  }, [])
 
-  useEffect(() => {
-    if (imgRef.current && imgRef.current.complete) {
-      setImageSize({
-        width: imgRef.current.naturalWidth,
-        height: imgRef.current.naturalHeight,
-      })
+  // 繪製框選框到 canvas
+  const drawBbox = useCallback(() => {
+    const canvas = canvasRef.current
+    const img = imgRef.current
+    
+    if (!canvas || !img || !image?.seal_bbox) {
+      return
     }
+
+    const ctx = canvas.getContext('2d')
+    const container = containerRef.current
+    if (!container) return
+
+    // 計算顯示尺寸和縮放比例
+    const containerWidth = container.offsetWidth
+    const containerHeight = container.offsetHeight
+    
+    // 計算圖像在容器中的顯示尺寸（保持寬高比）
+    const imgAspect = img.naturalWidth / img.naturalHeight
+    const containerAspect = containerWidth / containerHeight
+    
+    let displayWidth, displayHeight
+    if (imgAspect > containerAspect) {
+      displayWidth = containerWidth
+      displayHeight = containerWidth / imgAspect
+    } else {
+      displayHeight = containerHeight
+      displayWidth = containerHeight * imgAspect
+    }
+
+    canvas.width = containerWidth
+    canvas.height = containerHeight
+    
+    // 計算縮放比例（由於 objectFit: contain，x 和 y 方向的縮放比例相同）
+    const currentScale = displayWidth / img.naturalWidth
+
+    // 清除畫布
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    // 如果沒有 bbox，不繪製
+    if (!image.seal_bbox) return
+
+    // 計算 bbox 在顯示尺寸中的位置
+    const bbox = image.seal_bbox
+    const offsetX = (containerWidth - displayWidth) / 2
+    const offsetY = (containerHeight - displayHeight) / 2
+    
+    const scaledBbox = {
+      x: offsetX + bbox.x * currentScale,
+      y: offsetY + bbox.y * currentScale,
+      width: bbox.width * currentScale,
+      height: bbox.height * currentScale
+    }
+
+    // 繪製半透明背景（外部區域較暗）
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    
+    // 在框選區域內繪製更淺的半透明遮罩
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'
+    ctx.fillRect(scaledBbox.x, scaledBbox.y, scaledBbox.width, scaledBbox.height)
+
+    // 繪製邊框
+    ctx.strokeStyle = '#2196F3'
+    ctx.lineWidth = 2
+    ctx.setLineDash([])
+    ctx.strokeRect(scaledBbox.x, scaledBbox.y, scaledBbox.width, scaledBbox.height)
   }, [image])
 
-  // 裁切圖像
+  // 當圖像或 bbox 變化時重新繪製
   useEffect(() => {
-    const cropImage = async () => {
-      if (!image || !image.seal_bbox) {
-        setCroppedImageUrl(null)
-        return
-      }
+    if (imgRef.current?.complete) {
+      drawBbox()
+    }
+  }, [image, drawBbox])
 
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      img.src = imageAPI.getFile(image.id)
-
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-        
-        const bbox = image.seal_bbox
-        // 確保裁切區域在圖像範圍內
-        const x = Math.max(0, Math.min(bbox.x, img.width - 1))
-        const y = Math.max(0, Math.min(bbox.y, img.height - 1))
-        const width = Math.min(bbox.width, img.width - x)
-        const height = Math.min(bbox.height, img.height - y)
-
-        if (width > 0 && height > 0) {
-          canvas.width = width
-          canvas.height = height
-          
-          // 裁切圖像
-          ctx.drawImage(
-            img,
-            x, y, width, height,
-            0, 0, width, height
-          )
-          
-          // 轉換為 URL
-          const croppedUrl = canvas.toDataURL('image/jpeg', 0.95)
-          setCroppedImageUrl(croppedUrl)
-        } else {
-          setCroppedImageUrl(null)
-        }
-      }
-
-      img.onerror = () => {
-        setCroppedImageUrl(null)
+  // 當容器大小變化時重新繪製
+  useEffect(() => {
+    const handleResize = () => {
+      if (imgRef.current?.complete) {
+        drawBbox()
       }
     }
-
-    cropImage()
-  }, [image])
+    
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [drawBbox])
 
   if (!image) {
     return (
@@ -107,22 +122,6 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
 
   const imageUrl = imageAPI.getFile(image.id)
   const hasSeal = image.seal_bbox !== null && image.seal_bbox !== undefined
-  
-  // 使用裁切後的圖像 URL（如果有）
-  const displayImageUrl = croppedImageUrl || imageUrl
-  
-  // 計算顯示圖像的尺寸（如果是裁切後的圖像，使用裁切區域的尺寸）
-  const getDisplayImageSize = () => {
-    if (croppedImageUrl && image.seal_bbox) {
-      return {
-        width: image.seal_bbox.width,
-        height: image.seal_bbox.height,
-      }
-    }
-    return imageSize
-  }
-
-  const displaySize = getDisplayImageSize()
 
   return (
     <Paper
@@ -175,7 +174,7 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
       >
         <img
           ref={imgRef}
-          src={displayImageUrl}
+          src={imageUrl}
           alt={image.filename || '預覽'}
           style={{
             position: 'absolute',
@@ -186,15 +185,26 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
             objectFit: 'contain',
           }}
           onLoad={(e) => {
-            if (!croppedImageUrl) {
-              // 只有當不是裁切圖像時才更新原始圖像尺寸
-              setImageSize({
-                width: e.target.naturalWidth,
-                height: e.target.naturalHeight,
-              })
-            }
+            setImageSize({
+              width: e.target.naturalWidth,
+              height: e.target.naturalHeight,
+            })
+            drawBbox()
           }}
         />
+        {hasSeal && (
+          <canvas
+            ref={canvasRef}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none', // 不阻止點擊事件
+            }}
+          />
+        )}
       </Box>
       
       {image.filename && (

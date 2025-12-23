@@ -111,13 +111,13 @@ function VerificationView({ comparisonId }) {
         {/* 疊圖比對區域 */}
         <Grid item xs={12}>
           <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle2" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
+            <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
               疊圖比對
             </Typography>
             <Grid container spacing={2}>
               <Grid item xs={12} md={6}>
                 <Box sx={{ textAlign: 'center' }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontWeight: 'medium', display: 'block' }}>
                     圖像1疊在圖像2校正上
                   </Typography>
                   <Box
@@ -152,14 +152,25 @@ function VerificationView({ comparisonId }) {
                       }}
                     />
                   </Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    綠色區域表示差異部分 | 點擊放大查看
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, display: 'block', lineHeight: 1.6 }}>
+                    <Box component="span" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>顏色說明：</strong>
+                    </Box>
+                    <Box component="span" sx={{ display: 'block' }}>
+                      <span style={{ color: '#000' }}>■</span> 黑色：獨有區域差異
+                    </Box>
+                    <Box component="span" sx={{ display: 'block' }}>
+                      <span style={{ color: '#FF8C00' }}>■</span> 橘色：重疊區域像素差異
+                    </Box>
+                    <Box component="span" sx={{ display: 'block', mt: 0.5, fontSize: '0.875rem' }}>
+                      點擊圖片放大查看
+                    </Box>
                   </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} md={6}>
                 <Box sx={{ textAlign: 'center' }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontWeight: 'medium', display: 'block' }}>
                     圖像2校正疊在圖像1上
                   </Typography>
                   <Box
@@ -194,8 +205,19 @@ function VerificationView({ comparisonId }) {
                       }}
                     />
                   </Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    綠色區域表示差異部分 | 點擊放大查看
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, display: 'block', lineHeight: 1.6 }}>
+                    <Box component="span" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>顏色說明：</strong>
+                    </Box>
+                    <Box component="span" sx={{ display: 'block' }}>
+                      <span style={{ color: '#000' }}>■</span> 黑色：獨有區域差異
+                    </Box>
+                    <Box component="span" sx={{ display: 'block' }}>
+                      <span style={{ color: '#FF8C00' }}>■</span> 橘色：重疊區域像素差異
+                    </Box>
+                    <Box component="span" sx={{ display: 'block', mt: 0.5, fontSize: '0.875rem' }}>
+                      點擊圖片放大查看
+                    </Box>
                   </Typography>
                 </Box>
               </Grid>

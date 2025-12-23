@@ -123,8 +123,6 @@ function History() {
           <TableHead>
             <TableRow>
               <TableCell>ID</TableCell>
-              <TableCell>相似度</TableCell>
-              <TableCell>結果</TableCell>
               <TableCell>狀態</TableCell>
               <TableCell>創建時間</TableCell>
               <TableCell>操作</TableCell>
@@ -134,20 +132,6 @@ function History() {
             {comparisons?.map((comparison) => (
               <TableRow key={comparison.id}>
                 <TableCell>{comparison.id.slice(0, 8)}...</TableCell>
-                <TableCell>
-                  {comparison.similarity
-                    ? `${(comparison.similarity * 100).toFixed(2)}%`
-                    : '-'}
-                </TableCell>
-                <TableCell>
-                  {comparison.is_match !== null && (
-                    <Chip
-                      label={comparison.is_match ? '匹配' : '不匹配'}
-                      color={comparison.is_match ? 'success' : 'error'}
-                      size="small"
-                    />
-                  )}
-                </TableCell>
                 <TableCell>
                   <Chip
                     label={comparison.status}

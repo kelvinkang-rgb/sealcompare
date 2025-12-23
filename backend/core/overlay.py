@@ -24,9 +24,9 @@ def create_overlay_image(
     2. 疊圖2：圖像2校正疊在圖像1上
     
     顯示規則：
-    - 如果兩個圖像尺寸不同，會裁剪到較小圖像的尺寸（從左上角開始），只比較重疊區域
+    - 如果兩個圖像尺寸不同，會調整到較大圖像的尺寸（較小的圖像用白色背景填充到左上角）
     - 重疊區域且沒有差異的部分：使用原始圖像顏色呈現（疊圖1使用圖像1顏色，疊圖2使用圖像2顏色）
-    - 差異區域（包括圖像1獨有區域、圖像2獨有區域、重疊區域內的像素差異）：使用黑色標記
+    - 差異區域（包括圖像1獨有區域、圖像2獨有區域、重疊區域內的像素差異）：使用黑色或亮橘色標記
     - 背景區域：透明（PNG 格式支持透明度）
     
     Args:
@@ -74,13 +74,17 @@ def create_overlay_image(
         h1, w1 = img1.shape[:2]
         h2, w2 = img2.shape[:2]
         
-        # 裁剪到較小圖像的尺寸（只比較重疊區域）
-        min_h = min(h1, h2)
-        min_w = min(w1, w2)
+        # 使用較大圖像的尺寸
+        max_h = max(h1, h2)
+        max_w = max(w1, w2)
         
-        # 從左上角開始裁剪
-        img1_cropped = img1[0:min_h, 0:min_w]
-        img2_cropped = img2[0:min_h, 0:min_w]
+        # 將兩個圖像調整到較大尺寸（較小的圖像用白色背景填充）
+        img1_cropped = np.ones((max_h, max_w, 3), dtype=np.uint8) * 255
+        img2_cropped = np.ones((max_h, max_w, 3), dtype=np.uint8) * 255
+        
+        # 將原始圖像複製到左上角
+        img1_cropped[0:h1, 0:w1] = img1
+        img2_cropped[0:h2, 0:w2] = img2
         
         # 背景移除和透明化處理
         def remove_background_and_make_transparent(img):
@@ -157,10 +161,10 @@ def create_overlay_image(
             rgba[:, :, 3] = seal_mask
             
             return seal_mask, rgba
-        
-        # 處理兩個圖像
-        mask1, img1_rgba = remove_background_and_make_transparent(img1_cropped)
-        mask2, img2_rgba = remove_background_and_make_transparent(img2_cropped)
+
+        # 處理兩個圖像，獲取印章遮罩
+        mask1, _ = remove_background_and_make_transparent(img1_cropped)
+        mask2, _ = remove_background_and_make_transparent(img2_cropped)
         
         # 轉換為灰度圖以便比對
         gray1 = cv2.cvtColor(img1_cropped, cv2.COLOR_BGR2GRAY) if len(img1_cropped.shape) == 3 else img1_cropped
@@ -173,46 +177,51 @@ def create_overlay_image(
         binary2 = np.zeros_like(gray2)
         binary2[mask2 > 0] = 255
         
-        # 差異區域使用黑色 (BGR格式: [0, 0, 0])
-        diff_color = np.array([0, 0, 0], dtype=np.uint8)  # 黑色
-        
         # 計算差異區域
         diff_mask_2_only = (binary2 > 0) & (binary1 == 0)  # 只有圖像2有
         diff_mask_1_only = (binary1 > 0) & (binary2 == 0)  # 只有圖像1有
         overlap_mask = (binary1 > 0) & (binary2 > 0)  # 兩者重疊區域
         
         # 計算像素差異（在重疊區域內）
-        diff_threshold = 30  # 差異閾值
+        diff_threshold = 100  # 差異閾值
         gray_diff = cv2.absdiff(gray1, gray2)
         pixel_diff_mask = (gray_diff > diff_threshold) & overlap_mask  # 重疊區域內的像素差異
-        
-        # 所有差異區域（包括獨有區域和重疊區域內的像素差異）
-        all_diff_mask = diff_mask_1_only | diff_mask_2_only | pixel_diff_mask
-        
-        # 創建彩色疊圖（OpenCV 使用 BGR 格式）
-        # 重疊區域用原色呈現，差異區域用黑色標記
-        overlay1_on_2 = np.zeros((min_h, min_w, 3), dtype=np.uint8)  # 圖像1疊在圖像2校正上
-        overlay2_on_1 = np.zeros((min_h, min_w, 3), dtype=np.uint8)  # 圖像2校正疊在圖像1上
         
         # 計算重疊區域且沒有差異的部分
         overlap_no_diff = overlap_mask & (~pixel_diff_mask)
         
+        # 創建彩色疊圖（OpenCV 使用 BGR 格式）
+        # 重疊區域用原色呈現，差異區域用黑色標記
+        overlay1_on_2 = np.zeros((max_h, max_w, 3), dtype=np.uint8)  # 圖像1疊在圖像2校正上
+        overlay2_on_1 = np.zeros((max_h, max_w, 3), dtype=np.uint8)  # 圖像2校正疊在圖像1上
+        
+        # 差異區域顏色
+        diff_color = np.array([0, 0, 0], dtype=np.uint8)  # 黑色（用於獨有區域）
+        pixel_diff_color = np.array([0, 165, 255], dtype=np.uint8)  # 亮橘色 (BGR格式)
+        
         # 疊圖1：圖像1疊在圖像2校正上
-        # 設置重疊區域且沒有差異的部分：使用圖像1的原始顏色（因為圖像1在上層）
+        # 1. 重疊且無差異區域：使用圖像1的原始顏色（圖像1在上層）
         overlay1_on_2[overlap_no_diff] = img1_cropped[overlap_no_diff]
-        # 標記所有差異區域（使用黑色）
-        # 差異區域包括：圖像1獨有區域、圖像2校正獨有區域、重疊區域內的像素差異
-        overlay1_on_2[all_diff_mask] = diff_color
+        # 2. 圖像1獨有區域：顯示圖像1的原始顏色
+        overlay1_on_2[diff_mask_1_only] = img1_cropped[diff_mask_1_only]
+        # 3. 圖像2獨有區域：使用黑色標記（差異區域）
+        overlay1_on_2[diff_mask_2_only] = diff_color
+        # 4. 重疊區域內的像素差異：使用亮橘色標記
+        overlay1_on_2[pixel_diff_mask] = pixel_diff_color
         
         # 疊圖2：圖像2校正疊在圖像1上
-        # 設置重疊區域且沒有差異的部分：使用圖像2校正的原始顏色（因為圖像2校正在上層）
+        # 1. 重疊且無差異區域：使用圖像2的原始顏色（圖像2在上層）
         overlay2_on_1[overlap_no_diff] = img2_cropped[overlap_no_diff]
-        # 標記所有差異區域（使用黑色）
-        overlay2_on_1[all_diff_mask] = diff_color
+        # 2. 圖像2獨有區域：顯示圖像2的原始顏色
+        overlay2_on_1[diff_mask_2_only] = img2_cropped[diff_mask_2_only]
+        # 3. 圖像1獨有區域：使用黑色標記（差異區域）
+        overlay2_on_1[diff_mask_1_only] = diff_color
+        # 4. 重疊區域內的像素差異：使用亮橘色標記
+        overlay2_on_1[pixel_diff_mask] = pixel_diff_color
         
         # 創建帶透明背景的疊圖（使用 PNG 格式支持透明度）
-        overlay1_rgba = np.zeros((min_h, min_w, 4), dtype=np.uint8)
-        overlay2_rgba = np.zeros((min_h, min_w, 4), dtype=np.uint8)
+        overlay1_rgba = np.zeros((max_h, max_w, 4), dtype=np.uint8)
+        overlay2_rgba = np.zeros((max_h, max_w, 4), dtype=np.uint8)
         
         # 疊圖1
         overlay1_rgba[:, :, :3] = overlay1_on_2

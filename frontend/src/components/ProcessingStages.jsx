@@ -94,13 +94,13 @@ function ProcessingStages({ processingStages }) {
               <Box sx={{ mt: 1, mb: 2 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                   <LinearProgress
-                    variant="determinate"
-                    value={stage.progress}
-                    sx={{ flexGrow: 1 }}
+                    variant={stage.progress !== null && stage.progress !== undefined ? "determinate" : "indeterminate"}
+                    value={stage.progress != null ? Math.max(0, Math.min(100, stage.progress)) : 0}
+                    sx={{ flexGrow: 1, height: 6, borderRadius: 3 }}
                     color={getStepColor(stage)}
                   />
                   <Typography variant="caption" color="text.secondary" sx={{ minWidth: 40 }}>
-                    {stage.progress}%
+                    {stage.progress != null ? `${Math.max(0, Math.min(100, stage.progress))}%` : '--'}
                   </Typography>
                 </Box>
                 {stage.status === 'in_progress' && (

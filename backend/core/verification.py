@@ -87,18 +87,19 @@ def create_correction_comparison(
         draw = ImageDraw.Draw(comparison_pil)
         
         # 嘗試載入中文字體，如果失敗則使用默認字體
+        font_paths = [
+            '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',  # Linux
+            '/System/Library/Fonts/PingFang.ttc',  # macOS
+            'C:/Windows/Fonts/msyh.ttc',  # Windows 微軟雅黑
+            'C:/Windows/Fonts/simhei.ttf',  # Windows 黑體
+        ]
+        font = None
+        used_font_path = None
         try:
-            # 嘗試使用系統中文字體
-            font_paths = [
-                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',  # Linux
-                '/System/Library/Fonts/PingFang.ttc',  # macOS
-                'C:/Windows/Fonts/msyh.ttc',  # Windows 微軟雅黑
-                'C:/Windows/Fonts/simhei.ttf',  # Windows 黑體
-            ]
-            font = None
             for font_path in font_paths:
                 if Path(font_path).exists():
                     font = ImageFont.truetype(font_path, 24)
+                    used_font_path = font_path
                     break
             if font is None:
                 font = ImageFont.load_default()
@@ -126,7 +127,36 @@ def create_correction_comparison(
         bbox = draw.textbbox((0, 0), text2, font=font)
         text_width = bbox[2] - bbox[0]
         text_x2 = w1 + gap + (w2_corr - text_width) // 2
-        draw.text((text_x2, 10), text2, fill=(0, 0, 0), font=font)
+        
+        # 確保文字不會超出圖像範圍
+        text_x2 = max(w1 + gap, min(text_x2, comparison_width - text_width - 10))
+        # 如果文字仍然太長，可以分成兩行顯示
+        if text_width > w2_corr - 20:
+            # 將文字分成兩行：主標題和校正信息
+            text2_line1 = "校正後圖像 (圖像2)"
+            text2_line2 = ", ".join(correction_parts) if correction_parts else ""
+            
+            bbox1 = draw.textbbox((0, 0), text2_line1, font=font)
+            text_width1 = bbox1[2] - bbox1[0]
+            text_x2_1 = w1 + gap + (w2_corr - text_width1) // 2
+            text_x2_1 = max(w1 + gap, min(text_x2_1, comparison_width - text_width1 - 10))
+            draw.text((text_x2_1, 10), text2_line1, fill=(0, 0, 0), font=font)
+            
+            if text2_line2:
+                # 使用稍小的字體顯示校正信息
+                font_small = font
+                if used_font_path and font != ImageFont.load_default():
+                    try:
+                        font_small = ImageFont.truetype(used_font_path, 18)
+                    except:
+                        font_small = font
+                bbox2 = draw.textbbox((0, 0), text2_line2, font=font_small)
+                text_width2 = bbox2[2] - bbox2[0]
+                text_x2_2 = w1 + gap + (w2_corr - text_width2) // 2
+                text_x2_2 = max(w1 + gap, min(text_x2_2, comparison_width - text_width2 - 10))
+                draw.text((text_x2_2, 35), text2_line2, fill=(0, 0, 0), font=font_small)
+        else:
+            draw.text((text_x2, 10), text2, fill=(0, 0, 0), font=font)
         
         # 轉回 OpenCV 格式
         comparison = cv2.cvtColor(np.array(comparison_pil), cv2.COLOR_RGB2BGR)
@@ -272,36 +302,54 @@ def create_difference_heatmap(
         draw = ImageDraw.Draw(final_image_pil)
         
         # 嘗試載入中文字體
+        font_paths_heatmap = [
+            '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+            '/System/Library/Fonts/PingFang.ttc',
+            'C:/Windows/Fonts/msyh.ttc',
+            'C:/Windows/Fonts/simhei.ttf',
+        ]
+        font_heatmap = None
+        used_font_path_heatmap = None
         try:
-            font_paths = [
-                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
-                '/System/Library/Fonts/PingFang.ttc',
-                'C:/Windows/Fonts/msyh.ttc',
-                'C:/Windows/Fonts/simhei.ttf',
-            ]
-            font = None
-            for font_path in font_paths:
+            for font_path in font_paths_heatmap:
                 if Path(font_path).exists():
-                    font = ImageFont.truetype(font_path, 18)
+                    font_heatmap = ImageFont.truetype(font_path, 18)
+                    used_font_path_heatmap = font_path
                     break
-            if font is None:
-                font = ImageFont.load_default()
+            if font_heatmap is None:
+                font_heatmap = ImageFont.load_default()
         except:
-            font = ImageFont.load_default()
+            font_heatmap = ImageFont.load_default()
         
         y_text = target_h + 20
         
+        # 將統計文字分成多行以避免與圖例重疊
         stats_text = [
             f"差異像素: {diff_pixels:,} ({diff_percentage:.2f}%)",
-            f"平均差異: {mean_diff:.2f} | 最大差異: {max_diff:.0f}"
+            f"平均差異: {mean_diff:.2f}",
+            f"最大差異: {max_diff:.0f}"
         ]
         
-        for i, text in enumerate(stats_text):
-            draw.text((10, y_text + i * 25), text, fill=(0, 0, 0), font=font)
-        
-        # 添加顏色圖例
+        # 計算圖例所需空間
         legend_width = 200
         legend_x = target_w - legend_width - 10
+        max_text_width = legend_x - 20  # 確保文字不會與圖例重疊
+        
+        # 檢查每行文字的寬度，如果太長則調整或換行
+        for i, text in enumerate(stats_text):
+            bbox = draw.textbbox((0, 0), text, font=font_heatmap)
+            text_width = bbox[2] - bbox[0]
+            if text_width > max_text_width and used_font_path_heatmap:
+                # 如果文字太長，使用較小的字體
+                try:
+                    font_small = ImageFont.truetype(used_font_path_heatmap, 14)
+                    draw.text((10, y_text + i * 25), text, fill=(0, 0, 0), font=font_small)
+                except:
+                    draw.text((10, y_text + i * 25), text, fill=(0, 0, 0), font=font_heatmap)
+            else:
+                draw.text((10, y_text + i * 25), text, fill=(0, 0, 0), font=font_heatmap)
+        
+        # 添加顏色圖例
         legend_y = target_h + 10
         legend_h = 20
         
@@ -320,8 +368,8 @@ def create_difference_heatmap(
         draw = ImageDraw.Draw(final_image_pil)
         
         # 添加圖例標籤
-        draw.text((legend_x - 25, legend_y + 5), "低", fill=(0, 0, 0), font=font)
-        draw.text((legend_x + legend_width + 5, legend_y + 5), "高", fill=(0, 0, 0), font=font)
+        draw.text((legend_x - 25, legend_y + 5), "低", fill=(0, 0, 0), font=font_heatmap)
+        draw.text((legend_x + legend_width + 5, legend_y + 5), "高", fill=(0, 0, 0), font=font_heatmap)
         
         # 轉回 OpenCV 格式
         final_image = cv2.cvtColor(np.array(final_image_pil), cv2.COLOR_RGB2BGR)

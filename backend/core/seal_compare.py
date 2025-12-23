@@ -231,22 +231,22 @@ class SealComparator:
             img2_gray = image2.copy()
         
         h2, w2 = img2_gray.shape
+        h1, w1 = img1_gray.shape
         
-        # 階段1：快速粗搜索
-        # 使用縮小圖像進行快速評估（優化：更激進的縮放以加快速度）
-        scale_factor = 0.2  # 從0.3優化為0.2，加快搜索速度
+        # 階段1：快速旋轉搜索（分離旋轉和平移）
+        # 使用縮小圖像進行快速評估
+        scale_factor = 0.3  # 提高縮放比例以保持更多細節
         small_h = int(h2 * scale_factor)
         small_w = int(w2 * scale_factor)
-        img1_small = cv2.resize(img1_gray, (small_w, small_h), interpolation=cv2.INTER_AREA)
+        small_h1 = int(h1 * scale_factor)
+        small_w1 = int(w1 * scale_factor)
+        img1_small = cv2.resize(img1_gray, (small_w1, small_h1), interpolation=cv2.INTER_AREA)
         img2_small = cv2.resize(img2_gray, (small_w, small_h), interpolation=cv2.INTER_AREA)
         
-        # 粗搜索參數（優化：更精細的步長以提高精度）
+        # 粗搜索參數：使用更精細的步長提高初步精度
         angle_step_coarse = 3.0  # 從5度優化為3度，提高精度
-        offset_step_coarse = 8  # 從10像素優化為8像素，提高精度
-        offset_step_small = int(offset_step_coarse * scale_factor)  # 縮小圖像的步長
         
         candidates = []  # 存儲候選 (angle, offset_x, offset_y, score)
-        best_score_coarse = 0.0  # 記錄粗搜索最佳分數
         
         # 旋轉角度範圍：-rotation_range 到 +rotation_range
         for angle in np.arange(-rotation_range, rotation_range + angle_step_coarse, angle_step_coarse):
@@ -254,38 +254,36 @@ class SealComparator:
             if angle < -80 or angle > 80:
                 continue
             
-            # 平移偏移範圍：-translation_range 到 +translation_range（完整尺寸）
-            for dx_full in range(-translation_range, translation_range + offset_step_coarse, offset_step_coarse):
-                for dy_full in range(-translation_range, translation_range + offset_step_coarse, offset_step_coarse):
-                    # 在縮小圖像上應用變換（平移偏移需要按比例縮小）
-                    dx_small = int(dx_full * scale_factor)
-                    dy_small = int(dy_full * scale_factor)
-                    
-                    center_small = (small_w // 2, small_h // 2)
-                    M_rot = cv2.getRotationMatrix2D(center_small, angle, 1.0)
-                    img2_rot_small = cv2.warpAffine(img2_small, M_rot, (small_w, small_h),
-                                                   borderMode=cv2.BORDER_CONSTANT,
-                                                   borderValue=255)
-                    
-                    M_trans = np.float32([[1, 0, dx_small], [0, 1, dy_small]])
-                    img2_trans_small = cv2.warpAffine(img2_rot_small, M_trans, (small_w, small_h),
-                                                     borderMode=cv2.BORDER_CONSTANT,
-                                                     borderValue=255)
-                    
-                    # 使用快速旋轉匹配進行評估
-                    score = self._fast_rotation_match(img1_small, img2_trans_small)
-                    candidates.append((angle, dx_full, dy_full, score))
-                    best_score_coarse = max(best_score_coarse, score)
-                    
-                    # 提前終止：如果找到高相似度候選（>0.95），提前結束粗搜索
-                    if score > 0.95:
-                        break
-                
-                if best_score_coarse > 0.95:
-                    break
+            # 應用旋轉到縮小圖像
+            center_small = (small_w // 2, small_h // 2)
+            M_rot = cv2.getRotationMatrix2D(center_small, angle, 1.0)
+            img2_rot_small = cv2.warpAffine(img2_small, M_rot, (small_w, small_h),
+                                           borderMode=cv2.BORDER_CONSTANT,
+                                           borderValue=255)
             
-            if best_score_coarse > 0.95:
-                break
+            # 使用模板匹配快速估算平移（替代完整搜索）
+            offset_x_est, offset_y_est, template_score = self._estimate_translation_template_match(
+                img1_small, img2_rot_small, translation_range, scale_factor
+            )
+            
+            # 如果模板匹配找到合理的平移，使用估算值；否則嘗試幾個候選偏移
+            if template_score > 0.3:
+                # 使用估算的平移
+                candidates.append((angle, offset_x_est, offset_y_est, template_score))
+            else:
+                # 模板匹配失敗，嘗試幾個常見偏移（0, ±10, ±20像素）
+                for dx_try in [0, -20, 20, -40, 40]:
+                    for dy_try in [0, -20, 20, -40, 40]:
+                        if abs(dx_try) > translation_range or abs(dy_try) > translation_range:
+                            continue
+                        dx_small = int(dx_try * scale_factor)
+                        dy_small = int(dy_try * scale_factor)
+                        M_trans = np.float32([[1, 0, dx_small], [0, 1, dy_small]])
+                        img2_trans_small = cv2.warpAffine(img2_rot_small, M_trans, (small_w, small_h),
+                                                         borderMode=cv2.BORDER_CONSTANT,
+                                                         borderValue=255)
+                        score = self._fast_rotation_match(img1_small, img2_trans_small)
+                        candidates.append((angle, dx_try, dy_try, score))
         
         # 按分數排序，動態調整候選數量
         if not candidates:
@@ -328,7 +326,7 @@ class SealComparator:
                                          borderMode=cv2.BORDER_CONSTANT,
                                          borderValue=255)
                 
-                M_trans = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+                M_trans = np.float32([[1, 0, float(offset_x)], [0, 1, float(offset_y)]])
                 img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
                                                  borderMode=cv2.BORDER_CONSTANT,
                                                  borderValue=255)
@@ -345,35 +343,93 @@ class SealComparator:
         
         # 階段3：細搜索優化（在最佳候選附近）
         if best_similarity > 0.0:
-            fine_angle_range = np.arange(-2.0, 2.1, 0.5)  # ±2度，每0.5度
-            fine_offset_range = range(-10, 11, 1)  # ±10像素，每1像素
+            # 先在最佳旋轉角度下，使用模板匹配精確估算平移
+            center = (w2 // 2, h2 // 2)
+            M_rot_best = cv2.getRotationMatrix2D(center, best_angle, 1.0)
+            img2_rot_best = cv2.warpAffine(img2_gray, M_rot_best, (w2, h2),
+                                          borderMode=cv2.BORDER_CONSTANT,
+                                          borderValue=255)
+            
+            # 使用模板匹配精確估算平移
+            fine_offset_x, fine_offset_y, _ = self._estimate_translation_template_match(
+                img1_gray, img2_rot_best, translation_range, 1.0
+            )
+            
+            # 在估算的平移附近進行細搜索（擴大範圍並提高精度）
+            fine_angle_range = np.arange(-3.0, 3.1, 0.5)  # ±3度，每0.5度（擴大範圍）
+            fine_offset_range = range(-8, 9, 1)  # ±8像素，每1像素（擴大範圍）
             
             for angle_offset in fine_angle_range:
                 angle = best_angle + angle_offset
                 if angle < -80 or angle > 80:
                     continue
                 
+                # 應用旋轉
+                center = (w2 // 2, h2 // 2)
+                M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
+                img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
+                                         borderMode=cv2.BORDER_CONSTANT,
+                                         borderValue=255)
+                
+                # 在估算的平移附近搜索
                 for dx in fine_offset_range:
                     for dy in fine_offset_range:
+                        offset_x = fine_offset_x + dx
+                        offset_y = fine_offset_y + dy
+                        
+                        if abs(offset_x) > translation_range or abs(offset_y) > translation_range:
+                            continue
+                        
+                        # 應用平移
+                        M_trans = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+                        img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
+                                                          borderMode=cv2.BORDER_CONSTANT,
+                                                          borderValue=255)
+                        
+                        # 計算相似度
+                        similarity = self._fast_rotation_match(img1_gray, img2_transformed)
+                        
+                        if similarity > best_similarity:
+                            best_similarity = similarity
+                            best_angle = angle
+                            best_offset_x = offset_x
+                            best_offset_y = offset_y
+                            best_metrics = {}  # 不再使用 enhanced_metrics
+        
+        # 階段4：超細搜索優化（最高精度，0.1度角度，0.5像素平移）
+        if best_similarity > 0.0:
+            # 在最佳結果附近進行超細搜索
+            ultra_fine_angle_range = np.arange(-0.5, 0.51, 0.1)  # ±0.5度，每0.1度
+            ultra_fine_offset_range = np.arange(-2.0, 2.1, 0.5)  # ±2像素，每0.5像素
+            
+            for angle_offset in ultra_fine_angle_range:
+                angle = best_angle + angle_offset
+                if angle < -80 or angle > 80:
+                    continue
+                
+                # 應用旋轉
+                center = (w2 // 2, h2 // 2)
+                M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
+                img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
+                                         borderMode=cv2.BORDER_CONSTANT,
+                                         borderValue=255)
+                
+                # 在最佳平移附近進行超細搜索
+                for dx in ultra_fine_offset_range:
+                    for dy in ultra_fine_offset_range:
                         offset_x = best_offset_x + dx
                         offset_y = best_offset_y + dy
                         
                         if abs(offset_x) > translation_range or abs(offset_y) > translation_range:
                             continue
                         
-                        # 應用變換
-                        center = (w2 // 2, h2 // 2)
-                        M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
-                        img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                                 borderMode=cv2.BORDER_CONSTANT,
-                                                 borderValue=255)
-                        
-                        M_trans = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+                        # 應用平移（使用浮點數精度）
+                        M_trans = np.float32([[1, 0, float(offset_x)], [0, 1, float(offset_y)]])
                         img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
                                                           borderMode=cv2.BORDER_CONSTANT,
                                                           borderValue=255)
                         
-                        # 直接使用原始尺寸的圖像
+                        # 計算相似度
                         similarity = self._fast_rotation_match(img1_gray, img2_transformed)
                         
                         if similarity > best_similarity:
@@ -391,16 +447,77 @@ class SealComparator:
         
         center = (w2 // 2, h2 // 2)
         M_rot = cv2.getRotationMatrix2D(center, best_angle, 1.0)
+        # 使用 INTER_LINEAR 插值以獲得更好的質量（默認是 INTER_LINEAR，但明確指定確保一致性）
         img2_rotated = cv2.warpAffine(img2_final, M_rot, (w2, h2),
+                                     flags=cv2.INTER_LINEAR,
                                      borderMode=cv2.BORDER_CONSTANT,
                                      borderValue=(255, 255, 255))
         
-        M_trans = np.float32([[1, 0, best_offset_x], [0, 1, best_offset_y]])
+        # 確保使用浮點數精度
+        M_trans = np.float32([[1, 0, float(best_offset_x)], [0, 1, float(best_offset_y)]])
         img2_aligned = cv2.warpAffine(img2_rotated, M_trans, (w2, h2),
+                                     flags=cv2.INTER_LINEAR,
                                      borderMode=cv2.BORDER_CONSTANT,
                                      borderValue=(255, 255, 255))
         
         return img2_aligned, best_angle, (best_offset_x, best_offset_y), best_similarity, best_metrics
+    
+    def _estimate_translation_template_match(
+        self, 
+        img1: np.ndarray, 
+        img2: np.ndarray, 
+        translation_range: int,
+        scale_factor: float
+    ) -> Tuple[int, int, float]:
+        """
+        使用模板匹配快速估算平移偏移
+        
+        Args:
+            img1: 參考圖像（已縮放）
+            img2: 待匹配圖像（已旋轉，未平移）
+            translation_range: 平移搜索範圍（原始尺寸）
+            scale_factor: 圖像縮放比例
+            
+        Returns:
+            (估算的x偏移, 估算的y偏移, 匹配分數)
+        """
+        h1, w1 = img1.shape[:2]
+        h2, w2 = img2.shape[:2]
+        
+        # 確保模板不大於搜索圖像
+        if w2 > w1 or h2 > h1:
+            # 尺寸不兼容，返回默認值
+            return 0, 0, 0.0
+        
+        # 模板匹配（img2作為模板在img1中搜索）
+        result = cv2.matchTemplate(img1, img2, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        
+        # max_loc 是模板（img2）左上角在 img1 中的位置
+        # 計算兩個圖像中心的偏移
+        center_x1 = w1 // 2
+        center_y1 = h1 // 2
+        center_x2 = w2 // 2
+        center_y2 = h2 // 2
+        
+        # 匹配位置的中心點（相對於 img1）
+        match_center_x = max_loc[0] + center_x2
+        match_center_y = max_loc[1] + center_y2
+        
+        # 計算偏移：img2 的中心需要移動多少才能對齊到 img1 的中心
+        # 如果 match_center_x < center_x1，說明 img2 在左邊，需要向右移動（正偏移）
+        offset_x_scaled = center_x1 - match_center_x
+        offset_y_scaled = center_y1 - match_center_y
+        
+        # 轉換回原始尺寸的偏移
+        offset_x = int(offset_x_scaled / scale_factor)
+        offset_y = int(offset_y_scaled / scale_factor)
+        
+        # 限制在搜索範圍內
+        offset_x = max(-translation_range, min(translation_range, offset_x))
+        offset_y = max(-translation_range, min(translation_range, offset_y))
+        
+        return offset_x, offset_y, float(max_val)
     
     def _fast_rotation_match(self, img1: np.ndarray, img2: np.ndarray) -> float:
         """

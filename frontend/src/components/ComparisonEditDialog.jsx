@@ -11,27 +11,18 @@ import {
 } from '@mui/material'
 
 function ComparisonEditDialog({ open, onClose, comparison, onSave }) {
-  const [threshold, setThreshold] = useState(0.95)
   const [notes, setNotes] = useState('')
   const [error, setError] = useState(null)
 
   useEffect(() => {
     if (comparison) {
-      setThreshold(comparison.threshold || 0.95)
       setNotes(comparison.notes || '')
       setError(null)
     }
   }, [comparison, open])
 
   const handleSave = () => {
-    // 驗證閾值
-    if (threshold < 0 || threshold > 1) {
-      setError('閾值必須在 0 到 1 之間')
-      return
-    }
-
     const updateData = {
-      threshold: threshold,
       notes: notes.trim() || null,
     }
 
@@ -53,16 +44,6 @@ function ComparisonEditDialog({ open, onClose, comparison, onSave }) {
               {error}
             </Alert>
           )}
-
-          <TextField
-            label="相似度閾值"
-            type="number"
-            value={threshold}
-            onChange={(e) => setThreshold(parseFloat(e.target.value) || 0)}
-            inputProps={{ min: 0, max: 1, step: 0.01 }}
-            fullWidth
-            helperText="閾值範圍：0.0 - 1.0（例如：0.95 表示 95%）"
-          />
 
           <TextField
             label="備註/標籤"

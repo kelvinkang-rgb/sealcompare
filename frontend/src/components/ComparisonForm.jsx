@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Box, Alert, Dialog, DialogTitle, DialogContent, Grid, Typography, Divider, ToggleButton, ToggleButtonGroup } from '@mui/material'
+import { Button, Box, Alert, Dialog, DialogTitle, DialogContent, Grid, Typography, Divider, ToggleButton, ToggleButtonGroup, CircularProgress } from '@mui/material'
 import { ContentCopy as ContentCopyIcon, ViewAgenda as ViewAgendaIcon } from '@mui/icons-material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { imageAPI } from '../services/api'
@@ -30,13 +30,47 @@ function ComparisonForm({ onSubmit }) {
       try {
         const detectionResult = await imageAPI.detectSeal(data.id)
         setSealDetectionResult(detectionResult)
-        // 無論檢測是否成功，都顯示對話框
-        setShowSealDialog(true)
+        
+        // 檢查檢測是否成功（detected === true 且 bbox 存在）
+        if (detectionResult.detected === true && detectionResult.bbox) {
+          // 檢測成功，自動確認並保存結果
+          try {
+            // 構建 locationData（與 handleSealConfirm 使用相同的格式）
+            const normalizedLocationData = {
+              bbox: {
+                x: Math.round(detectionResult.bbox.x),
+                y: Math.round(detectionResult.bbox.y),
+                width: Math.round(detectionResult.bbox.width),
+                height: Math.round(detectionResult.bbox.height)
+              },
+              center: detectionResult.center ? {
+                center_x: Math.round(detectionResult.center.center_x),
+                center_y: Math.round(detectionResult.center.center_y),
+                radius: typeof detectionResult.center.radius === 'number' ? detectionResult.center.radius : 0
+              } : null,
+              confidence: detectionResult.confidence || 1.0
+            }
+            
+            // 自動保存檢測結果（onSuccess 會自動更新 image1 state 和關閉對話框）
+            await updateSealLocationMutation.mutateAsync({
+              imageId: data.id,
+              locationData: normalizedLocationData
+            })
+            
+            // 注意：不顯示對話框由 updateSealLocationMutation 的 onSuccess 處理
+          } catch (error) {
+            console.error('自動確認失敗:', error)
+            // 如果自動確認失敗，回退到顯示對話框讓用戶手動操作
+            setShowSealDialog(true)
+          }
+        } else {
+          // 檢測失敗，顯示對話框讓用戶手動框選
+          setShowSealDialog(true)
+        }
       } catch (error) {
         console.error('檢測失敗:', error)
-        // 檢測失敗時設置為 null，SealDetectionBox 會使用默認值
+        // 檢測異常時設置為失敗狀態，顯示對話框讓用戶手動框選
         setSealDetectionResult({ detected: false, bbox: null, center: null })
-        // 仍然顯示對話框，讓用戶手動框選
         setShowSealDialog(true)
       } finally {
         setIsDetecting(false)
@@ -385,6 +419,11 @@ function ComparisonForm({ onSubmit }) {
                 fullWidth
                 disabled={uploadImage1Mutation.isPending || isDetecting}
                 sx={{ mb: 1 }}
+                startIcon={
+                  (uploadImage1Mutation.isPending || isDetecting) && (
+                    <CircularProgress size={16} />
+                  )
+                }
               >
                 {uploadImage1Mutation.isPending
                   ? '上傳中...'
@@ -393,6 +432,11 @@ function ComparisonForm({ onSubmit }) {
                   : '選擇圖像1'}
               </Button>
             </label>
+            {(uploadImage1Mutation.isPending || isDetecting) && (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                {uploadImage1Mutation.isPending ? '正在上傳圖像...' : '正在自動檢測印章位置...'}
+              </Alert>
+            )}
             {uploadImage1Mutation.isError && (
               <Alert severity="error" sx={{ mt: 1 }}>
                 上傳失敗
@@ -438,7 +482,21 @@ function ComparisonForm({ onSubmit }) {
                   variant="outlined"
                   component="span"
                   fullWidth
-                  disabled={uploadImage2Mutation.isPending || isDetecting2}
+                  disabled={
+                    uploadImage2Mutation.isPending || 
+                    isDetecting2 || 
+                    !(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox)
+                  }
+                  title={
+                    !(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox)
+                      ? '請先完成圖像1的印章位置確認'
+                      : undefined
+                  }
+                  startIcon={
+                    (uploadImage2Mutation.isPending || isDetecting2) && (
+                      <CircularProgress size={16} />
+                    )
+                  }
                 >
                   {uploadImage2Mutation.isPending
                     ? '上傳中...'
@@ -452,13 +510,23 @@ function ComparisonForm({ onSubmit }) {
                   variant="outlined"
                   startIcon={<ContentCopyIcon />}
                   onClick={handleUseSameImage}
-                  disabled={!image1?.seal_bbox}
+                  disabled={!(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox)}
                   title="使用圖像1作為圖像2（需要先標記圖像1的印鑑位置）"
                 >
                   使用同一張
                 </Button>
               )}
             </Box>
+            {!(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox) && uploadImage1Mutation.data && (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                請先完成圖像1的印章位置確認
+              </Typography>
+            )}
+            {(uploadImage2Mutation.isPending || isDetecting2) && (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                {uploadImage2Mutation.isPending ? '正在上傳圖像...' : '正在自動檢測印章位置...'}
+              </Alert>
+            )}
             {uploadImage2Mutation.isError && (
               <Alert severity="error" sx={{ mt: 1 }}>
                 上傳失敗
