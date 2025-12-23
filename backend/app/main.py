@@ -78,6 +78,17 @@ def add_missing_columns():
         except Exception as e:
             print(f"添加 seal_center 欄位時出錯（可能已存在）: {e}")
             conn.rollback()
+        
+        # 檢查並添加 multiple_seals 欄位（測試功能）
+        try:
+            conn.execute(text("""
+                ALTER TABLE images 
+                ADD COLUMN IF NOT EXISTS multiple_seals JSONB
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 multiple_seals 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
 
 # 執行遷移
 try:

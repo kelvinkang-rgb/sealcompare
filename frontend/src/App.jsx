@@ -5,6 +5,7 @@ import CssBaseline from '@mui/material/CssBaseline'
 import Home from './pages/Home'
 import Comparison from './pages/Comparison'
 import History from './pages/History'
+import MultiSealTest from './pages/MultiSealTest'
 
 // 確保 React Router 的 useSearchParams 可以正常工作
 
@@ -28,6 +29,7 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/compare" element={<Comparison />} />
           <Route path="/history" element={<History />} />
+          <Route path="/multi-seal-test" element={<MultiSealTest />} />
         </Routes>
       </Router>
     </ThemeProvider>

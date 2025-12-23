@@ -3,12 +3,25 @@
 """
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
+from pathlib import Path
 
 from app.database import get_db
-from app.schemas import ImageResponse, SealDetectionResponse, SealLocationUpdate
+from app.schemas import (
+    ImageResponse, 
+    SealDetectionResponse, 
+    SealLocationUpdate,
+    MultipleSealsDetectionResponse,
+    MultipleSealsSaveRequest,
+    CropSealsRequest,
+    CropSealsResponse,
+    MultiSealComparisonRequest,
+    MultiSealComparisonResponse,
+    SealComparisonResult
+)
 from app.services.image_service import ImageService
 from app.config import settings
 
@@ -161,4 +174,175 @@ def update_seal_location(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"更新失敗: {str(e)}")
+
+
+@router.post("/{image_id}/detect-multiple-seals", response_model=MultipleSealsDetectionResponse)
+def detect_multiple_seals(
+    image_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    檢測圖像中的多個印鑑位置（測試功能）
+    
+    - **image_id**: 圖像 ID
+    """
+    image_service = ImageService(db)
+    try:
+        result = image_service.detect_multiple_seals(image_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"檢測失敗: {str(e)}")
+
+
+@router.post("/{image_id}/save-multiple-seals", response_model=ImageResponse)
+def save_multiple_seals(
+    image_id: UUID,
+    request: MultipleSealsSaveRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    保存多個印鑑位置到資料庫（測試功能）
+    
+    - **image_id**: 圖像 ID
+    - **seals**: 印鑑列表，每個元素包含 bbox, center, confidence
+    """
+    image_service = ImageService(db)
+    try:
+        # 轉換為字典列表
+        seals_data = [
+            {
+                'bbox': seal.bbox,
+                'center': seal.center,
+                'confidence': seal.confidence
+            }
+            for seal in request.seals
+        ]
+        image = image_service.save_multiple_seals(image_id, seals_data)
+        return image
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存失敗: {str(e)}")
+
+
+@router.post("/{image_id}/crop-seals", response_model=CropSealsResponse)
+def crop_seals(
+    image_id: UUID,
+    request: CropSealsRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    裁切圖像中的多個印鑑區域並保存為獨立圖像（測試功能）
+    
+    - **image_id**: 原圖像 ID
+    - **seals**: 印鑑列表，每個元素包含 bbox, center, confidence
+    - **margin**: 邊距（像素），默認10
+    """
+    image_service = ImageService(db)
+    try:
+        # 轉換為字典列表
+        seals_data = [
+            {
+                'bbox': seal.bbox,
+                'center': seal.center,
+                'confidence': seal.confidence
+            }
+            for seal in request.seals
+        ]
+        cropped_image_ids = image_service.crop_seals(
+            image_id, 
+            seals_data, 
+            margin=request.margin or 10
+        )
+        return CropSealsResponse(
+            cropped_image_ids=cropped_image_ids,
+            count=len(cropped_image_ids)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"裁切失敗: {str(e)}")
+
+
+@router.post("/{image1_id}/compare-with-seals", response_model=MultiSealComparisonResponse)
+def compare_image1_with_seals(
+    image1_id: UUID,
+    request: MultiSealComparisonRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    將圖像1與多個裁切的印鑑圖像進行比對（測試功能）
+    
+    - **image1_id**: 圖像1 ID
+    - **seal_image_ids**: 裁切後的印鑑圖像 ID 列表
+    - **threshold**: 相似度閾值，默認0.95
+    """
+    image_service = ImageService(db)
+    try:
+        results_data = image_service.compare_image1_with_seals(
+            image1_id,
+            request.seal_image_ids,
+            threshold=request.threshold
+        )
+        
+        # 轉換為響應格式
+        results = [
+            SealComparisonResult(
+                seal_index=r['seal_index'],
+                seal_image_id=r['seal_image_id'],
+                similarity=r['similarity'],
+                is_match=r['is_match'],
+                overlay1_path=r['overlay1_path'],
+                overlay2_path=r['overlay2_path'],
+                heatmap_path=r['heatmap_path'],
+                error=r['error']
+            )
+            for r in results_data
+        ]
+        
+        success_count = sum(1 for r in results if r.error is None)
+        
+        return MultiSealComparisonResponse(
+            image1_id=image1_id,
+            results=results,
+            total_count=len(results),
+            success_count=success_count
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"比對失敗: {str(e)}")
+
+
+@router.get("/multi-seal-comparisons/{filename}")
+def get_multi_seal_comparison_file(
+    filename: str
+):
+    """
+    獲取多印鑑比對視覺化文件（測試功能）
+    
+    - **filename**: 文件名（疊圖或熱力圖）
+    """
+    from app.config import settings
+    
+    file_path = Path(settings.LOGS_DIR) / "multi_seal_comparisons" / filename
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    
+    # 根據文件擴展名確定媒體類型
+    if filename.endswith('.png'):
+        media_type = "image/png"
+    elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
+        media_type = "image/jpeg"
+    else:
+        media_type = "image/png"
+    
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=filename
+    )
 

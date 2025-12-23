@@ -46,6 +46,9 @@ class Image(Base):
     seal_bbox = Column(JSON, nullable=True)  # {"x": int, "y": int, "width": int, "height": int}
     seal_center = Column(JSON, nullable=True)  # {"center_x": int, "center_y": int, "radius": float}
     
+    # 多印鑑檢測相關（測試功能）
+    multiple_seals = Column(JSON, nullable=True)  # [{"bbox": {...}, "center": {...}, "confidence": float}, ...]
+    
     # 關係
     comparisons_as_image1 = relationship("Comparison", foreign_keys="Comparison.image1_id", back_populates="image1")
     comparisons_as_image2 = relationship("Comparison", foreign_keys="Comparison.image2_id", back_populates="image2")

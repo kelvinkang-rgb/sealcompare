@@ -32,6 +32,7 @@ class ImageResponse(ImageBase):
     seal_confidence: Optional[float] = None
     seal_bbox: Optional[Dict[str, int]] = None
     seal_center: Optional[Dict[str, Any]] = None
+    multiple_seals: Optional[list[Dict[str, Any]]] = None  # 多印鑑檢測結果（測試功能）
     
     class Config:
         from_attributes = True
@@ -51,6 +52,64 @@ class SealLocationUpdate(BaseModel):
     bbox: Optional[Dict[str, int]] = Field(None, description="邊界框 {x, y, width, height}")
     center: Optional[Dict[str, Any]] = Field(None, description="中心點 {center_x, center_y, radius}")
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="置信度")
+
+
+class SealInfo(BaseModel):
+    """單個印鑑信息"""
+    bbox: Dict[str, int] = Field(..., description="邊界框 {x, y, width, height}")
+    center: Dict[str, Any] = Field(..., description="中心點 {center_x, center_y, radius}")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="置信度")
+
+
+class MultipleSealsDetectionResponse(BaseModel):
+    """多印鑑檢測響應模型"""
+    detected: bool
+    seals: list[SealInfo] = Field(default_factory=list, description="檢測到的印鑑列表")
+    count: int = Field(0, description="檢測到的印鑑數量")
+    reason: Optional[str] = Field(None, description="失敗原因")
+
+
+class MultipleSealsSaveRequest(BaseModel):
+    """保存多印鑑位置請求"""
+    seals: list[SealInfo] = Field(..., description="印鑑列表")
+
+
+class CropSealsRequest(BaseModel):
+    """裁切印鑑請求"""
+    seals: list[SealInfo] = Field(..., description="要裁切的印鑑列表")
+    margin: Optional[int] = Field(10, ge=0, le=50, description="邊距（像素）")
+
+
+class CropSealsResponse(BaseModel):
+    """裁切印鑑響應"""
+    cropped_image_ids: list[UUID] = Field(..., description="裁切後的圖像 ID 列表")
+    count: int = Field(..., description="成功裁切的數量")
+
+
+class MultiSealComparisonRequest(BaseModel):
+    """多印鑑比對請求"""
+    seal_image_ids: list[UUID] = Field(..., description="裁切後的印鑑圖像 ID 列表")
+    threshold: Optional[float] = Field(0.95, ge=0.0, le=1.0, description="相似度閾值")
+
+
+class SealComparisonResult(BaseModel):
+    """單個印鑑比對結果"""
+    seal_index: int = Field(..., description="印鑑索引（從1開始）")
+    seal_image_id: UUID = Field(..., description="印鑑圖像 ID")
+    similarity: Optional[float] = Field(None, description="相似度")
+    is_match: Optional[bool] = Field(None, description="是否匹配")
+    overlay1_path: Optional[str] = Field(None, description="疊圖1路徑（圖像1疊在印鑑上）")
+    overlay2_path: Optional[str] = Field(None, description="疊圖2路徑（印鑑疊在圖像1上）")
+    heatmap_path: Optional[str] = Field(None, description="熱力圖路徑")
+    error: Optional[str] = Field(None, description="錯誤訊息（如果比對失敗）")
+
+
+class MultiSealComparisonResponse(BaseModel):
+    """多印鑑比對響應"""
+    image1_id: UUID = Field(..., description="圖像1 ID")
+    results: list[SealComparisonResult] = Field(..., description="比對結果列表")
+    total_count: int = Field(..., description="總比對數量")
+    success_count: int = Field(..., description="成功比對數量")
 
 
 # 比對相關 Schema

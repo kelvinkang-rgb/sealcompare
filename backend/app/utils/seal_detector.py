@@ -299,3 +299,265 @@ def _create_failed_result(reason: str = "") -> Dict:
         'reason': reason
     }
 
+
+def detect_multiple_seals(image_path: str, timeout: float = 5.0, max_seals: int = 10) -> Dict:
+    """
+    檢測圖像中的多個印鑑位置（帶超時保護）
+    
+    Args:
+        image_path: 圖像文件路徑
+        timeout: 超時時間（秒），默認5秒
+        max_seals: 最大檢測數量，默認10個
+        
+    Returns:
+        包含檢測結果的字典：
+        {
+            'detected': bool,
+            'seals': [
+                {
+                    'bbox': {'x': int, 'y': int, 'width': int, 'height': int},
+                    'center': {'center_x': int, 'center_y': int, 'radius': float},
+                    'confidence': float
+                },
+                ...
+            ],
+            'count': int
+        }
+    """
+    start_time = time.time()
+    
+    try:
+        # 讀取圖像
+        if not Path(image_path).exists():
+            return {
+                'detected': False,
+                'seals': [],
+                'count': 0,
+                'reason': '圖像文件不存在'
+            }
+        
+        image = cv2.imread(image_path)
+        if image is None:
+            return {
+                'detected': False,
+                'seals': [],
+                'count': 0,
+                'reason': '無法讀取圖像文件'
+            }
+        
+        if image.size == 0:
+            return {
+                'detected': False,
+                'seals': [],
+                'count': 0,
+                'reason': '圖像為空'
+            }
+        
+        h, w = image.shape[:2]
+        if h == 0 or w == 0:
+            return {
+                'detected': False,
+                'seals': [],
+                'count': 0,
+                'reason': '圖像尺寸無效'
+            }
+        
+        # 檢查是否已超時
+        if time.time() - start_time > timeout:
+            return {
+                'detected': False,
+                'seals': [],
+                'count': 0,
+                'reason': '檢測超時'
+            }
+        
+        # 使用多印鑑檢測方法
+        result = _detect_multiple_seals_fast(image, timeout - (time.time() - start_time), max_seals)
+        
+        return result
+        
+    except TimeoutError:
+        return {
+            'detected': False,
+            'seals': [],
+            'count': 0,
+            'reason': '檢測超時'
+        }
+    except Exception as e:
+        return {
+            'detected': False,
+            'seals': [],
+            'count': 0,
+            'reason': f'檢測過程出錯: {str(e)}'
+        }
+
+
+def _detect_multiple_seals_fast(image: np.ndarray, remaining_time: float, max_seals: int = 10) -> Dict:
+    """
+    快速檢測多個印鑑（優先使用輪廓檢測）
+    
+    Args:
+        image: 圖像數組
+        remaining_time: 剩餘時間（秒）
+        max_seals: 最大檢測數量
+        
+    Returns:
+        檢測結果字典
+    """
+    start_time = time.time()
+    h, w = image.shape[:2]
+    
+    # 使用輪廓檢測方法檢測所有符合條件的印鑑
+    if remaining_time > 1.0:
+        seals = _detect_multiple_by_contours(image, max_seals)
+        if seals:
+            return {
+                'detected': True,
+                'seals': seals,
+                'count': len(seals)
+            }
+    
+    # 如果沒有檢測到，返回空結果
+    return {
+        'detected': False,
+        'seals': [],
+        'count': 0,
+        'reason': '未檢測到印鑑'
+    }
+
+
+def _detect_multiple_by_contours(image: np.ndarray, max_seals: int = 10) -> list:
+    """使用輪廓檢測方法檢測多個印鑑"""
+    try:
+        h, w = image.shape[:2]
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        # 使用 Canny 邊緣檢測
+        edges = cv2.Canny(gray, 50, 150)
+        
+        # 簡單的形態學操作
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        # 查找輪廓
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return []
+        
+        # 篩選輪廓（基於面積和圓度）
+        valid_seals = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < (w * h * 0.01):  # 太小
+                continue
+            if area > (w * h * 0.9):  # 太大
+                continue
+            circularity = _calculate_circularity(contour)
+            if circularity > 0.2:  # 圓度要求
+                # 計算邊界框和中心點
+                bbox, center, radius = _calculate_bbox_and_center(contour)
+                
+                # 計算置信度
+                area_ratio = area / (w * h)
+                confidence = min(0.9, 0.4 + circularity * 0.3 + min(area_ratio * 5, 0.2))
+                
+                # 驗證檢測結果
+                if _validate_detection({
+                    'detected': True,
+                    'bbox': bbox,
+                    'center': center
+                }, w, h):
+                    valid_seals.append({
+                        'bbox': bbox,
+                        'center': center,
+                        'confidence': confidence
+                    })
+        
+        if not valid_seals:
+            return []
+        
+        # 按置信度排序
+        valid_seals.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # 使用 NMS 過濾重疊的檢測結果
+        filtered_seals = _apply_nms(valid_seals, iou_threshold=0.3)
+        
+        # 返回前 max_seals 個
+        return filtered_seals[:max_seals]
+        
+    except Exception as e:
+        return []
+
+
+def _calculate_iou(bbox1: Dict, bbox2: Dict) -> float:
+    """
+    計算兩個邊界框的 IoU (Intersection over Union)
+    
+    Args:
+        bbox1: 第一個邊界框 {'x': int, 'y': int, 'width': int, 'height': int}
+        bbox2: 第二個邊界框
+        
+    Returns:
+        IoU 值 (0-1)
+    """
+    x1_min, y1_min = bbox1['x'], bbox1['y']
+    x1_max, y1_max = bbox1['x'] + bbox1['width'], bbox1['y'] + bbox1['height']
+    
+    x2_min, y2_min = bbox2['x'], bbox2['y']
+    x2_max, y2_max = bbox2['x'] + bbox2['width'], bbox2['y'] + bbox2['height']
+    
+    # 計算交集
+    inter_x_min = max(x1_min, x2_min)
+    inter_y_min = max(y1_min, y2_min)
+    inter_x_max = min(x1_max, x2_max)
+    inter_y_max = min(y1_max, y2_max)
+    
+    if inter_x_max <= inter_x_min or inter_y_max <= inter_y_min:
+        return 0.0
+    
+    inter_area = (inter_x_max - inter_x_min) * (inter_y_max - inter_y_min)
+    
+    # 計算並集
+    area1 = bbox1['width'] * bbox1['height']
+    area2 = bbox2['width'] * bbox2['height']
+    union_area = area1 + area2 - inter_area
+    
+    if union_area == 0:
+        return 0.0
+    
+    return inter_area / union_area
+
+
+def _apply_nms(seals: list, iou_threshold: float = 0.3) -> list:
+    """
+    應用非極大值抑制 (NMS) 過濾重疊的檢測結果
+    
+    Args:
+        seals: 檢測結果列表，每個元素包含 'bbox', 'center', 'confidence'
+        iou_threshold: IoU 閾值，超過此值視為重疊
+        
+    Returns:
+        過濾後的檢測結果列表
+    """
+    if not seals:
+        return []
+    
+    # 按置信度排序（降序）
+    sorted_seals = sorted(seals, key=lambda x: x['confidence'], reverse=True)
+    
+    filtered_seals = []
+    while sorted_seals:
+        # 選擇置信度最高的
+        best = sorted_seals.pop(0)
+        filtered_seals.append(best)
+        
+        # 移除與當前最佳結果重疊的其他結果
+        sorted_seals = [
+            seal for seal in sorted_seals
+            if _calculate_iou(best['bbox'], seal['bbox']) < iou_threshold
+        ]
+    
+    return filtered_seals
+

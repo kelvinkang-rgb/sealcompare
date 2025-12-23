@@ -47,6 +47,44 @@ export const imageAPI = {
     const response = await api.put(`/images/${imageId}/seal-location`, locationData)
     return response.data
   },
+  
+  // 多印鑑檢測相關 API（測試功能）
+  detectMultipleSeals: async (imageId) => {
+    const response = await api.post(`/images/${imageId}/detect-multiple-seals`)
+    return response.data
+  },
+  
+  saveMultipleSeals: async (imageId, seals) => {
+    const response = await api.post(`/images/${imageId}/save-multiple-seals`, {
+      seals: seals.map(seal => ({
+        bbox: seal.bbox,
+        center: seal.center,
+        confidence: seal.confidence || 0.5
+      }))
+    })
+    return response.data
+  },
+  
+  cropSeals: async (imageId, seals, margin = 10) => {
+    const response = await api.post(`/images/${imageId}/crop-seals`, {
+      seals: seals.map(seal => ({
+        bbox: seal.bbox,
+        center: seal.center,
+        confidence: seal.confidence || 0.5
+      })),
+      margin: margin
+    })
+    return response.data
+  },
+  
+  // 多印鑑比對相關 API（測試功能）
+  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.95) => {
+    const response = await api.post(`/images/${image1Id}/compare-with-seals`, {
+      seal_image_ids: sealImageIds,
+      threshold: threshold
+    })
+    return response.data
+  },
 }
 
 // 比對相關 API
