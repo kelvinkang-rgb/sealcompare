@@ -535,7 +535,7 @@ class ComparisonService:
             try:
                 # reference_image 已經是去背景後的圖像（img1_no_bg），不需要再次處理
                 image_aligned, angle, offset, similarity, metrics = comparator._align_image2_to_image1(
-                    reference_image, image, rotation_range=45.0, translation_range=100
+                    reference_image, image, rotation_range=15.0, translation_range=100
                 )
                 return image_aligned, angle, offset, similarity, metrics
             except Exception as e:

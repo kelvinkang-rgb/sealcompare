@@ -625,7 +625,7 @@ def _crop_seal_with_margin(image: np.ndarray, bbox: Dict, circularity: float = 0
 def _rotate_and_match(
     template_image: np.ndarray,
     seal_image: np.ndarray,
-    rotation_range: float = 45.0,
+    rotation_range: float = 15.0,
     angle_step_coarse: float = 5.0,
     angle_step_fine: float = 2.0,
     angle_step_ultra_fine: float = 1.0
@@ -758,7 +758,7 @@ def _rotate_and_match(
 def detect_seals_with_rotation_matching(
     image1_path: str,
     image2_path: str,
-    rotation_range: float = 45.0,
+    rotation_range: float = 15.0,
     angle_step: float = 1.0,
     max_seals: int = 10,
     timeout: float = 30.0

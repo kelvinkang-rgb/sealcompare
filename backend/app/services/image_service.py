@@ -198,12 +198,13 @@ class ImageService:
         
         return db_image
     
-    def detect_multiple_seals(self, image_id: UUID) -> Dict:
+    def detect_multiple_seals(self, image_id: UUID, max_seals: int = 10) -> Dict:
         """
         檢測圖像中的多個印鑑位置
         
         Args:
             image_id: 圖像 ID
+            max_seals: 最大檢測數量，默認10
             
         Returns:
             檢測結果字典
@@ -217,7 +218,7 @@ class ImageService:
             raise HTTPException(status_code=404, detail="圖像文件不存在")
         
         # 執行多印鑑檢測（帶超時保護）
-        detection_result = detect_multiple_seals(str(file_path), timeout=5.0, max_seals=10)
+        detection_result = detect_multiple_seals(str(file_path), timeout=5.0, max_seals=max_seals)
         
         return detection_result
     
@@ -389,7 +390,7 @@ class ImageService:
             try:
                 # reference_image 已經是去背景後的圖像（img1_no_bg），不需要再次處理
                 image_aligned, angle, offset, similarity, metrics = comparator._align_image2_to_image1(
-                    reference_image, image, rotation_range=45.0, translation_range=100
+                    reference_image, image, rotation_range=15.0, translation_range=100
                 )
                 return image_aligned, angle, offset, similarity, metrics
             except Exception as e:
@@ -404,7 +405,11 @@ class ImageService:
         self, 
         image1_id: UUID, 
         seal_image_ids: List[UUID],
-        threshold: float = 0.95
+        threshold: float = 0.95,
+        similarity_ssim_weight: float = 0.5,
+        similarity_template_weight: float = 0.35,
+        pixel_similarity_weight: float = 0.1,
+        histogram_similarity_weight: float = 0.05
     ) -> List[Dict]:
         """
         將圖像1與多個裁切的印鑑圖像進行比對
@@ -506,7 +511,13 @@ class ImageService:
         comparison_dir.mkdir(parents=True, exist_ok=True)
         
         results = []
-        comparator = SealComparator(threshold=threshold)
+        comparator = SealComparator(
+            threshold=threshold,
+            similarity_ssim_weight=similarity_ssim_weight,
+            similarity_template_weight=similarity_template_weight,
+            pixel_similarity_weight=pixel_similarity_weight,
+            histogram_similarity_weight=histogram_similarity_weight
+        )
         
         # 對每個印鑑進行比對
         for idx, seal_image_id in enumerate(seal_image_ids):
@@ -518,6 +529,8 @@ class ImageService:
                 'overlay1_path': None,
                 'overlay2_path': None,
                 'heatmap_path': None,
+                'input_image1_path': None,
+                'input_image2_path': None,
                 'alignment_angle': None,
                 'alignment_offset': None,
                 'alignment_similarity': None,
@@ -592,6 +605,10 @@ class ImageService:
                 
                 image2_for_comparison = comparison_dir / f"image2_cropped_{record_id}.jpg"
                 cv2.imwrite(str(image2_for_comparison), img2_aligned)
+                
+                # 保存輸入圖像路徑到結果中（疊圖前的圖像）
+                result['input_image1_path'] = image1_for_comparison.name
+                result['input_image2_path'] = image2_for_comparison.name
                 
                 # 5. 使用 compare_files 比對（傳入文件路徑）
                 try:
@@ -693,7 +710,7 @@ class ImageService:
         self,
         image1_id: UUID,
         image2_id: UUID,
-        rotation_range: float = 45.0,
+        rotation_range: float = 15.0,
         angle_step: float = 1.0,
         max_seals: int = 10
     ) -> List[Dict]:

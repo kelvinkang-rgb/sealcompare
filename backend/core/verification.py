@@ -323,31 +323,26 @@ def create_difference_heatmap(
         
         y_text = target_h + 20
         
-        # 將統計文字分成多行以避免與圖例重疊
-        stats_text = [
-            f"差異像素: {diff_pixels:,} ({diff_percentage:.2f}%)",
-            f"平均差異: {mean_diff:.2f}",
-            f"最大差異: {max_diff:.0f}"
-        ]
+        # 只顯示差異像素指標
+        stats_text = f"差異像素: {diff_pixels:,} ({diff_percentage:.2f}%)"
         
         # 計算圖例所需空間
         legend_width = 200
         legend_x = target_w - legend_width - 10
         max_text_width = legend_x - 20  # 確保文字不會與圖例重疊
         
-        # 檢查每行文字的寬度，如果太長則調整或換行
-        for i, text in enumerate(stats_text):
-            bbox = draw.textbbox((0, 0), text, font=font_heatmap)
-            text_width = bbox[2] - bbox[0]
-            if text_width > max_text_width and used_font_path_heatmap:
-                # 如果文字太長，使用較小的字體
-                try:
-                    font_small = ImageFont.truetype(used_font_path_heatmap, 14)
-                    draw.text((10, y_text + i * 25), text, fill=(0, 0, 0), font=font_small)
-                except:
-                    draw.text((10, y_text + i * 25), text, fill=(0, 0, 0), font=font_heatmap)
-            else:
-                draw.text((10, y_text + i * 25), text, fill=(0, 0, 0), font=font_heatmap)
+        # 檢查文字寬度，如果太長則調整字體
+        bbox = draw.textbbox((0, 0), stats_text, font=font_heatmap)
+        text_width = bbox[2] - bbox[0]
+        if text_width > max_text_width and used_font_path_heatmap:
+            # 如果文字太長，使用較小的字體
+            try:
+                font_small = ImageFont.truetype(used_font_path_heatmap, 14)
+                draw.text((10, y_text), stats_text, fill=(0, 0, 0), font=font_small)
+            except:
+                draw.text((10, y_text), stats_text, fill=(0, 0, 0), font=font_heatmap)
+        else:
+            draw.text((10, y_text), stats_text, fill=(0, 0, 0), font=font_heatmap)
         
         # 添加顏色圖例
         legend_y = target_h + 10

@@ -15,7 +15,11 @@ import {
   Snackbar,
   TextField,
   Slider,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material'
+import { ExpandMore as ExpandMoreIcon, Settings as SettingsIcon } from '@mui/icons-material'
 import { useMutation } from '@tanstack/react-query'
 import { imageAPI } from '../services/api'
 import ImagePreview from '../components/ImagePreview'
@@ -49,6 +53,18 @@ function MultiSealTest() {
   
   // 相似度閾值
   const [threshold, setThreshold] = useState(0.5) // 默認 50%
+  
+  // 比對印鑑數量上限
+  const [maxSeals, setMaxSeals] = useState(6) // 默認 6
+  
+  // 相似度權重參數
+  const [similaritySsimWeight, setSimilaritySsimWeight] = useState(0.5) // 默認 50%
+  const [similarityTemplateWeight, setSimilarityTemplateWeight] = useState(0.35) // 默認 35%
+  const [pixelSimilarityWeight, setPixelSimilarityWeight] = useState(0.1) // 默認 10%
+  const [histogramSimilarityWeight, setHistogramSimilarityWeight] = useState(0.05) // 默認 5%
+  
+  // 進階設定收折狀態
+  const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
   
   // 預覽對話框狀態
   const [previewImage1, setPreviewImage1] = useState(false)
@@ -121,7 +137,7 @@ function MultiSealTest() {
       // 自動檢測多個印鑑
       setIsDetecting2(true)
       try {
-        const detectionResult = await imageAPI.detectMultipleSeals(data.id)
+        const detectionResult = await imageAPI.detectMultipleSeals(data.id, maxSeals)
         if (detectionResult.detected && detectionResult.seals && detectionResult.seals.length > 0) {
           setMultipleSeals(detectionResult.seals)
           setShowSealDialog2(true)
@@ -201,8 +217,8 @@ function MultiSealTest() {
 
   // 比對圖像1與多個印鑑
   const compareMutation = useMutation({
-    mutationFn: ({ image1Id, sealImageIds, threshold }) => 
-      imageAPI.compareImage1WithSeals(image1Id, sealImageIds, threshold),
+    mutationFn: ({ image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight }) => 
+      imageAPI.compareImage1WithSeals(image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight),
     onSuccess: (data) => {
       setComparisonResults(data.results)
       setSnackbar({
@@ -378,7 +394,11 @@ function MultiSealTest() {
     compareMutation.mutate({
       image1Id: uploadImage1Mutation.data.id,
       sealImageIds: croppedImageIds,
-      threshold: threshold
+      threshold: threshold,
+      similaritySsimWeight: similaritySsimWeight,
+      similarityTemplateWeight: similarityTemplateWeight,
+      pixelSimilarityWeight: pixelSimilarityWeight,
+      histogramSimilarityWeight: histogramSimilarityWeight
     })
   }
 
@@ -395,6 +415,281 @@ function MultiSealTest() {
           測試功能：圖像1使用單印鑑檢測，圖像2使用多印鑑檢測並裁切保存
         </Typography>
       </Box>
+
+      {/* 進階設定 */}
+      <Accordion 
+        expanded={advancedSettingsOpen} 
+        onChange={(e, expanded) => setAdvancedSettingsOpen(expanded)}
+        sx={{ mb: 3 }}
+      >
+        <AccordionSummary
+          expandIcon={<ExpandMoreIcon />}
+          aria-controls="advanced-settings-content"
+          id="advanced-settings-header"
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SettingsIcon />
+            <Typography variant="h6">
+              進階設定
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+              （印鑑數量上限: {maxSeals} 個，相似度閾值: {Math.round(threshold * 100)}%）
+            </Typography>
+          </Box>
+        </AccordionSummary>
+        <AccordionDetails>
+          {/* 比對印鑑數量上限設定 */}
+          <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+            <Typography variant="body2" gutterBottom fontWeight="bold">
+              比對印鑑數量上限
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+              設定圖像2中最多檢測的印鑑數量（當前: {maxSeals} 個）
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Slider
+                value={maxSeals}
+                onChange={(e, value) => setMaxSeals(value)}
+                min={1}
+                max={20}
+                step={1}
+                marks={[
+                  { value: 1, label: '1' },
+                  { value: 6, label: '6' },
+                  { value: 10, label: '10' },
+                  { value: 20, label: '20' }
+                ]}
+                valueLabelDisplay="auto"
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                type="number"
+                value={maxSeals}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value)
+                  if (!isNaN(val) && val >= 1 && val <= 20) {
+                    setMaxSeals(val)
+                  }
+                }}
+                inputProps={{ 
+                  min: 1, 
+                  max: 20, 
+                  step: 1 
+                }}
+                size="small"
+                sx={{ width: '100px' }}
+                label="數量"
+              />
+            </Box>
+          </Box>
+
+          {/* 相似度閾值設定 */}
+          <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+            <Typography variant="body2" gutterBottom fontWeight="bold">
+              相似度閾值設定
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+              設定比對時判斷為匹配的相似度閾值（當前: {Math.round(threshold * 100)}%）
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Slider
+                value={threshold}
+                onChange={(e, value) => setThreshold(value)}
+                min={0}
+                max={1}
+                step={0.01}
+                marks={[
+                  { value: 0, label: '0%' },
+                  { value: 0.5, label: '50%' },
+                  { value: 1, label: '100%' }
+                ]}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                type="number"
+                value={threshold}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  if (!isNaN(val) && val >= 0 && val <= 1) {
+                    setThreshold(val)
+                  }
+                }}
+                inputProps={{ 
+                  min: 0, 
+                  max: 1, 
+                  step: 0.01 
+                }}
+                size="small"
+                sx={{ width: '100px' }}
+                label="閾值"
+              />
+            </Box>
+          </Box>
+
+          {/* 相似度權重參數設定 */}
+          <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+            <Typography variant="h6" gutterBottom>
+              相似度權重參數設定
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+              設定比對時各演算法的權重（總和建議為 1.0）
+            </Typography>
+            <Grid container spacing={2}>
+          {/* SSIM 權重 */}
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" gutterBottom fontWeight="bold">
+              SSIM 權重
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Slider
+                value={similaritySsimWeight}
+                onChange={(e, value) => setSimilaritySsimWeight(value)}
+                min={0}
+                max={1}
+                step={0.01}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                type="number"
+                value={similaritySsimWeight}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  if (!isNaN(val) && val >= 0 && val <= 1) {
+                    setSimilaritySsimWeight(val)
+                  }
+                }}
+                inputProps={{ min: 0, max: 1, step: 0.01 }}
+                size="small"
+                sx={{ width: '80px' }}
+                label="權重"
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              當前: {Math.round(similaritySsimWeight * 100)}%
+            </Typography>
+          </Grid>
+
+          {/* Template Match 權重 */}
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" gutterBottom fontWeight="bold">
+              Template Match 權重
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Slider
+                value={similarityTemplateWeight}
+                onChange={(e, value) => setSimilarityTemplateWeight(value)}
+                min={0}
+                max={1}
+                step={0.01}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                type="number"
+                value={similarityTemplateWeight}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  if (!isNaN(val) && val >= 0 && val <= 1) {
+                    setSimilarityTemplateWeight(val)
+                  }
+                }}
+                inputProps={{ min: 0, max: 1, step: 0.01 }}
+                size="small"
+                sx={{ width: '80px' }}
+                label="權重"
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              當前: {Math.round(similarityTemplateWeight * 100)}%
+            </Typography>
+          </Grid>
+
+          {/* Pixel Similarity 權重 */}
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" gutterBottom fontWeight="bold">
+              Pixel Similarity 權重
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Slider
+                value={pixelSimilarityWeight}
+                onChange={(e, value) => setPixelSimilarityWeight(value)}
+                min={0}
+                max={1}
+                step={0.01}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                type="number"
+                value={pixelSimilarityWeight}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  if (!isNaN(val) && val >= 0 && val <= 1) {
+                    setPixelSimilarityWeight(val)
+                  }
+                }}
+                inputProps={{ min: 0, max: 1, step: 0.01 }}
+                size="small"
+                sx={{ width: '80px' }}
+                label="權重"
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              當前: {Math.round(pixelSimilarityWeight * 100)}%
+            </Typography>
+          </Grid>
+
+          {/* Histogram Similarity 權重 */}
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" gutterBottom fontWeight="bold">
+              Histogram Similarity 權重
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Slider
+                value={histogramSimilarityWeight}
+                onChange={(e, value) => setHistogramSimilarityWeight(value)}
+                min={0}
+                max={1}
+                step={0.01}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                type="number"
+                value={histogramSimilarityWeight}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  if (!isNaN(val) && val >= 0 && val <= 1) {
+                    setHistogramSimilarityWeight(val)
+                  }
+                }}
+                inputProps={{ min: 0, max: 1, step: 0.01 }}
+                size="small"
+                sx={{ width: '80px' }}
+                label="權重"
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              當前: {Math.round(histogramSimilarityWeight * 100)}%
+            </Typography>
+          </Grid>
+        </Grid>
+        <Box sx={{ mt: 2 }}>
+              <Typography variant="caption" color={Math.abs(similaritySsimWeight + similarityTemplateWeight + pixelSimilarityWeight + histogramSimilarityWeight - 1.0) < 0.01 ? 'success.main' : 'warning.main'}>
+                權重總和: {(similaritySsimWeight + similarityTemplateWeight + pixelSimilarityWeight + histogramSimilarityWeight).toFixed(2)} 
+                {Math.abs(similaritySsimWeight + similarityTemplateWeight + pixelSimilarityWeight + histogramSimilarityWeight - 1.0) < 0.01 ? ' ✓' : ' (建議調整為 1.0)'}
+              </Typography>
+            </Box>
+          </Box>
+        </AccordionDetails>
+      </Accordion>
 
       <Grid container spacing={3}>
         {/* 圖像1區域 */}
@@ -469,6 +764,7 @@ function MultiSealTest() {
             <Typography variant="h6" gutterBottom>
               圖像2（多印鑑）
             </Typography>
+            
             <Box sx={{ mb: 2 }}>
               <input
                 accept="image/*"
@@ -555,53 +851,6 @@ function MultiSealTest() {
                 <Alert severity="success" sx={{ mb: 2 }}>
                   已成功裁切 {croppedImageIds.length} 個印鑑圖像
                 </Alert>
-                
-                {/* 相似度閾值設定 */}
-                {uploadImage1Mutation.data?.id && image1?.seal_bbox && (
-                  <Box sx={{ mb: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-                    <Typography variant="body2" gutterBottom fontWeight="bold">
-                      相似度閾值設定
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                      設定比對時判斷為匹配的相似度閾值（當前: {Math.round(threshold * 100)}%）
-                    </Typography>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Slider
-                        value={threshold}
-                        onChange={(e, value) => setThreshold(value)}
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        marks={[
-                          { value: 0, label: '0%' },
-                          { value: 0.5, label: '50%' },
-                          { value: 1, label: '100%' }
-                        ]}
-                        valueLabelDisplay="auto"
-                        valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
-                        sx={{ flex: 1 }}
-                      />
-                      <TextField
-                        type="number"
-                        value={threshold}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value)
-                          if (!isNaN(val) && val >= 0 && val <= 1) {
-                            setThreshold(val)
-                          }
-                        }}
-                        inputProps={{ 
-                          min: 0, 
-                          max: 1, 
-                          step: 0.01 
-                        }}
-                        size="small"
-                        sx={{ width: '100px' }}
-                        label="閾值"
-                      />
-                    </Box>
-                  </Box>
-                )}
                 
                 {/* 開始比對按鈕 */}
                 {uploadImage1Mutation.data?.id && image1?.seal_bbox && (

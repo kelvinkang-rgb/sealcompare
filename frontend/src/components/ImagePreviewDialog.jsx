@@ -22,7 +22,7 @@ import {
 } from '@mui/icons-material'
 import { imageAPI } from '../services/api'
 
-function ImagePreviewDialog({ open, onClose, image, sealBbox = null, seals = [] }) {
+function ImagePreviewDialog({ open, onClose, image, sealBbox = null, seals = [], imageUrl: externalImageUrl = null }) {
   const [viewMode, setViewMode] = useState('original') // 'original' 或 'marked'
   const imgRef = useRef(null)
   const containerRef = useRef(null)
@@ -348,11 +348,14 @@ function ImagePreviewDialog({ open, onClose, image, sealBbox = null, seals = [] 
     }
   }, [open])
 
-  if (!image) {
+  // 如果提供了外部 imageUrl，優先使用它；否則從 image 對象獲取
+  const imageUrl = externalImageUrl || (image ? imageAPI.getFile(image.id) : null)
+  
+  // 如果既沒有 image 也沒有 imageUrl，不顯示對話框
+  if (!image && !imageUrl) {
     return null
   }
 
-  const imageUrl = imageAPI.getFile(image.id)
   const hasSeal = (sealBbox !== null && sealBbox !== undefined) || (seals && seals.length > 0)
 
   return (
@@ -371,7 +374,7 @@ function ImagePreviewDialog({ open, onClose, image, sealBbox = null, seals = [] 
       <DialogTitle>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
           <Typography variant="h6">
-            {image.filename || '圖片預覽'}
+            {image?.filename || '圖片預覽'}
           </Typography>
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* 縮放工具欄 */}
@@ -481,7 +484,7 @@ function ImagePreviewDialog({ open, onClose, image, sealBbox = null, seals = [] 
             <img
               ref={imgRef}
               src={imageUrl}
-              alt={image.filename || '圖片'}
+              alt={image?.filename || '圖片'}
               style={{
                 maxWidth: '100%',
                 maxHeight: '80vh',

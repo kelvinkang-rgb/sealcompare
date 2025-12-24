@@ -13,14 +13,26 @@ import hashlib
 class SealComparator:
     """印鑑比對器"""
     
-    def __init__(self, threshold: float = 0.95):
+    def __init__(self, threshold: float = 0.95, 
+                 similarity_ssim_weight: float = 0.5,
+                 similarity_template_weight: float = 0.35,
+                 pixel_similarity_weight: float = 0.1,
+                 histogram_similarity_weight: float = 0.05):
         """
         初始化比對器
         
         Args:
             threshold: 相似度閾值，預設為 0.95（95%）
+            similarity_ssim_weight: SSIM 權重，預設為 0.5 (50%)
+            similarity_template_weight: Template Match 權重，預設為 0.35 (35%)
+            pixel_similarity_weight: Pixel Similarity 權重，預設為 0.1 (10%)
+            histogram_similarity_weight: Histogram Similarity 權重，預設為 0.05 (5%)
         """
         self.threshold = threshold
+        self.similarity_ssim_weight = similarity_ssim_weight
+        self.similarity_template_weight = similarity_template_weight
+        self.pixel_similarity_weight = pixel_similarity_weight
+        self.histogram_similarity_weight = histogram_similarity_weight
     
     def load_image(self, image_path: str) -> Optional[np.ndarray]:
         """
@@ -204,7 +216,7 @@ class SealComparator:
         self, 
         image1: np.ndarray, 
         image2: np.ndarray,
-        rotation_range: float = 45.0,
+        rotation_range: float = 15.0,
         translation_range: int = 100
     ) -> Tuple[np.ndarray, float, Tuple[int, int], float, Dict[str, float]]:
         """
@@ -852,10 +864,10 @@ class SealComparator:
         # 使用簡單的加權組合計算最終相似度（優化權重，增強抗背景噪訊能力）
         # 提高結構特徵演算法權重（SSIM, Template Match），降低像素級演算法權重（Pixel, Histogram）
         similarity = (
-            similarity_ssim * 0.5 +          # SSIM: 50% (提高 10%，抗噪訊能力高)
-            similarity_template * 0.35 +      # Template Match: 35% (提高 5%，抗噪訊能力中高)
-            pixel_similarity * 0.1 +         # Pixel Similarity: 10% (降低 10%，對背景噪訊敏感)
-            histogram_similarity * 0.05      # Histogram Similarity: 5% (降低 5%，對背景噪訊敏感)
+            similarity_ssim * self.similarity_ssim_weight +
+            similarity_template * self.similarity_template_weight +
+            pixel_similarity * self.pixel_similarity_weight +
+            histogram_similarity * self.histogram_similarity_weight
         )
         
         print(f"最終相似度: {similarity:.4f} (SSIM={similarity_ssim:.4f}, Template={similarity_template:.4f}, Pixel={pixel_similarity:.4f}, Hist={histogram_similarity:.4f})")

@@ -11,12 +11,12 @@ import {
   CardContent,
 } from '@mui/material'
 import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon } from '@mui/icons-material'
-import ImageModal from './ImageModal'
+import ImagePreviewDialog from './ImagePreviewDialog'
 
 function MultiSealComparisonResults({ results, image1Id }) {
   const [modalOpen, setModalOpen] = useState(false)
   const [modalImageUrl, setModalImageUrl] = useState('')
-  const [modalTitle, setModalTitle] = useState('')
+  const [modalImage, setModalImage] = useState(null)
 
   const handleImageClick = (imagePath, title) => {
     if (!imagePath) return
@@ -29,8 +29,14 @@ function MultiSealComparisonResults({ results, image1Id }) {
     const fileName = imagePath.split('/').pop()
     const imageUrl = `${API_BASE_URL}/images/multi-seal-comparisons/${fileName}`
     
+    // 構建一個簡單的 image 對象（用於顯示 filename）
+    const image = {
+      id: imagePath, // 使用路徑作為唯一標識
+      filename: fileName || title || '圖片預覽'
+    }
+    
     setModalImageUrl(imageUrl)
-    setModalTitle(title)
+    setModalImage(image)
     setModalOpen(true)
   }
   
@@ -47,7 +53,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
   const handleCloseModal = () => {
     setModalOpen(false)
     setModalImageUrl('')
-    setModalTitle('')
+    setModalImage(null)
   }
 
   if (!results || results.length === 0) {
@@ -108,9 +114,89 @@ function MultiSealComparisonResults({ results, image1Id }) {
                 )}
 
                 {!result.error && (
-                  <Grid container spacing={2}>
+                  <Grid container spacing={1}>
+                    {/* 輸入圖像1：去背景後的圖像1 */}
+                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
+                      <Paper
+                        sx={{
+                          p: 1,
+                          textAlign: 'center',
+                          cursor: result.input_image1_path ? 'pointer' : 'default',
+                          '&:hover': result.input_image1_path ? { opacity: 0.8 } : {},
+                        }}
+                        onClick={() => result.input_image1_path && handleImageClick(
+                          result.input_image1_path,
+                          `印鑑 ${result.seal_index} - 輸入圖像1: 去背景後的圖像1`
+                        )}
+                      >
+                        <Typography variant="caption" display="block" gutterBottom>
+                          輸入圖像1: 去背景後的圖像1
+                        </Typography>
+                        {result.input_image1_path ? (
+                          <img
+                            src={getImageUrl(result.input_image1_path)}
+                            alt="輸入圖像1"
+                            style={{
+                              maxWidth: '100%',
+                              height: 'auto',
+                              borderRadius: '4px',
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none'
+                              e.target.parentElement.innerHTML =
+                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                            }}
+                          />
+                        ) : (
+                          <Box sx={{ p: 2, color: 'text.secondary' }}>
+                            未生成
+                          </Box>
+                        )}
+                      </Paper>
+                    </Grid>
+
+                    {/* 輸入圖像2：對齊後的印鑑圖像 */}
+                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
+                      <Paper
+                        sx={{
+                          p: 1,
+                          textAlign: 'center',
+                          cursor: result.input_image2_path ? 'pointer' : 'default',
+                          '&:hover': result.input_image2_path ? { opacity: 0.8 } : {},
+                        }}
+                        onClick={() => result.input_image2_path && handleImageClick(
+                          result.input_image2_path,
+                          `印鑑 ${result.seal_index} - 輸入圖像2: 對齊後的印鑑圖像`
+                        )}
+                      >
+                        <Typography variant="caption" display="block" gutterBottom>
+                          輸入圖像2: 對齊後的印鑑圖像
+                        </Typography>
+                        {result.input_image2_path ? (
+                          <img
+                            src={getImageUrl(result.input_image2_path)}
+                            alt="輸入圖像2"
+                            style={{
+                              maxWidth: '100%',
+                              height: 'auto',
+                              borderRadius: '4px',
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none'
+                              e.target.parentElement.innerHTML =
+                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                            }}
+                          />
+                        ) : (
+                          <Box sx={{ p: 2, color: 'text.secondary' }}>
+                            未生成
+                          </Box>
+                        )}
+                      </Paper>
+                    </Grid>
+
                     {/* 疊圖1 */}
-                    <Grid item xs={12} md={4}>
+                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
                       <Paper
                         sx={{
                           p: 1,
@@ -131,10 +217,9 @@ function MultiSealComparisonResults({ results, image1Id }) {
                             src={getImageUrl(result.overlay1_path)}
                             alt="疊圖1"
                             style={{
-                              maxWidth: '100%',
-                              maxHeight: '200px',
-                              width: 'auto',
-                              height: 'auto',
+                              width: '100%',
+                              height: '200px',
+                              objectFit: 'contain',
                               borderRadius: '4px',
                             }}
                             onError={(e) => {
@@ -152,7 +237,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
                     </Grid>
 
                     {/* 疊圖2 */}
-                    <Grid item xs={12} md={4}>
+                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
                       <Paper
                         sx={{
                           p: 1,
@@ -173,10 +258,9 @@ function MultiSealComparisonResults({ results, image1Id }) {
                             src={getImageUrl(result.overlay2_path)}
                             alt="疊圖2"
                             style={{
-                              maxWidth: '100%',
-                              maxHeight: '200px',
-                              width: 'auto',
-                              height: 'auto',
+                              width: '100%',
+                              height: '200px',
+                              objectFit: 'contain',
                               borderRadius: '4px',
                             }}
                             onError={(e) => {
@@ -194,7 +278,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
                     </Grid>
 
                     {/* 熱力圖 */}
-                    <Grid item xs={12} md={4}>
+                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
                       <Paper
                         sx={{
                           p: 1,
@@ -215,10 +299,9 @@ function MultiSealComparisonResults({ results, image1Id }) {
                             src={getImageUrl(result.heatmap_path)}
                             alt="熱力圖"
                             style={{
-                              maxWidth: '100%',
-                              maxHeight: '200px',
-                              width: 'auto',
-                              height: 'auto',
+                              width: '100%',
+                              height: '200px',
+                              objectFit: 'contain',
                               borderRadius: '4px',
                             }}
                             onError={(e) => {
@@ -242,11 +325,13 @@ function MultiSealComparisonResults({ results, image1Id }) {
         ))}
       </Grid>
 
-      <ImageModal
+      <ImagePreviewDialog
         open={modalOpen}
         onClose={handleCloseModal}
+        image={modalImage}
         imageUrl={modalImageUrl}
-        title={modalTitle}
+        sealBbox={null}
+        seals={[]}
       />
     </Box>
   )

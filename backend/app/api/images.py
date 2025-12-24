@@ -180,16 +180,18 @@ def update_seal_location(
 @router.post("/{image_id}/detect-multiple-seals", response_model=MultipleSealsDetectionResponse)
 def detect_multiple_seals(
     image_id: UUID,
+    max_seals: int = Query(10, ge=1, le=50, description="最大檢測數量"),
     db: Session = Depends(get_db)
 ):
     """
     檢測圖像中的多個印鑑位置（測試功能）
     
     - **image_id**: 圖像 ID
+    - **max_seals**: 最大檢測數量，默認10，範圍1-50
     """
     image_service = ImageService(db)
     try:
-        result = image_service.detect_multiple_seals(image_id)
+        result = image_service.detect_multiple_seals(image_id, max_seals=max_seals)
         return result
     except HTTPException:
         raise
@@ -285,7 +287,11 @@ def compare_image1_with_seals(
         results_data = image_service.compare_image1_with_seals(
             image1_id,
             request.seal_image_ids,
-            threshold=request.threshold
+            threshold=request.threshold,
+            similarity_ssim_weight=request.similarity_ssim_weight,
+            similarity_template_weight=request.similarity_template_weight,
+            pixel_similarity_weight=request.pixel_similarity_weight,
+            histogram_similarity_weight=request.histogram_similarity_weight
         )
         
         # 轉換為響應格式
@@ -298,6 +304,8 @@ def compare_image1_with_seals(
                 overlay1_path=r['overlay1_path'],
                 overlay2_path=r['overlay2_path'],
                 heatmap_path=r['heatmap_path'],
+                input_image1_path=r.get('input_image1_path'),
+                input_image2_path=r.get('input_image2_path'),
                 error=r['error']
             )
             for r in results_data
@@ -352,7 +360,7 @@ def get_multi_seal_comparison_file(
 def detect_matching_seals_with_rotation(
     image1_id: UUID,
     image2_id: UUID = Query(..., description="包含多個印鑑的圖像 ID"),
-    rotation_range: float = Query(45.0, description="旋轉角度範圍（度）"),
+    rotation_range: float = Query(15.0, description="旋轉角度範圍（度）"),
     angle_step: float = Query(1.0, description="旋轉角度步長（度）"),
     max_seals: int = Query(10, description="最大返回數量"),
     db: Session = Depends(get_db)
