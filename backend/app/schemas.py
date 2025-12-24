@@ -112,6 +112,23 @@ class MultiSealComparisonResponse(BaseModel):
     success_count: int = Field(..., description="成功比對數量")
 
 
+class RotatedSealMatch(BaseModel):
+    """旋轉匹配的印鑑結果"""
+    bbox: Dict[str, int] = Field(..., description="邊界框 {x, y, width, height}")
+    center: Dict[str, float] = Field(..., description="中心點 {center_x, center_y, radius}")
+    rotation_angle: float = Field(..., description="最佳旋轉角度（度）")
+    similarity: float = Field(..., ge=0.0, le=1.0, description="相似度分數")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="置信度")
+
+
+class RotatedSealsDetectionResponse(BaseModel):
+    """旋轉匹配的多印鑑偵測響應"""
+    detected: bool = Field(..., description="是否檢測到匹配的印鑑")
+    matches: list[RotatedSealMatch] = Field(default_factory=list, description="匹配的印鑑列表")
+    count: int = Field(0, description="匹配的印鑑數量")
+    reason: Optional[str] = Field(None, description="失敗原因")
+
+
 # 比對相關 Schema
 class ComparisonBase(BaseModel):
     """比對基礎模型"""

@@ -78,10 +78,17 @@ export const imageAPI = {
   },
   
   // 多印鑑比對相關 API（測試功能）
-  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.95) => {
+  // timeout: 超時時間（毫秒），根據印鑑數量動態計算
+  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.95, timeout = null) => {
+    // 如果沒有指定超時時間，根據印鑑數量動態計算
+    // 基礎超時時間：30秒，每個印鑑增加15秒
+    const calculatedTimeout = timeout || (30000 + (sealImageIds?.length || 0) * 15000)
+    
     const response = await api.post(`/images/${image1Id}/compare-with-seals`, {
       seal_image_ids: sealImageIds,
       threshold: threshold
+    }, {
+      timeout: calculatedTimeout
     })
     return response.data
   },

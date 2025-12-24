@@ -3,7 +3,7 @@ import { Box, Paper, Typography, IconButton, Chip } from '@mui/material'
 import { Edit as EditIcon, CheckCircle as CheckCircleIcon } from '@mui/icons-material'
 import { imageAPI } from '../services/api'
 
-function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
+function ImagePreview({ image, label, onEdit, showSealIndicator = true, onPreview }) {
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
   const imgRef = useRef(null)
   const containerRef = useRef(null)
@@ -15,7 +15,7 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
     const canvas = canvasRef.current
     const img = imgRef.current
     
-    if (!canvas || !img || !image?.seal_bbox) {
+    if (!canvas || !img || !image?.seal_bbox || !img.complete) {
       return
     }
 
@@ -23,28 +23,41 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
     const container = containerRef.current
     if (!container) return
 
-    // 計算顯示尺寸和縮放比例
-    const containerWidth = container.offsetWidth
-    const containerHeight = container.offsetHeight
+    // 獲取容器的實際顯示位置和尺寸
+    const containerRect = container.getBoundingClientRect()
     
-    // 計算圖像在容器中的顯示尺寸（保持寬高比）
-    const imgAspect = img.naturalWidth / img.naturalHeight
-    const containerAspect = containerWidth / containerHeight
-    
-    let displayWidth, displayHeight
-    if (imgAspect > containerAspect) {
-      displayWidth = containerWidth
-      displayHeight = containerWidth / imgAspect
-    } else {
-      displayHeight = containerHeight
-      displayWidth = containerHeight * imgAspect
-    }
+    const containerWidth = containerRect.width
+    const containerHeight = containerRect.height
 
     canvas.width = containerWidth
     canvas.height = containerHeight
     
-    // 計算縮放比例（由於 objectFit: contain，x 和 y 方向的縮放比例相同）
-    const currentScale = displayWidth / img.naturalWidth
+    // 計算圖片內容的實際顯示尺寸（考慮 objectFit: contain）
+    // 當使用 objectFit: contain 時，圖片會保持寬高比，實際顯示尺寸可能小於容器尺寸
+    const imgAspect = img.naturalWidth / img.naturalHeight
+    const containerAspect = containerWidth / containerHeight
+    
+    let imgDisplayWidth, imgDisplayHeight, imgOffsetX, imgOffsetY
+    
+    if (imgAspect > containerAspect) {
+      // 圖片較寬，以容器寬度為準
+      imgDisplayWidth = containerWidth
+      imgDisplayHeight = containerWidth / imgAspect
+      imgOffsetX = 0
+      imgOffsetY = (containerHeight - imgDisplayHeight) / 2
+    } else {
+      // 圖片較高，以容器高度為準
+      imgDisplayHeight = containerHeight
+      imgDisplayWidth = containerHeight * imgAspect
+      imgOffsetX = (containerWidth - imgDisplayWidth) / 2
+      imgOffsetY = 0
+    }
+    
+    // 計算縮放比例：從圖片原始尺寸縮放到顯示尺寸
+    // bbox 坐標是相對於圖片原始尺寸（naturalWidth/naturalHeight）的
+    // 參考 SealDetectionBox: currentScale = displayWidth / img.width
+    // 這裡 imgDisplayWidth 對應 displayWidth，img.naturalWidth 對應 img.width（當圖片隱藏時）
+    const currentScale = imgDisplayWidth / img.naturalWidth
 
     // 清除畫布
     ctx.clearRect(0, 0, canvas.width, canvas.height)
@@ -52,14 +65,20 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
     // 如果沒有 bbox，不繪製
     if (!image.seal_bbox) return
 
-    // 計算 bbox 在顯示尺寸中的位置
+    // 驗證 bbox 格式
     const bbox = image.seal_bbox
-    const offsetX = (containerWidth - displayWidth) / 2
-    const offsetY = (containerHeight - displayHeight) / 2
-    
+    if (bbox.x === undefined || bbox.y === undefined || bbox.width === undefined || bbox.height === undefined) {
+      console.warn('ImagePreview: bbox 格式不正確:', bbox)
+      return
+    }
+
+    // 計算 bbox 在顯示尺寸中的位置
+    // bbox 坐標是相對於圖片原始尺寸的，需要轉換到顯示坐標系統
+    // 參考 SealDetectionBox: scaledBbox.x = bbox.x * currentScale
+    // 但這裡需要加上圖片在容器中的偏移
     const scaledBbox = {
-      x: offsetX + bbox.x * currentScale,
-      y: offsetY + bbox.y * currentScale,
+      x: imgOffsetX + bbox.x * currentScale,
+      y: imgOffsetY + bbox.y * currentScale,
       width: bbox.width * currentScale,
       height: bbox.height * currentScale
     }
@@ -162,6 +181,7 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
       
       <Box
         ref={containerRef}
+        onClick={onPreview ? () => onPreview(image) : undefined}
         sx={{
           position: 'relative',
           width: '100%',
@@ -170,6 +190,10 @@ function ImagePreview({ image, label, onEdit, showSealIndicator = true }) {
           borderRadius: 1,
           overflow: 'hidden',
           border: hasSeal ? '2px solid #4caf50' : '1px solid #ddd',
+          cursor: onPreview ? 'pointer' : 'default',
+          '&:hover': onPreview ? {
+            opacity: 0.9,
+          } : {},
         }}
       >
         <img

@@ -13,6 +13,8 @@ import {
   DialogTitle,
   DialogContent,
   Snackbar,
+  TextField,
+  Slider,
 } from '@mui/material'
 import { useMutation } from '@tanstack/react-query'
 import { imageAPI } from '../services/api'
@@ -21,6 +23,7 @@ import SealDetectionBox from '../components/SealDetectionBox'
 import MultiSealPreview from '../components/MultiSealPreview'
 import MultiSealDetectionBox from '../components/MultiSealDetectionBox'
 import MultiSealComparisonResults from '../components/MultiSealComparisonResults'
+import ImagePreviewDialog from '../components/ImagePreviewDialog'
 
 function MultiSealTest() {
   const navigate = useNavigate()
@@ -43,6 +46,13 @@ function MultiSealTest() {
   
   // 比對結果
   const [comparisonResults, setComparisonResults] = useState(null)
+  
+  // 相似度閾值
+  const [threshold, setThreshold] = useState(0.5) // 默認 50%
+  
+  // 預覽對話框狀態
+  const [previewImage1, setPreviewImage1] = useState(false)
+  const [previewImage2, setPreviewImage2] = useState(false)
 
   // 上傳圖像1
   const uploadImage1Mutation = useMutation({
@@ -144,10 +154,19 @@ function MultiSealTest() {
     mutationFn: ({ imageId, seals }) => imageAPI.saveMultipleSeals(imageId, seals),
     onSuccess: (data) => {
       setImage2(data)
+      // 同步更新 multipleSeals 狀態，確保與 image2.multiple_seals 一致
+      if (data.multiple_seals && Array.isArray(data.multiple_seals)) {
+        setMultipleSeals(data.multiple_seals)
+      } else if (data.multiple_seals === null || data.multiple_seals === undefined) {
+        setMultipleSeals([])
+      }
       setShowSealDialog2(false)
+      const savedCount = (data.multiple_seals && Array.isArray(data.multiple_seals)) 
+        ? data.multiple_seals.length 
+        : multipleSeals.length
       setSnackbar({
         open: true,
-        message: `已保存 ${multipleSeals.length} 個印鑑位置`,
+        message: `已保存 ${savedCount} 個印鑑位置`,
         severity: 'success'
       })
     },
@@ -313,6 +332,20 @@ function MultiSealTest() {
     setShowSealDialog2(true)
   }
 
+  // 處理預覽圖像1
+  const handlePreviewImage1 = (image) => {
+    if (image) {
+      setPreviewImage1(true)
+    }
+  }
+
+  // 處理預覽圖像2
+  const handlePreviewImage2 = (image) => {
+    if (image) {
+      setPreviewImage2(true)
+    }
+  }
+
   // 處理開始比對
   const handleStartComparison = () => {
     if (!uploadImage1Mutation.data?.id) {
@@ -345,7 +378,7 @@ function MultiSealTest() {
     compareMutation.mutate({
       image1Id: uploadImage1Mutation.data.id,
       sealImageIds: croppedImageIds,
-      threshold: 0.95
+      threshold: threshold
     })
   }
 
@@ -425,6 +458,7 @@ function MultiSealTest() {
               label="圖像1預覽"
               onEdit={handleEditImage1Seal}
               showSealIndicator={true}
+              onPreview={handlePreviewImage1}
             />
           </Paper>
         </Grid>
@@ -487,9 +521,10 @@ function MultiSealTest() {
             
             <MultiSealPreview
               image={image2}
-              seals={multipleSeals}
+              seals={image2?.multiple_seals || multipleSeals || []}
               label="圖像2預覽"
               onSealClick={handleSealClick}
+              onPreview={handlePreviewImage2}
             />
 
             {/* 操作按鈕 */}
@@ -520,6 +555,53 @@ function MultiSealTest() {
                 <Alert severity="success" sx={{ mb: 2 }}>
                   已成功裁切 {croppedImageIds.length} 個印鑑圖像
                 </Alert>
+                
+                {/* 相似度閾值設定 */}
+                {uploadImage1Mutation.data?.id && image1?.seal_bbox && (
+                  <Box sx={{ mb: 2, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                    <Typography variant="body2" gutterBottom fontWeight="bold">
+                      相似度閾值設定
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                      設定比對時判斷為匹配的相似度閾值（當前: {Math.round(threshold * 100)}%）
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Slider
+                        value={threshold}
+                        onChange={(e, value) => setThreshold(value)}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        marks={[
+                          { value: 0, label: '0%' },
+                          { value: 0.5, label: '50%' },
+                          { value: 1, label: '100%' }
+                        ]}
+                        valueLabelDisplay="auto"
+                        valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+                        sx={{ flex: 1 }}
+                      />
+                      <TextField
+                        type="number"
+                        value={threshold}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value)
+                          if (!isNaN(val) && val >= 0 && val <= 1) {
+                            setThreshold(val)
+                          }
+                        }}
+                        inputProps={{ 
+                          min: 0, 
+                          max: 1, 
+                          step: 0.01 
+                        }}
+                        size="small"
+                        sx={{ width: '100px' }}
+                        label="閾值"
+                      />
+                    </Box>
+                  </Box>
+                )}
                 
                 {/* 開始比對按鈕 */}
                 {uploadImage1Mutation.data?.id && image1?.seal_bbox && (
@@ -601,13 +683,31 @@ function MultiSealTest() {
           {uploadImage2Mutation.data?.id && (
             <MultiSealDetectionBox
               imageId={uploadImage2Mutation.data.id}
-              initialSeals={multipleSeals}
+              initialSeals={image2?.multiple_seals || multipleSeals || []}
               onConfirm={handleMultipleSealsConfirm}
               onCancel={() => setShowSealDialog2(false)}
             />
           )}
         </DialogContent>
       </Dialog>
+
+      {/* 圖像1預覽對話框 */}
+      <ImagePreviewDialog
+        open={previewImage1}
+        onClose={() => setPreviewImage1(false)}
+        image={image1}
+        sealBbox={image1?.seal_bbox || null}
+        seals={[]}
+      />
+
+      {/* 圖像2預覽對話框 */}
+      <ImagePreviewDialog
+        open={previewImage2}
+        onClose={() => setPreviewImage2(false)}
+        image={image2}
+        sealBbox={null}
+        seals={image2?.multiple_seals || multipleSeals || []}
+      />
 
       {/* 操作反饋提示 */}
       <Snackbar

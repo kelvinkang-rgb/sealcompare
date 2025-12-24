@@ -2,7 +2,7 @@
 圖像相關 API
 """
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
@@ -20,7 +20,8 @@ from app.schemas import (
     CropSealsResponse,
     MultiSealComparisonRequest,
     MultiSealComparisonResponse,
-    SealComparisonResult
+    SealComparisonResult,
+    RotatedSealsDetectionResponse
 )
 from app.services.image_service import ImageService
 from app.config import settings
@@ -345,4 +346,44 @@ def get_multi_seal_comparison_file(
         media_type=media_type,
         filename=filename
     )
+
+
+@router.post("/{image1_id}/detect-matching-seals", response_model=RotatedSealsDetectionResponse)
+def detect_matching_seals_with_rotation(
+    image1_id: UUID,
+    image2_id: UUID = Query(..., description="包含多個印鑑的圖像 ID"),
+    rotation_range: float = Query(45.0, description="旋轉角度範圍（度）"),
+    angle_step: float = Query(1.0, description="旋轉角度步長（度）"),
+    max_seals: int = Query(10, description="最大返回數量"),
+    db: Session = Depends(get_db)
+):
+    """
+    檢測圖像2中與圖像1最相似的印鑑（考慮旋轉）
+    
+    - **image1_id**: 參考圖像 ID（模板）
+    - **image2_id**: 包含多個印鑑的圖像 ID
+    - **rotation_range**: 旋轉角度範圍（度），默認45度
+    - **angle_step**: 旋轉角度步長（度），默認1度
+    - **max_seals**: 最大返回數量，默認10個
+    """
+    image_service = ImageService(db)
+    try:
+        matches = image_service.detect_matching_seals_with_rotation(
+            image1_id,
+            image2_id,
+            rotation_range=rotation_range,
+            angle_step=angle_step,
+            max_seals=max_seals
+        )
+        
+        return RotatedSealsDetectionResponse(
+            detected=len(matches) > 0,
+            matches=matches,
+            count=len(matches),
+            reason=None if len(matches) > 0 else '未找到匹配的印鑑'
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"檢測失敗: {str(e)}")
 

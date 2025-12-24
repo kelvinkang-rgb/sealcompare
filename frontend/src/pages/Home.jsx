@@ -1,7 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Container, Typography, Button, Box, Card, CardContent, Grid } from '@mui/material'
-import { CompareArrows, History, BarChart } from '@mui/icons-material'
+import { CompareArrows, History, BarChart, Science } from '@mui/icons-material'
 
 function Home() {
   const navigate = useNavigate()
@@ -55,6 +55,20 @@ function Home() {
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 查看系統統計數據
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={4}>
+          <Card sx={{ height: '100%', cursor: 'pointer' }} onClick={() => navigate('/multi-seal-test')}>
+            <CardContent sx={{ textAlign: 'center', py: 4 }}>
+              <Science sx={{ fontSize: 60, color: 'primary.main', mb: 2 }} />
+              <Typography variant="h5" gutterBottom>
+                多印鑑測試
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                測試多印鑑檢測與比對功能
               </Typography>
             </CardContent>
           </Card>

@@ -811,24 +811,54 @@ class SealComparator:
         img1_final = img1_processed
         img2_final = img2_processed
         
-        # 直接計算相似度指標（優化：只計算使用的指標）
-        similarity_ssim = self._calculate_ssim(img1_final, img2_final)
-        similarity_template = self._template_match(img1_final, img2_final)
-        pixel_diff = self._pixel_difference(img1_final, img2_final)
-        pixel_similarity = 1.0 - pixel_diff
+        # 檢查圖像尺寸
+        h1, w1 = img1_final.shape[:2]
+        h2, w2 = img2_final.shape[:2]
+        print(f"圖像尺寸: img1=({h1}, {w1}), img2=({h2}, {w2})")
         
-        # 計算直方圖相似度
-        hist1 = cv2.calcHist([img1_final], [0], None, [256], [0, 256])
-        hist2 = cv2.calcHist([img2_final], [0], None, [256], [0, 256])
-        histogram_similarity = float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL))
+        # 直接計算相似度指標（優化：只計算使用的指標，添加錯誤處理）
+        try:
+            similarity_ssim = self._calculate_ssim(img1_final, img2_final)
+            print(f"SSIM 相似度: {similarity_ssim:.4f}")
+        except Exception as e:
+            print(f"SSIM 計算失敗: {e}")
+            similarity_ssim = 0.0
         
-        # 使用簡單的加權組合計算最終相似度（優化權重）
+        try:
+            similarity_template = self._template_match(img1_final, img2_final)
+            print(f"模板匹配相似度: {similarity_template:.4f}")
+        except Exception as e:
+            print(f"模板匹配計算失敗: {e}")
+            similarity_template = 0.0
+        
+        try:
+            pixel_diff = self._pixel_difference(img1_final, img2_final)
+            pixel_similarity = 1.0 - pixel_diff
+            print(f"像素相似度: {pixel_similarity:.4f}")
+        except Exception as e:
+            print(f"像素相似度計算失敗: {e}")
+            pixel_similarity = 0.0
+        
+        try:
+            # 計算直方圖相似度
+            hist1 = cv2.calcHist([img1_final], [0], None, [256], [0, 256])
+            hist2 = cv2.calcHist([img2_final], [0], None, [256], [0, 256])
+            histogram_similarity = float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL))
+            print(f"直方圖相似度: {histogram_similarity:.4f}")
+        except Exception as e:
+            print(f"直方圖相似度計算失敗: {e}")
+            histogram_similarity = 0.0
+        
+        # 使用簡單的加權組合計算最終相似度（優化權重，增強抗背景噪訊能力）
+        # 提高結構特徵演算法權重（SSIM, Template Match），降低像素級演算法權重（Pixel, Histogram）
         similarity = (
-            similarity_ssim * 0.4 +
-            similarity_template * 0.3 +
-            pixel_similarity * 0.2 +
-            histogram_similarity * 0.1
+            similarity_ssim * 0.5 +          # SSIM: 50% (提高 10%，抗噪訊能力高)
+            similarity_template * 0.35 +      # Template Match: 35% (提高 5%，抗噪訊能力中高)
+            pixel_similarity * 0.1 +         # Pixel Similarity: 10% (降低 10%，對背景噪訊敏感)
+            histogram_similarity * 0.05      # Histogram Similarity: 5% (降低 5%，對背景噪訊敏感)
         )
+        
+        print(f"最終相似度: {similarity:.4f} (SSIM={similarity_ssim:.4f}, Template={similarity_template:.4f}, Pixel={pixel_similarity:.4f}, Hist={histogram_similarity:.4f})")
         
         # 確保相似度在合理範圍內
         similarity = min(1.0, max(0.0, similarity))
@@ -873,6 +903,17 @@ class SealComparator:
         Returns:
             SSIM 值 (0-1)
         """
+        # 檢查並統一圖像尺寸
+        h1, w1 = img1.shape[:2]
+        h2, w2 = img2.shape[:2]
+        
+        if h1 != h2 or w1 != w2:
+            # 尺寸不同，調整到相同尺寸（使用較小尺寸以保持精度）
+            target_h = min(h1, h2)
+            target_w = min(w1, w2)
+            img1 = cv2.resize(img1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            img2 = cv2.resize(img2, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        
         # 簡化版 SSIM 計算
         C1 = 0.01 ** 2
         C2 = 0.03 ** 2
@@ -965,11 +1006,22 @@ class SealComparator:
         Returns:
             差異率 (0-1)
         """
+        # 檢查並統一圖像尺寸
+        h1, w1 = img1.shape[:2]
+        h2, w2 = img2.shape[:2]
+        
+        if h1 != h2 or w1 != w2:
+            # 尺寸不同，調整到相同尺寸（使用較小尺寸以保持精度）
+            target_h = min(h1, h2)
+            target_w = min(w1, w2)
+            img1 = cv2.resize(img1, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            img2 = cv2.resize(img2, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        
         diff = cv2.absdiff(img1, img2)
         diff_pixels = np.count_nonzero(diff)
         total_pixels = img1.size
         
-        return diff_pixels / total_pixels
+        return diff_pixels / total_pixels if total_pixels > 0 else 0.0
     
     def compare_files(self, image1_path: str, image2_path: str, 
                      enable_rotation_search: bool = True,

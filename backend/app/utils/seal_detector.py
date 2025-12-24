@@ -89,7 +89,7 @@ def _detect_seal_fast(image: np.ndarray, remaining_time: float) -> Dict:
     # 方法1: 快速輪廓檢測（最快）
     if remaining_time > 1.0:
         result1 = _detect_by_contours_fast(image)
-        if result1['detected'] and result1['confidence'] > 0.6:
+        if result1['detected'] and result1['confidence'] > 0.2:
             return result1
     
     # 方法2: 自適應閾值（較快）
@@ -279,11 +279,11 @@ def _validate_detection(result: Dict, image_width: int, image_height: int) -> bo
         center['center_y'] < 0 or center['center_y'] > image_height):
         return False
     
-    # 檢查尺寸是否合理
-    if bbox['width'] < 10 or bbox['height'] < 10:
+    # 檢查尺寸是否合理（降低最小尺寸要求，放寬最大尺寸限制）
+    if bbox['width'] < 5 or bbox['height'] < 5:
         return False
     
-    if bbox['width'] > image_width * 0.95 or bbox['height'] > image_height * 0.95:
+    if bbox['width'] > image_width * 0.98 or bbox['height'] > image_height * 0.98:
         return False
     
     return True
@@ -432,8 +432,8 @@ def _detect_multiple_by_contours(image: np.ndarray, max_seals: int = 10) -> list
         h, w = image.shape[:2]
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         
-        # 使用 Canny 邊緣檢測
-        edges = cv2.Canny(gray, 50, 150)
+        # 使用 Canny 邊緣檢測（降低閾值以檢測更多邊緣）
+        edges = cv2.Canny(gray, 20, 80)
         
         # 簡單的形態學操作
         kernel = np.ones((3, 3), np.uint8)
@@ -446,16 +446,16 @@ def _detect_multiple_by_contours(image: np.ndarray, max_seals: int = 10) -> list
         if not contours:
             return []
         
-        # 篩選輪廓（基於面積和圓度）
+        # 篩選輪廓（基於面積和圓度）- 降低判定標準以檢測更多相似圖像
         valid_seals = []
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area < (w * h * 0.01):  # 太小
+            if area < (w * h * 0.001):  # 降低最小面積要求（從1%降到0.1%）
                 continue
-            if area > (w * h * 0.9):  # 太大
+            if area > (w * h * 0.95):  # 放寬最大面積限制（從90%提高到95%）
                 continue
             circularity = _calculate_circularity(contour)
-            if circularity > 0.2:  # 圓度要求
+            if circularity > 0.05:  # 降低圓度要求（從0.2降到0.05）
                 # 計算邊界框和中心點
                 bbox, center, radius = _calculate_bbox_and_center(contour)
                 
@@ -472,7 +472,8 @@ def _detect_multiple_by_contours(image: np.ndarray, max_seals: int = 10) -> list
                     valid_seals.append({
                         'bbox': bbox,
                         'center': center,
-                        'confidence': confidence
+                        'confidence': confidence,
+                        'circularity': circularity
                     })
         
         if not valid_seals:
@@ -481,8 +482,8 @@ def _detect_multiple_by_contours(image: np.ndarray, max_seals: int = 10) -> list
         # 按置信度排序
         valid_seals.sort(key=lambda x: x['confidence'], reverse=True)
         
-        # 使用 NMS 過濾重疊的檢測結果
-        filtered_seals = _apply_nms(valid_seals, iou_threshold=0.3)
+        # 使用 NMS 過濾重疊的檢測結果（提高IoU閾值以保留更多重疊結果）
+        filtered_seals = _apply_nms(valid_seals, iou_threshold=0.6)
         
         # 返回前 max_seals 個
         return filtered_seals[:max_seals]
@@ -561,3 +562,381 @@ def _apply_nms(seals: list, iou_threshold: float = 0.3) -> list:
     
     return filtered_seals
 
+
+def _crop_seal_with_margin(image: np.ndarray, bbox: Dict, circularity: float = 0.0) -> Tuple[np.ndarray, Dict]:
+    """
+    根據 bbox 裁切印鑑區域，添加足夠的邊距以支持旋轉
+    
+    Args:
+        image: 原始圖像
+        bbox: 邊界框 {'x': int, 'y': int, 'width': int, 'height': int}
+        circularity: 圓度（0-1），用於判斷是否需要較大邊距
+        
+    Returns:
+        (裁切後的圖像, 更新後的邊界框)
+    """
+    h, w = image.shape[:2]
+    x = bbox['x']
+    y = bbox['y']
+    width = bbox['width']
+    height = bbox['height']
+    
+    # 計算邊距
+    if circularity > 0.7:
+        # 圓形圖章：較小邊距
+        radius = max(width, height) / 2.0
+        margin = int(radius * 0.2)
+    else:
+        # 非圓形圖章：較大邊距（確保45度旋轉不會裁切到內容）
+        # 對於45度旋轉，需要邊距 = max(width, height) * (sqrt(2) - 1) / 2
+        margin = int(max(width, height) * 0.414)  # sqrt(2) - 1 ≈ 0.414
+    
+    # 確保邊距至少為10像素
+    margin = max(10, margin)
+    
+    # 計算裁切區域（添加邊距）
+    crop_x = max(0, x - margin)
+    crop_y = max(0, y - margin)
+    crop_width = min(w - crop_x, width + 2 * margin)
+    crop_height = min(h - crop_y, height + 2 * margin)
+    
+    # 確保裁切區域有效
+    if crop_width <= 0 or crop_height <= 0:
+        # 如果計算失敗，使用原始 bbox
+        crop_x = max(0, x)
+        crop_y = max(0, y)
+        crop_width = min(w - crop_x, width)
+        crop_height = min(h - crop_y, height)
+    
+    # 裁切圖像
+    cropped = image[crop_y:crop_y+crop_height, crop_x:crop_x+crop_width]
+    
+    # 更新邊界框（相對於裁切後的圖像）
+    updated_bbox = {
+        'x': x - crop_x,
+        'y': y - crop_y,
+        'width': width,
+        'height': height
+    }
+    
+    return cropped, updated_bbox
+
+
+def _rotate_and_match(
+    template_image: np.ndarray,
+    seal_image: np.ndarray,
+    rotation_range: float = 45.0,
+    angle_step_coarse: float = 5.0,
+    angle_step_fine: float = 2.0,
+    angle_step_ultra_fine: float = 1.0
+) -> Tuple[float, float]:
+    """
+    對單個裁切的印鑑區域進行旋轉搜索，找到與模板圖像最相似的角度
+    
+    Args:
+        template_image: 參考圖像（已去背景）
+        seal_image: 待匹配的印鑑圖像（已去背景）
+        rotation_range: 旋轉角度範圍（度）
+        angle_step_coarse: 粗搜索步長（度）
+        angle_step_fine: 細搜索步長（度）
+        angle_step_ultra_fine: 精細搜索步長（度）
+        
+    Returns:
+        (最佳旋轉角度, 最佳相似度)
+    """
+    import sys
+    from pathlib import Path
+    core_path = Path(__file__).parent.parent.parent / "core"
+    sys.path.insert(0, str(core_path))
+    from seal_compare import SealComparator
+    
+    comparator = SealComparator()
+    
+    # 轉換為灰度圖
+    if len(template_image.shape) == 3:
+        template_gray = cv2.cvtColor(template_image, cv2.COLOR_BGR2GRAY)
+    else:
+        template_gray = template_image.copy()
+    
+    if len(seal_image.shape) == 3:
+        seal_gray = cv2.cvtColor(seal_image, cv2.COLOR_BGR2GRAY)
+    else:
+        seal_gray = seal_image.copy()
+    
+    h, w = seal_gray.shape[:2]
+    
+    # 階段1：粗搜索（使用縮小圖像）
+    scale_factor = 0.3
+    small_h = int(h * scale_factor)
+    small_w = int(w * scale_factor)
+    small_template = cv2.resize(template_gray, 
+                                (min(small_w, template_gray.shape[1]), 
+                                 min(small_h, template_gray.shape[0])), 
+                                interpolation=cv2.INTER_AREA)
+    small_seal = cv2.resize(seal_gray, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    
+    candidates = []
+    for angle in np.arange(-rotation_range, rotation_range + angle_step_coarse, angle_step_coarse):
+        if angle < -80 or angle > 80:
+            continue
+        
+        # 應用旋轉
+        center = (small_w // 2, small_h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(small_seal, M, (small_w, small_h),
+                                 borderMode=cv2.BORDER_CONSTANT,
+                                 borderValue=255)
+        
+        # 計算相似度
+        similarity = comparator._fast_rotation_match(small_template, rotated)
+        candidates.append((angle, similarity))
+    
+    if not candidates:
+        return 0.0, 0.0
+    
+    # 選擇最佳候選
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    best_angle_coarse = candidates[0][0]
+    best_similarity_coarse = candidates[0][1]
+    
+    # 早期終止：如果相似度很高，跳過後續搜索
+    if best_similarity_coarse > 0.9:
+        return best_angle_coarse, best_similarity_coarse
+    
+    # 階段2：細搜索（在最佳角度附近）
+    fine_range = 10.0
+    best_angle = best_angle_coarse
+    best_similarity = best_similarity_coarse
+    
+    for angle_offset in np.arange(-fine_range, fine_range + angle_step_fine, angle_step_fine):
+        angle = best_angle_coarse + angle_offset
+        if angle < -80 or angle > 80:
+            continue
+        
+        # 應用旋轉到原始尺寸圖像
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(seal_gray, M, (w, h),
+                                borderMode=cv2.BORDER_CONSTANT,
+                                borderValue=255)
+        
+        # 計算相似度
+        similarity = comparator._fast_rotation_match(template_gray, rotated)
+        
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_angle = angle
+    
+    # 早期終止：如果相似度很高，跳過精細搜索
+    if best_similarity > 0.95:
+        return best_angle, best_similarity
+    
+    # 階段3：精細搜索（在最佳角度附近）
+    ultra_fine_range = 2.0
+    for angle_offset in np.arange(-ultra_fine_range, ultra_fine_range + angle_step_ultra_fine, angle_step_ultra_fine):
+        angle = best_angle + angle_offset
+        if angle < -80 or angle > 80:
+            continue
+        
+        # 應用旋轉到原始尺寸圖像
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(seal_gray, M, (w, h),
+                                borderMode=cv2.BORDER_CONSTANT,
+                                borderValue=255)
+        
+        # 計算相似度
+        similarity = comparator._fast_rotation_match(template_gray, rotated)
+        
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_angle = angle
+    
+    return best_angle, best_similarity
+
+
+def detect_seals_with_rotation_matching(
+    image1_path: str,
+    image2_path: str,
+    rotation_range: float = 45.0,
+    angle_step: float = 1.0,
+    max_seals: int = 10,
+    timeout: float = 30.0
+) -> Dict:
+    """
+    檢測圖像2中與圖像1最相似的印鑑（考慮旋轉）
+    
+    Args:
+        image1_path: 參考圖像路徑（模板）
+        image2_path: 包含多個印鑑的圖像路徑
+        rotation_range: 旋轉角度範圍（度），默認45度
+        angle_step: 旋轉角度步長（度），默認1度（用於精細搜索）
+        max_seals: 最大返回數量，默認10個
+        timeout: 超時時間（秒），默認30秒
+        
+    Returns:
+        包含檢測結果的字典：
+        {
+            'detected': bool,
+            'matches': [
+                {
+                    'bbox': {'x': int, 'y': int, 'width': int, 'height': int},
+                    'center': {'center_x': int, 'center_y': int, 'radius': float},
+                    'rotation_angle': float,
+                    'similarity': float,
+                    'confidence': float
+                },
+                ...
+            ],
+            'count': int,
+            'reason': str (如果失敗)
+        }
+    """
+    start_time = time.time()
+    
+    try:
+        # 驗證圖像文件
+        if not Path(image1_path).exists():
+            return {
+                'detected': False,
+                'matches': [],
+                'count': 0,
+                'reason': '圖像1文件不存在'
+            }
+        
+        if not Path(image2_path).exists():
+            return {
+                'detected': False,
+                'matches': [],
+                'count': 0,
+                'reason': '圖像2文件不存在'
+            }
+        
+        # 載入圖像
+        image1 = cv2.imread(image1_path)
+        image2 = cv2.imread(image2_path)
+        
+        if image1 is None:
+            return {
+                'detected': False,
+                'matches': [],
+                'count': 0,
+                'reason': '無法讀取圖像1文件'
+            }
+        
+        if image2 is None:
+            return {
+                'detected': False,
+                'matches': [],
+                'count': 0,
+                'reason': '無法讀取圖像2文件'
+            }
+        
+        # 檢查超時
+        if time.time() - start_time > timeout:
+            return {
+                'detected': False,
+                'matches': [],
+                'count': 0,
+                'reason': '檢測超時'
+            }
+        
+        # 預處理圖像1（去背景）
+        import sys
+        from pathlib import Path
+        core_path = Path(__file__).parent.parent.parent / "core"
+        sys.path.insert(0, str(core_path))
+        from seal_compare import SealComparator
+        
+        comparator = SealComparator()
+        image1_processed = comparator._auto_detect_bounds_and_remove_background(image1)
+        
+        # 在圖像2中檢測所有可能的印鑑區域
+        detection_result = detect_multiple_seals(image2_path, timeout=timeout - (time.time() - start_time), max_seals=50)
+        
+        if not detection_result.get('detected') or not detection_result.get('seals'):
+            return {
+                'detected': False,
+                'matches': [],
+                'count': 0,
+                'reason': '未檢測到印鑑區域'
+            }
+        
+        # 對每個檢測到的區域進行旋轉匹配
+        matches = []
+        h2, w2 = image2.shape[:2]
+        
+        for seal in detection_result['seals']:
+            # 檢查超時
+            if time.time() - start_time > timeout:
+                break
+            
+            bbox = seal['bbox']
+            center = seal['center']
+            detection_confidence = seal.get('confidence', 0.5)
+            
+            # 計算圓度（從檢測結果中獲取，如果沒有則計算）
+            circularity = seal.get('circularity', 0.0)
+            if circularity == 0.0:
+                # 簡單計算圓度（基於 bbox 的寬高比）
+                aspect_ratio = min(bbox['width'], bbox['height']) / max(bbox['width'], bbox['height'])
+                circularity = aspect_ratio  # 簡化處理
+            
+            # 裁切印鑑區域（添加邊距）
+            try:
+                cropped_seal, updated_bbox = _crop_seal_with_margin(image2, bbox, circularity)
+                
+                # 去背景處理
+                cropped_seal_processed = comparator._auto_detect_bounds_and_remove_background(cropped_seal)
+                
+                # 旋轉匹配
+                best_angle, best_similarity = _rotate_and_match(
+                    image1_processed,
+                    cropped_seal_processed,
+                    rotation_range=rotation_range,
+                    angle_step_coarse=5.0,
+                    angle_step_fine=2.0,
+                    angle_step_ultra_fine=angle_step
+                )
+                
+                # 計算最終置信度（結合檢測置信度和相似度）
+                final_confidence = (detection_confidence * 0.3 + best_similarity * 0.7)
+                
+                # 更新 bbox（考慮裁切偏移）
+                final_bbox = {
+                    'x': bbox['x'],
+                    'y': bbox['y'],
+                    'width': bbox['width'],
+                    'height': bbox['height']
+                }
+                
+                matches.append({
+                    'bbox': final_bbox,
+                    'center': center,
+                    'rotation_angle': float(best_angle),
+                    'similarity': float(best_similarity),
+                    'confidence': float(final_confidence)
+                })
+                
+            except Exception as e:
+                # 跳過處理失敗的區域
+                continue
+        
+        # 按相似度排序，選擇前 max_seals 個
+        matches.sort(key=lambda x: x['similarity'], reverse=True)
+        top_matches = matches[:max_seals]
+        
+        return {
+            'detected': len(top_matches) > 0,
+            'matches': top_matches,
+            'count': len(top_matches),
+            'reason': None if len(top_matches) > 0 else '未找到匹配的印鑑'
+        }
+        
+    except Exception as e:
+        return {
+            'detected': False,
+            'matches': [],
+            'count': 0,
+            'reason': f'檢測過程出錯: {str(e)}'
+        }
