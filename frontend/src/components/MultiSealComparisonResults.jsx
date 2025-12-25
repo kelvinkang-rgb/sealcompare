@@ -338,21 +338,35 @@ function MultiSealComparisonResults({ results, image1Id }) {
                                 重疊區域 (Overlap Mask)
                               </Typography>
                               {result.overlap_mask_path ? (
-                                <img
-                                  src={getImageUrl(result.overlap_mask_path)}
-                                  alt="重疊區域mask"
-                                  style={{
+                                <Box
+                                  sx={{
                                     width: '100%',
-                                    height: '200px',
-                                    objectFit: 'contain',
+                                    height: '280px', // 統一高度以匹配 gray_diff
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: '#f5f5f5',
                                     borderRadius: '4px',
                                   }}
-                                  onError={(e) => {
-                                    e.target.style.display = 'none'
-                                    e.target.parentElement.innerHTML =
-                                      '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
-                                  }}
-                                />
+                                >
+                                  <img
+                                    src={getImageUrl(result.overlap_mask_path)}
+                                    alt="重疊區域mask"
+                                    style={{
+                                      maxWidth: '100%',
+                                      maxHeight: '100%',
+                                      width: 'auto',
+                                      height: 'auto',
+                                      objectFit: 'contain',
+                                      borderRadius: '4px',
+                                    }}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none'
+                                      e.target.parentElement.innerHTML =
+                                        '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                                    }}
+                                  />
+                                </Box>
                               ) : (
                                 <Box sx={{ p: 2, color: 'text.secondary' }}>
                                   未生成
@@ -379,21 +393,35 @@ function MultiSealComparisonResults({ results, image1Id }) {
                                 像素差異 (Pixel Difference Mask)
                               </Typography>
                               {result.pixel_diff_mask_path ? (
-                                <img
-                                  src={getImageUrl(result.pixel_diff_mask_path)}
-                                  alt="像素差異mask"
-                                  style={{
+                                <Box
+                                  sx={{
                                     width: '100%',
-                                    height: '200px',
-                                    objectFit: 'contain',
+                                    height: '280px', // 統一高度以匹配 gray_diff
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: '#f5f5f5',
                                     borderRadius: '4px',
                                   }}
-                                  onError={(e) => {
-                                    e.target.style.display = 'none'
-                                    e.target.parentElement.innerHTML =
-                                      '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
-                                  }}
-                                />
+                                >
+                                  <img
+                                    src={getImageUrl(result.pixel_diff_mask_path)}
+                                    alt="像素差異mask"
+                                    style={{
+                                      maxWidth: '100%',
+                                      maxHeight: '100%',
+                                      width: 'auto',
+                                      height: 'auto',
+                                      objectFit: 'contain',
+                                      borderRadius: '4px',
+                                    }}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none'
+                                      e.target.parentElement.innerHTML =
+                                        '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                                    }}
+                                  />
+                                </Box>
                               ) : (
                                 <Box sx={{ p: 2, color: 'text.secondary' }}>
                                   未生成
@@ -420,21 +448,35 @@ function MultiSealComparisonResults({ results, image1Id }) {
                                 圖像2獨有區域 (Image 2 Only)
                               </Typography>
                               {result.diff_mask_2_only_path ? (
-                                <img
-                                  src={getImageUrl(result.diff_mask_2_only_path)}
-                                  alt="圖像2獨有區域mask"
-                                  style={{
+                                <Box
+                                  sx={{
                                     width: '100%',
-                                    height: '200px',
-                                    objectFit: 'contain',
+                                    height: '280px', // 統一高度以匹配 gray_diff
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: '#f5f5f5',
                                     borderRadius: '4px',
                                   }}
-                                  onError={(e) => {
-                                    e.target.style.display = 'none'
-                                    e.target.parentElement.innerHTML =
-                                      '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
-                                  }}
-                                />
+                                >
+                                  <img
+                                    src={getImageUrl(result.diff_mask_2_only_path)}
+                                    alt="圖像2獨有區域mask"
+                                    style={{
+                                      maxWidth: '100%',
+                                      maxHeight: '100%',
+                                      width: 'auto',
+                                      height: 'auto',
+                                      objectFit: 'contain',
+                                      borderRadius: '4px',
+                                    }}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none'
+                                      e.target.parentElement.innerHTML =
+                                        '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                                    }}
+                                  />
+                                </Box>
                               ) : (
                                 <Box sx={{ p: 2, color: 'text.secondary' }}>
                                   未生成
@@ -461,21 +503,35 @@ function MultiSealComparisonResults({ results, image1Id }) {
                                 圖像1獨有區域 (Image 1 Only)
                         </Typography>
                               {result.diff_mask_1_only_path ? (
-                          <img
-                                  src={getImageUrl(result.diff_mask_1_only_path)}
-                                  alt="圖像1獨有區域mask"
-                            style={{
-                              width: '100%',
-                              height: '200px',
-                              objectFit: 'contain',
-                              borderRadius: '4px',
-                            }}
-                            onError={(e) => {
-                              e.target.style.display = 'none'
-                              e.target.parentElement.innerHTML =
-                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
-                            }}
-                          />
+                                <Box
+                                  sx={{
+                                    width: '100%',
+                                    height: '280px', // 統一高度以匹配 gray_diff
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: '#f5f5f5',
+                                    borderRadius: '4px',
+                                  }}
+                                >
+                                  <img
+                                    src={getImageUrl(result.diff_mask_1_only_path)}
+                                    alt="圖像1獨有區域mask"
+                                    style={{
+                                      maxWidth: '100%',
+                                      maxHeight: '100%',
+                                      width: 'auto',
+                                      height: 'auto',
+                                      objectFit: 'contain',
+                                      borderRadius: '4px',
+                                    }}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none'
+                                      e.target.parentElement.innerHTML =
+                                        '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                                    }}
+                                  />
+                                </Box>
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
                             未生成
@@ -502,21 +558,35 @@ function MultiSealComparisonResults({ results, image1Id }) {
                           灰度差異圖 (Gray Diff)
                         </Typography>
                         {result.gray_diff_path ? (
-                          <img
-                            src={getImageUrl(result.gray_diff_path)}
-                            alt="灰度差異圖"
-                            style={{
+                          <Box
+                            sx={{
                               width: '100%',
-                              height: '200px',
-                              objectFit: 'contain',
+                              height: '280px', // 為 legend 預留額外空間
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              backgroundColor: '#f5f5f5',
                               borderRadius: '4px',
                             }}
-                            onError={(e) => {
-                              e.target.style.display = 'none'
-                              e.target.parentElement.innerHTML =
-                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
-                            }}
-                          />
+                          >
+                            <img
+                              src={getImageUrl(result.gray_diff_path)}
+                              alt="灰度差異圖"
+                              style={{
+                                maxWidth: '100%',
+                                maxHeight: '100%',
+                                width: 'auto',
+                                height: 'auto',
+                                objectFit: 'contain',
+                                borderRadius: '4px',
+                              }}
+                              onError={(e) => {
+                                e.target.style.display = 'none'
+                                e.target.parentElement.innerHTML =
+                                  '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                              }}
+                            />
+                          </Box>
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
                             未生成
