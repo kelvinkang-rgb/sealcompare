@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
   Container,
   Typography,
@@ -12,14 +13,18 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
+  DialogActions,
+  DialogContentText,
   Snackbar,
   TextField,
   Slider,
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  IconButton,
+  Collapse,
 } from '@mui/material'
-import { ExpandMore as ExpandMoreIcon, Settings as SettingsIcon } from '@mui/icons-material'
+import { ExpandMore as ExpandMoreIcon, Settings as SettingsIcon, Error as ErrorIcon, ContentCopy as ContentCopyIcon, ExpandMore, ExpandLess } from '@mui/icons-material'
 import { useMutation } from '@tanstack/react-query'
 import { imageAPI } from '../services/api'
 import ImagePreview from '../components/ImagePreview'
@@ -43,6 +48,7 @@ function MultiSealTest() {
   const [showSealDialog2, setShowSealDialog2] = useState(false)
   const [multipleSeals, setMultipleSeals] = useState([])
   const [isDetecting2, setIsDetecting2] = useState(false)
+  const image2InputRef = useRef(null) // 引用圖像2的 input 元素
   
   // 操作反饋
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
@@ -56,6 +62,7 @@ function MultiSealTest() {
   
   // 比對印鑑數量上限
   const [maxSeals, setMaxSeals] = useState(6) // 默認 6
+  const [lastDetectionMaxSeals, setLastDetectionMaxSeals] = useState(null) // 記錄上次檢測使用的 maxSeals
   
   // 相似度權重參數
   const [similaritySsimWeight, setSimilaritySsimWeight] = useState(0.5) // 默認 50%
@@ -69,6 +76,12 @@ function MultiSealTest() {
   // 預覽對話框狀態
   const [previewImage1, setPreviewImage1] = useState(false)
   const [previewImage2, setPreviewImage2] = useState(false)
+  
+  // 錯誤詳情狀態
+  const [lastError, setLastError] = useState(null)
+  const [errorStage, setErrorStage] = useState(null) // 'save', 'crop', 'compare'
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false)
+  const [errorDetailsExpanded, setErrorDetailsExpanded] = useState(false)
 
   // 上傳圖像1
   const uploadImage1Mutation = useMutation({
@@ -141,9 +154,11 @@ function MultiSealTest() {
         const detectionResult = await imageAPI.detectMultipleSeals(data.id, maxSeals)
         if (detectionResult.detected && detectionResult.seals && detectionResult.seals.length > 0) {
           setMultipleSeals(detectionResult.seals)
+          setLastDetectionMaxSeals(maxSeals) // 記錄本次檢測使用的 maxSeals
           setShowSealDialog2(true)
         } else {
           setMultipleSeals([])
+          setLastDetectionMaxSeals(maxSeals) // 記錄本次檢測使用的 maxSeals（即使未檢測到）
           setShowSealDialog2(true)
           setSnackbar({
             open: true,
@@ -217,24 +232,145 @@ function MultiSealTest() {
     },
   })
 
-  // 比對圖像1與多個印鑑
+  // 比對任務狀態
+  const [currentTaskUid, setCurrentTaskUid] = useState(null)
+  const [taskStatus, setTaskStatus] = useState(null)
+  
+  // 輪詢任務結果（包括狀態和部分結果）- 合併為單一輪詢
+  const { data: polledTaskResult } = useQuery({
+    queryKey: ['task-result', currentTaskUid],
+    queryFn: () => imageAPI.getTaskResult(currentTaskUid),
+    enabled: !!currentTaskUid && taskStatus?.status !== 'completed' && taskStatus?.status !== 'failed',
+    refetchInterval: (query) => {
+      const data = query.state.data
+      // 如果任務完成或失敗，停止輪詢
+      if (data?.status === 'completed' || data?.status === 'failed') {
+        return false
+      }
+      // 否則每 1.5 秒輪詢一次
+      return 1500
+    },
+    refetchOnWindowFocus: true,
+  })
+  
+  // 當輪詢結果更新時，同時更新狀態和結果顯示
+  useEffect(() => {
+    if (polledTaskResult) {
+      // 更新任務狀態（從結果中提取狀態信息）
+      const statusInfo = {
+        status: polledTaskResult.status,
+        progress: polledTaskResult.progress,
+        progress_message: polledTaskResult.progress_message,
+        total_count: polledTaskResult.total_count,
+        success_count: polledTaskResult.success_count,
+        error: polledTaskResult.error
+      }
+      setTaskStatus(statusInfo)
+      
+      // 處理任務失敗的情況
+      if (polledTaskResult.status === 'failed') {
+        setLastError({
+          message: '比對任務失敗',
+          detail: polledTaskResult.error || '未知錯誤',
+          timestamp: new Date().toISOString(),
+          taskUid: currentTaskUid
+        })
+        setErrorStage('compare')
+        setSnackbar({
+          open: true,
+          message: `比對任務失敗 (UID: ${currentTaskUid?.substring(0, 8)}...)`,
+          severity: 'error'
+        })
+      } else if (polledTaskResult.status === 'completed') {
+        // 任務完成（不顯示 snackbar，因為 Alert 中已經顯示完成訊息）
+        setLastError(null)
+        setErrorStage(null)
+      }
+      
+      // 處理結果顯示（即時顯示部分結果）
+      if (polledTaskResult.results) {
+        // 過濾出已完成疊圖的結果（有 overlay1_path 或 overlay2_path 的結果）
+        // 這樣可以立即顯示已完成疊圖的結果，不需要等待所有比對完成
+        const completedResults = polledTaskResult.results.filter(result => {
+          // 只顯示已經完成疊圖的結果（有 overlay1_path 或 overlay2_path）
+          // 或者有錯誤的結果（也需要顯示錯誤信息）
+          return (result.overlay1_path || result.overlay2_path) || result.error
+        })
+        
+        if (completedResults.length > 0) {
+          // 確保結果按 seal_index 排序
+          const sortedResults = [...completedResults].sort((a, b) => {
+            const indexA = a.seal_index || 0
+            const indexB = b.seal_index || 0
+            return indexA - indexB
+          })
+          setComparisonResults(sortedResults)
+        } else if (polledTaskResult.status === 'completed') {
+          // 如果任務已完成但沒有結果，清空顯示（可能是所有結果都失敗了）
+          setComparisonResults([])
+        }
+      }
+    }
+  }, [polledTaskResult, currentTaskUid])
+  
+  // 比對圖像1與多個印鑑（創建任務）
   const compareMutation = useMutation({
     mutationFn: ({ image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight }) => 
       imageAPI.compareImage1WithSeals(image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight),
-    onSuccess: (data) => {
-      setComparisonResults(data.results)
+    onSuccess: (taskData) => {
+      // 保存任務 UID 並開始輪詢
+      setCurrentTaskUid(taskData.task_uid)
+      setTaskStatus({
+        status: taskData.status,
+        progress: taskData.progress,
+        progress_message: taskData.progress_message
+      })
+      setLastError(null)
+      setErrorStage(null)
       setSnackbar({
         open: true,
-        message: `比對完成：${data.success_count}/${data.total_count} 個印鑑成功`,
-        severity: 'success'
+        message: `比對任務已創建 (UID: ${taskData.task_uid.substring(0, 8)}...)`,
+        severity: 'info'
       })
     },
     onError: (error) => {
+      // 構建詳細的錯誤信息
+      const errorDetails = {
+        message: error?.message || '未知錯誤',
+        status: error?.response?.status,
+        statusText: error?.response?.statusText,
+        detail: error?.response?.data?.detail,
+        data: error?.response?.data,
+        config: {
+          url: error?.config?.url,
+          method: error?.config?.method,
+          params: error?.config?.params,
+          data: error?.config?.data
+        },
+        timestamp: new Date().toISOString(),
+        sealCount: error?.config?.data?.seal_image_ids?.length || croppedImageIds.length,
+        image1Id: error?.config?.data?.image1Id || uploadImage1Mutation.data?.id
+      }
+      
+      // 記錄完整錯誤信息到 console
+      console.error('比對失敗 - 完整錯誤信息:', errorDetails)
+      console.error('比對失敗 - 錯誤對象:', error)
+      console.error('比對失敗 - 錯誤堆疊:', error?.stack)
+      
+      // 保存錯誤詳情供顯示
+      setLastError(errorDetails)
+      setErrorStage('compare')
+      
+      // 顯示詳細錯誤訊息
+      const errorMessage = errorDetails.detail || errorDetails.message || '比對失敗'
       setSnackbar({
         open: true,
-        message: error?.response?.data?.detail || '比對失敗',
+        message: `比對失敗: ${errorMessage}`,
         severity: 'error'
       })
+      
+      // 清除比對結果（因為比對失敗）
+      setComparisonResults(null)
     },
   })
 
@@ -251,6 +387,10 @@ function MultiSealTest() {
     const file = e.target.files[0]
     if (file) {
       uploadImage2Mutation.mutate(file)
+      // 重置 input value，允許重新選擇相同文件
+      if (image2InputRef.current) {
+        image2InputRef.current.value = ''
+      }
     }
   }
 
@@ -330,7 +470,12 @@ function MultiSealTest() {
     setMultipleSeals([])
     setCroppedImageIds([])
     setComparisonResults(null)
+    setLastDetectionMaxSeals(null) // 重置追蹤狀態
     uploadImage2Mutation.reset()
+    // 重置 input value，允許重新選擇文件
+    if (image2InputRef.current) {
+      image2InputRef.current.value = ''
+    }
   }
 
   // 處理編輯圖像1印鑑
@@ -341,8 +486,48 @@ function MultiSealTest() {
   }
 
   // 處理編輯圖像2多印鑑
-  const handleEditImage2Seals = () => {
+  const handleEditImage2Seals = async () => {
     if (uploadImage2Mutation.data?.id) {
+      // 如果 maxSeals 改變了，重新觸發檢測
+      if (lastDetectionMaxSeals !== null && lastDetectionMaxSeals !== maxSeals) {
+        setIsDetecting2(true)
+        try {
+          const detectionResult = await imageAPI.detectMultipleSeals(
+            uploadImage2Mutation.data.id, 
+            maxSeals
+          )
+          if (detectionResult.detected && detectionResult.seals && detectionResult.seals.length > 0) {
+            setMultipleSeals(detectionResult.seals)
+            // 更新 image2 對象的 multiple_seals 屬性，確保 MultiSealPreview 能正確顯示
+            setImage2(prev => prev ? { ...prev, multiple_seals: detectionResult.seals } : null)
+            setLastDetectionMaxSeals(maxSeals)
+            setSnackbar({
+              open: true,
+              message: `已使用新的上限值（${maxSeals}）重新檢測到 ${detectionResult.seals.length} 個印鑑`,
+              severity: 'success'
+            })
+          } else {
+            setMultipleSeals([])
+            // 更新 image2 對象的 multiple_seals 屬性為空數組
+            setImage2(prev => prev ? { ...prev, multiple_seals: [] } : null)
+            setLastDetectionMaxSeals(maxSeals)
+            setSnackbar({
+              open: true,
+              message: `已使用新的上限值（${maxSeals}）重新檢測，未檢測到印鑑`,
+              severity: 'warning'
+            })
+          }
+        } catch (error) {
+          console.error('重新檢測失敗:', error)
+          setSnackbar({
+            open: true,
+            message: '重新檢測失敗，請手動編輯',
+            severity: 'error'
+          })
+        } finally {
+          setIsDetecting2(false)
+        }
+      }
       setShowSealDialog2(true)
     }
   }
@@ -427,25 +612,47 @@ function MultiSealTest() {
       return
     }
 
-    // 清除舊的比對結果
+    // 清除舊的比對結果和錯誤
     setComparisonResults(null)
+    setLastError(null)
+    setErrorStage(null)
+    setCurrentTaskUid(null)
+    setTaskStatus(null)
 
     try {
       // 2. 保存多印鑑位置（確保使用最新數據）
+      setErrorStage('save')
+      console.log('開始保存多印鑑位置...', { imageId: uploadImage2Mutation.data.id, sealCount: multipleSeals.length })
       await saveMultipleSealsMutation.mutateAsync({
         imageId: uploadImage2Mutation.data.id,
         seals: multipleSeals
       })
+      console.log('保存多印鑑位置成功')
 
       // 3. 裁切印鑑（使用保存後的最新數據）
+      setErrorStage('crop')
+      console.log('開始裁切印鑑...', { imageId: uploadImage2Mutation.data.id, sealCount: multipleSeals.length })
       const cropResult = await cropSealsMutation.mutateAsync({
         imageId: uploadImage2Mutation.data.id,
         seals: image2?.multiple_seals || multipleSeals,
         margin: 10
       })
+      console.log('裁切印鑑成功', { croppedCount: cropResult.cropped_image_ids?.length })
 
       // 4. 開始比對（使用最新的裁切圖像ID）
       if (cropResult.cropped_image_ids && cropResult.cropped_image_ids.length > 0) {
+        setErrorStage('compare')
+        console.log('開始比對...', { 
+          image1Id: uploadImage1Mutation.data.id, 
+          sealCount: cropResult.cropped_image_ids.length,
+          threshold,
+          weights: {
+            ssim: similaritySsimWeight,
+            template: similarityTemplateWeight,
+            pixel: pixelSimilarityWeight,
+            histogram: histogramSimilarityWeight
+          }
+        })
         await compareMutation.mutateAsync({
           image1Id: uploadImage1Mutation.data.id,
           sealImageIds: cropResult.cropped_image_ids,
@@ -455,7 +662,18 @@ function MultiSealTest() {
           pixelSimilarityWeight: pixelSimilarityWeight,
           histogramSimilarityWeight: histogramSimilarityWeight
         })
+        console.log('比對完成')
+        setErrorStage(null) // 清除錯誤階段（成功）
       } else {
+        const errorDetails = {
+          message: '裁切失敗，無法進行比對',
+          detail: '裁切操作未返回有效的圖像ID列表',
+          timestamp: new Date().toISOString(),
+          stage: 'crop'
+        }
+        setLastError(errorDetails)
+        setErrorStage('crop')
+        console.error('裁切失敗:', errorDetails)
         setSnackbar({
           open: true,
           message: '裁切失敗，無法進行比對',
@@ -463,10 +681,44 @@ function MultiSealTest() {
         })
       }
     } catch (error) {
-      console.error('比對流程失敗:', error)
+      // 構建詳細的錯誤信息
+      const errorDetails = {
+        message: error?.message || '未知錯誤',
+        status: error?.response?.status,
+        statusText: error?.response?.statusText,
+        detail: error?.response?.data?.detail,
+        data: error?.response?.data,
+        config: {
+          url: error?.config?.url,
+          method: error?.config?.method,
+          params: error?.config?.params,
+          data: error?.config?.data
+        },
+        timestamp: new Date().toISOString(),
+        stage: errorStage || 'unknown'
+      }
+      
+      // 記錄完整錯誤信息到 console
+      console.error(`比對流程失敗 (階段: ${errorStage || 'unknown'}):`, errorDetails)
+      console.error('比對流程失敗 - 錯誤對象:', error)
+      console.error('比對流程失敗 - 錯誤堆疊:', error?.stack)
+      
+      // 保存錯誤詳情
+      setLastError(errorDetails)
+      
+      // 根據階段顯示不同的錯誤訊息
+      const stageMessages = {
+        save: '保存印鑑位置失敗',
+        crop: '裁切印鑑失敗',
+        compare: '比對失敗',
+        unknown: '比對流程失敗'
+      }
+      const stageMessage = stageMessages[errorStage] || stageMessages.unknown
+      const errorMessage = errorDetails.detail || errorDetails.message || stageMessage
+      
       setSnackbar({
         open: true,
-        message: error?.response?.data?.detail || '比對流程失敗',
+        message: `${stageMessage}: ${errorMessage}`,
         severity: 'error'
       })
     }
@@ -858,6 +1110,7 @@ function MultiSealTest() {
             
             <Box sx={{ mb: 2 }}>
               <input
+                ref={image2InputRef}
                 accept="image/*"
                 style={{ display: 'none' }}
                 id="image2-upload"
@@ -934,7 +1187,8 @@ function MultiSealTest() {
                       !image1?.seal_bbox ||
                       saveMultipleSealsMutation.isPending ||
                       cropSealsMutation.isPending ||
-                      compareMutation.isPending
+                      compareMutation.isPending ||
+                      taskStatus?.status === 'processing'
                     }
                     fullWidth
                     startIcon={
@@ -956,14 +1210,107 @@ function MultiSealTest() {
                   <Alert severity="info" sx={{ mt: 1 }}>
                     {saveMultipleSealsMutation.isPending && '正在保存印鑑位置...'}
                     {cropSealsMutation.isPending && '正在裁切印鑑圖像...'}
-                    {compareMutation.isPending && `正在比對圖像1與 ${croppedImageIds.length || multipleSeals.length} 個印鑑...`}
+                    {compareMutation.isPending && '正在創建比對任務...'}
+                  </Alert>
+                )}
+
+                {/* 任務處理狀態 */}
+                {currentTaskUid && taskStatus && (
+                  <Alert 
+                    severity={
+                      taskStatus.status === 'completed' ? 'success' :
+                      taskStatus.status === 'failed' ? 'error' :
+                      taskStatus.status === 'processing' ? 'info' : 'warning'
+                    } 
+                    sx={{ mt: 1 }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {taskStatus.status === 'processing' && <CircularProgress size={16} />}
+                      <Box>
+                        <Typography variant="body2">
+                          {taskStatus.status === 'pending' && '任務等待處理...'}
+                          {taskStatus.status === 'processing' && `正在處理比對任務...`}
+                          {taskStatus.status === 'completed' && `比對完成：${taskStatus.success_count}/${taskStatus.total_count} 個印鑑成功`}
+                          {taskStatus.status === 'failed' && `比對失敗：${taskStatus.error || '未知錯誤'}`}
+                        </Typography>
+                        {taskStatus.progress_message && (
+                          <Typography variant="caption" display="block">
+                            {taskStatus.progress_message}
+                          </Typography>
+                        )}
+                        {taskStatus.progress !== null && taskStatus.progress !== undefined && taskStatus.status !== 'completed' && (
+                          <Typography variant="caption" display="block">
+                            進度: {Math.round(taskStatus.progress)}%
+                          </Typography>
+                        )}
+                        <Typography variant="caption" display="block" sx={{ mt: 0.5, fontFamily: 'monospace' }}>
+                          任務 UID: {currentTaskUid}
+                        </Typography>
+                      </Box>
+                    </Box>
                   </Alert>
                 )}
 
                 {/* 顯示裁切結果（僅在比對完成後顯示） */}
-                {croppedImageIds.length > 0 && !compareMutation.isPending && (
+                {croppedImageIds.length > 0 && !compareMutation.isPending && taskStatus?.status !== 'processing' && (
                   <Alert severity="success" sx={{ mt: 2 }}>
                     已成功裁切 {croppedImageIds.length} 個印鑑圖像
+                  </Alert>
+                )}
+
+                {/* 顯示錯誤詳情（當比對失敗時） */}
+                {lastError && !compareMutation.isPending && taskStatus?.status !== 'processing' && (
+                  <Alert 
+                    severity="error" 
+                    sx={{ mt: 2 }}
+                    action={
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        {errorStage === 'compare' && croppedImageIds.length > 0 && (
+                          <Button
+                            color="inherit"
+                            size="small"
+                            onClick={() => {
+                              // 重試比對（不需要重新裁切）
+                              setLastError(null)
+                              setErrorStage(null)
+                              setCurrentTaskUid(null)
+                              setTaskStatus(null)
+                              compareMutation.mutate({
+                                image1Id: uploadImage1Mutation.data.id,
+                                sealImageIds: croppedImageIds,
+                                threshold: threshold,
+                                similaritySsimWeight: similaritySsimWeight,
+                                similarityTemplateWeight: similarityTemplateWeight,
+                                pixelSimilarityWeight: pixelSimilarityWeight,
+                                histogramSimilarityWeight: histogramSimilarityWeight
+                              })
+                            }}
+                            disabled={compareMutation.isPending}
+                          >
+                            重試比對
+                          </Button>
+                        )}
+                        <Button
+                          color="inherit"
+                          size="small"
+                          onClick={() => setErrorDialogOpen(true)}
+                          startIcon={<ErrorIcon />}
+                        >
+                          查看詳情
+                        </Button>
+                      </Box>
+                    }
+                  >
+                    {errorStage === 'save' && '保存印鑑位置失敗'}
+                    {errorStage === 'crop' && '裁切印鑑失敗'}
+                    {errorStage === 'compare' && '比對失敗'}
+                    {!errorStage && '操作失敗'}
+                    {lastError.detail && `: ${lastError.detail}`}
+                    {lastError.taskUid && (
+                      <Typography variant="caption" display="block" sx={{ mt: 0.5, fontFamily: 'monospace' }}>
+                        任務 UID: {lastError.taskUid}
+                      </Typography>
+                    )}
                   </Alert>
                 )}
               </Box>
@@ -1068,6 +1415,156 @@ function MultiSealTest() {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      {/* 錯誤詳情對話框 */}
+      <Dialog
+        open={errorDialogOpen}
+        onClose={() => setErrorDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <ErrorIcon color="error" />
+            <Typography variant="h6">錯誤詳情</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          {lastError && (
+            <>
+              <DialogContentText sx={{ mb: 2 }}>
+                {errorStage === 'save' && '保存印鑑位置時發生錯誤'}
+                {errorStage === 'crop' && '裁切印鑑時發生錯誤'}
+                {errorStage === 'compare' && '比對過程中發生錯誤'}
+                {!errorStage && '操作過程中發生錯誤'}
+              </DialogContentText>
+
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  錯誤訊息
+                </Typography>
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {lastError.detail || lastError.message || '未知錯誤'}
+                </Alert>
+
+                {lastError.status && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      HTTP 狀態
+                    </Typography>
+                    <Typography variant="body2">
+                      {lastError.status} {lastError.statusText || ''}
+                    </Typography>
+                  </Box>
+                )}
+
+                {lastError.timestamp && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      發生時間
+                    </Typography>
+                    <Typography variant="body2">
+                      {new Date(lastError.timestamp).toLocaleString('zh-TW')}
+                    </Typography>
+                  </Box>
+                )}
+
+                {lastError.sealCount && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      操作參數
+                    </Typography>
+                    <Typography variant="body2">
+                      印鑑數量: {lastError.sealCount}
+                      {lastError.image1Id && ` | 圖像1 ID: ${lastError.image1Id}`}
+                    </Typography>
+                  </Box>
+                )}
+
+                <Button
+                  startIcon={errorDetailsExpanded ? <ExpandLess /> : <ExpandMore />}
+                  onClick={() => setErrorDetailsExpanded(!errorDetailsExpanded)}
+                  size="small"
+                  sx={{ mb: 1 }}
+                >
+                  {errorDetailsExpanded ? '隱藏' : '顯示'}完整錯誤信息
+                </Button>
+
+                <Collapse in={errorDetailsExpanded}>
+                  <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      完整錯誤對象
+                    </Typography>
+                    <Box
+                      component="pre"
+                      sx={{
+                        display: 'block',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        fontSize: '0.75rem',
+                        maxHeight: '400px',
+                        overflow: 'auto',
+                        p: 1,
+                        bgcolor: 'background.paper',
+                        borderRadius: 1,
+                        fontFamily: 'monospace',
+                        border: '1px solid',
+                        borderColor: 'divider'
+                      }}
+                    >
+                      {JSON.stringify(lastError, null, 2)}
+                    </Box>
+                    <Button
+                      startIcon={<ContentCopyIcon />}
+                      onClick={() => {
+                        navigator.clipboard.writeText(JSON.stringify(lastError, null, 2))
+                        setSnackbar({
+                          open: true,
+                          message: '錯誤信息已複製到剪貼板',
+                          severity: 'success'
+                        })
+                      }}
+                      size="small"
+                      sx={{ mt: 1 }}
+                    >
+                      複製錯誤信息
+                    </Button>
+                  </Box>
+                </Collapse>
+
+                <Box sx={{ mt: 3, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    如何查看後端日誌
+                  </Typography>
+                  <Typography variant="body2" component="div" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                    <Box component="div" sx={{ mb: 1 }}>
+                      # 查看最近的日誌
+                    </Box>
+                    <Box component="div" sx={{ mb: 1 }}>
+                      docker-compose logs --tail=100 backend
+                    </Box>
+                    <Box component="div" sx={{ mb: 1 }}>
+                      # 實時查看日誌
+                    </Box>
+                    <Box component="div" sx={{ mb: 1 }}>
+                      docker-compose logs -f backend
+                    </Box>
+                    <Box component="div" sx={{ mb: 1 }}>
+                      # 查看錯誤日誌
+                    </Box>
+                    <Box component="div">
+                      docker-compose logs --tail=100 backend | grep -i error
+                    </Box>
+                  </Typography>
+                </Box>
+              </Box>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setErrorDialogOpen(false)}>關閉</Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   )
 }

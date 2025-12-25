@@ -241,11 +241,16 @@ def create_overlay_image(
         cv2.imwrite(str(overlay1_file), overlay1_rgba, [cv2.IMWRITE_PNG_COMPRESSION, 1])
         cv2.imwrite(str(overlay2_file), overlay2_rgba, [cv2.IMWRITE_PNG_COMPRESSION, 1])
         
+        # 驗證文件是否成功保存
+        if not overlay1_file.exists() or not overlay2_file.exists():
+            print(f"警告：疊圖文件保存失敗 {record_id}: overlay1={overlay1_file.exists()}, overlay2={overlay2_file.exists()}")
+            return None, None
+        
         # 返回絕對路徑（用於資料庫存儲）
         return str(overlay1_file), str(overlay2_file)
         
     except Exception as e:
-        print(f"警告：無法生成疊圖 {record_id}: {e}")
+        print(f"錯誤：無法生成疊圖 {record_id}: {e}")
         import traceback
         traceback.print_exc()
         return None, None

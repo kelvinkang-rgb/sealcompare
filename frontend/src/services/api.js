@@ -79,13 +79,9 @@ export const imageAPI = {
     return response.data
   },
   
-  // 多印鑑比對相關 API（測試功能）
-  // timeout: 超時時間（毫秒），根據印鑑數量動態計算
-  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.95, similaritySsimWeight = 0.5, similarityTemplateWeight = 0.35, pixelSimilarityWeight = 0.1, histogramSimilarityWeight = 0.05, timeout = null) => {
-    // 如果沒有指定超時時間，根據印鑑數量動態計算
-    // 基礎超時時間：30秒，每個印鑑增加15秒
-    const calculatedTimeout = timeout || (30000 + (sealImageIds?.length || 0) * 15000)
-    
+  // 多印鑑比對相關 API（測試功能）- 異步任務模式
+  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.95, similaritySsimWeight = 0.5, similarityTemplateWeight = 0.35, pixelSimilarityWeight = 0.1, histogramSimilarityWeight = 0.05) => {
+    // 創建比對任務（異步模式）
     const response = await api.post(`/images/${image1Id}/compare-with-seals`, {
       seal_image_ids: sealImageIds,
       threshold: threshold,
@@ -93,9 +89,19 @@ export const imageAPI = {
       similarity_template_weight: similarityTemplateWeight,
       pixel_similarity_weight: pixelSimilarityWeight,
       histogram_similarity_weight: histogramSimilarityWeight
-    }, {
-      timeout: calculatedTimeout
     })
+    return response.data // 返回任務信息，包含 task_uid
+  },
+  
+  // 查詢任務狀態
+  getTaskStatus: async (taskUid) => {
+    const response = await api.get(`/images/tasks/${taskUid}/status`)
+    return response.data
+  },
+  
+  // 獲取任務完整結果
+  getTaskResult: async (taskUid) => {
+    const response = await api.get(`/images/tasks/${taskUid}`)
     return response.data
   },
 }

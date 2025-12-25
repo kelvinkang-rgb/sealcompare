@@ -108,6 +108,7 @@ class SealComparisonResult(BaseModel):
     input_image1_path: Optional[str] = Field(None, description="疊圖前的圖像1路徑（去背景後的裁切圖像）")
     input_image2_path: Optional[str] = Field(None, description="疊圖前的圖像2路徑（對齊後的印鑑圖像）")
     error: Optional[str] = Field(None, description="錯誤訊息（如果比對失敗）")
+    overlay_error: Optional[str] = Field(None, description="疊圖生成錯誤訊息（如果疊圖生成失敗）")
 
 
 class MultiSealComparisonResponse(BaseModel):
@@ -116,6 +117,53 @@ class MultiSealComparisonResponse(BaseModel):
     results: list[SealComparisonResult] = Field(..., description="比對結果列表")
     total_count: int = Field(..., description="總比對數量")
     success_count: int = Field(..., description="成功比對數量")
+
+
+class MultiSealComparisonTaskCreate(BaseModel):
+    """創建多印鑑比對任務請求"""
+    task_uid: str = Field(..., description="任務 UID（用於追蹤）")
+    image1_id: UUID = Field(..., description="圖像1 ID")
+    seal_image_ids: list[UUID] = Field(..., description="裁切後的印鑑圖像 ID 列表")
+    threshold: Optional[float] = Field(0.95, ge=0.0, le=1.0, description="相似度閾值")
+    similarity_ssim_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="SSIM 權重")
+    similarity_template_weight: Optional[float] = Field(0.35, ge=0.0, le=1.0, description="Template Match 權重")
+    pixel_similarity_weight: Optional[float] = Field(0.1, ge=0.0, le=1.0, description="Pixel Similarity 權重")
+    histogram_similarity_weight: Optional[float] = Field(0.05, ge=0.0, le=1.0, description="Histogram Similarity 權重")
+
+
+class MultiSealComparisonTaskResponse(BaseModel):
+    """多印鑑比對任務響應"""
+    id: UUID
+    task_uid: str
+    image1_id: UUID
+    status: str
+    progress: Optional[float] = None
+    progress_message: Optional[str] = None
+    results: Optional[list[SealComparisonResult]] = None
+    total_count: Optional[int] = None
+    success_count: Optional[int] = None
+    error: Optional[str] = None
+    error_trace: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class MultiSealComparisonTaskStatusResponse(BaseModel):
+    """多印鑑比對任務狀態響應"""
+    task_uid: str
+    status: str
+    progress: Optional[float] = None
+    progress_message: Optional[str] = None
+    total_count: Optional[int] = None
+    success_count: Optional[int] = None
+    error: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 class RotatedSealMatch(BaseModel):

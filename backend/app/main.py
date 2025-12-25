@@ -89,6 +89,38 @@ def add_missing_columns():
         except Exception as e:
             print(f"添加 multiple_seals 欄位時出錯（可能已存在）: {e}")
             conn.rollback()
+        
+        # 創建多印鑑比對任務表
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS multi_seal_comparison_tasks (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    task_uid VARCHAR(36) UNIQUE NOT NULL,
+                    image1_id UUID NOT NULL REFERENCES images(id),
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    progress REAL,
+                    progress_message VARCHAR(500),
+                    seal_image_ids JSONB NOT NULL,
+                    threshold REAL NOT NULL DEFAULT 0.95,
+                    similarity_ssim_weight REAL NOT NULL DEFAULT 0.5,
+                    similarity_template_weight REAL NOT NULL DEFAULT 0.35,
+                    pixel_similarity_weight REAL NOT NULL DEFAULT 0.1,
+                    histogram_similarity_weight REAL NOT NULL DEFAULT 0.05,
+                    results JSONB,
+                    total_count INTEGER,
+                    success_count INTEGER,
+                    error VARCHAR(1000),
+                    error_trace TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    started_at TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_task_uid ON multi_seal_comparison_tasks(task_uid)"))
+            conn.commit()
+        except Exception as e:
+            print(f"創建 multi_seal_comparison_tasks 表時出錯（可能已存在）: {e}")
+            conn.rollback()
 
 # 執行遷移
 try:

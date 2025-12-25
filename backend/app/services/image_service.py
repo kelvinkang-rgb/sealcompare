@@ -4,12 +4,14 @@
 
 from pathlib import Path
 from sqlalchemy.orm import Session
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Callable
 from uuid import UUID
 import cv2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
+import logging
+import traceback
 
 from app.models import Image
 from app.schemas import ImageCreate, ImageResponse
@@ -26,6 +28,9 @@ from fastapi import UploadFile, HTTPException
 from app.config import settings
 from typing import Dict, Optional, List, Tuple
 import numpy as np
+
+# 配置日誌記錄器
+logger = logging.getLogger(__name__)
 
 
 class ImageService:
@@ -412,7 +417,9 @@ class ImageService:
         similarity_ssim_weight: float = 0.5,
         similarity_template_weight: float = 0.35,
         pixel_similarity_weight: float = 0.1,
-        histogram_similarity_weight: float = 0.05
+        histogram_similarity_weight: float = 0.05,
+        task_uid: Optional[str] = None,
+        task_update_callback: Optional[Callable[[Dict, int, int], None]] = None
     ) -> List[Dict]:
         """
         將圖像1與多個裁切的印鑑圖像進行比對
@@ -441,150 +448,443 @@ class ImageService:
             - error: 錯誤訊息（如果失敗）
         """
         service_start_time = time.time()
-        print(f"[服務層] 開始執行多印鑑比對服務，印鑑數量: {len(seal_image_ids)}")
+        logger.info(f"[服務層] 開始執行多印鑑比對服務")
+        logger.info(f"[服務層] 圖像1 ID: {image1_id}")
+        logger.info(f"[服務層] 印鑑數量: {len(seal_image_ids)}")
+        logger.info(f"[服務層] 相似度閾值: {threshold}")
+        logger.info(f"[服務層] 相似度權重 - SSIM: {similarity_ssim_weight}, Template: {similarity_template_weight}, Pixel: {pixel_similarity_weight}, Histogram: {histogram_similarity_weight}")
         
-        # 獲取圖像1
-        image1 = self.get_image(image1_id)
-        if not image1:
-            raise HTTPException(status_code=404, detail="圖像1不存在")
-        
-        image1_path = Path(image1.file_path)
-        if not image1_path.exists():
-            raise HTTPException(status_code=404, detail="圖像1文件不存在")
-        
-        # 檢查圖像1是否有標記印鑑位置
-        if not image1.seal_bbox:
-            raise HTTPException(status_code=400, detail="圖像1未標記印鑑位置，無法裁切")
-        
-        # 讀取原始圖像1
-        image1_original = cv2.imread(str(image1_path))
-        if image1_original is None:
-            raise HTTPException(status_code=500, detail="無法讀取圖像1文件")
-        
-        # 獲取 bbox
-        bbox1 = image1.seal_bbox
-        
-        # 計算裁切區域（不添加邊距）
-        h, w = image1_original.shape[:2]
-        x = max(0, bbox1['x'])
-        y = max(0, bbox1['y'])
-        crop_width = min(w - x, bbox1['width'])
-        crop_height = min(h - y, bbox1['height'])
-        
-        # 確保不超出邊界
-        if x + crop_width > w:
-            crop_width = w - x
-        if y + crop_height > h:
-            crop_height = h - y
-        
-        if crop_width < 10 or crop_height < 10:
-            raise HTTPException(status_code=400, detail="裁切區域太小")
-        
-        # 裁切圖像
-        image1_cropped = image1_original[y:y+crop_height, x:x+crop_width]
-        
-        # 保存裁切後的圖像
-        original_name = Path(image1.filename).stem
-        extension = Path(image1.filename).suffix or '.jpg'
-        cropped_filename = f"{original_name}_cropped{extension}"
-        cropped_file_path = self.upload_dir / cropped_filename
-        
-        # 確保文件名唯一
-        counter = 1
-        while cropped_file_path.exists():
-            cropped_filename = f"{original_name}_cropped_{counter}{extension}"
+        try:
+            # 獲取圖像1
+            logger.info(f"[服務層] 獲取圖像1: {image1_id}")
+            image1 = self.get_image(image1_id)
+            if not image1:
+                logger.error(f"[服務層] 圖像1不存在: {image1_id}")
+                raise HTTPException(status_code=404, detail="圖像1不存在")
+            
+            image1_path = Path(image1.file_path)
+            if not image1_path.exists():
+                logger.error(f"[服務層] 圖像1文件不存在: {image1_path}")
+                raise HTTPException(status_code=404, detail="圖像1文件不存在")
+            
+            logger.info(f"[服務層] 圖像1文件路徑: {image1_path}")
+            
+            # 檢查圖像1是否有標記印鑑位置
+            if not image1.seal_bbox:
+                logger.error(f"[服務層] 圖像1未標記印鑑位置: {image1_id}")
+                raise HTTPException(status_code=400, detail="圖像1未標記印鑑位置，無法裁切")
+            
+            logger.info(f"[服務層] 圖像1印鑑位置: {image1.seal_bbox}")
+            
+            # 讀取原始圖像1
+            image1_original = cv2.imread(str(image1_path))
+            if image1_original is None:
+                raise HTTPException(status_code=500, detail="無法讀取圖像1文件")
+            
+            # 獲取 bbox
+            bbox1 = image1.seal_bbox
+            
+            # 計算裁切區域（不添加邊距）
+            h, w = image1_original.shape[:2]
+            x = max(0, bbox1['x'])
+            y = max(0, bbox1['y'])
+            crop_width = min(w - x, bbox1['width'])
+            crop_height = min(h - y, bbox1['height'])
+            
+            # 確保不超出邊界
+            if x + crop_width > w:
+                crop_width = w - x
+            if y + crop_height > h:
+                crop_height = h - y
+            
+            if crop_width < 10 or crop_height < 10:
+                raise HTTPException(status_code=400, detail="裁切區域太小")
+            
+            # 裁切圖像
+            image1_cropped = image1_original[y:y+crop_height, x:x+crop_width]
+            
+            # 保存裁切後的圖像
+            original_name = Path(image1.filename).stem
+            extension = Path(image1.filename).suffix or '.jpg'
+            cropped_filename = f"{original_name}_cropped{extension}"
             cropped_file_path = self.upload_dir / cropped_filename
-            counter += 1
-        
-        cv2.imwrite(str(cropped_file_path), image1_cropped)
-        
-        # 創建新的圖像記錄
-        image1_cropped_db = Image(
-            filename=cropped_filename,
-            file_path=str(cropped_file_path),
-            file_size=get_file_size(cropped_file_path),
-            mime_type=image1.mime_type
-        )
-        self.db.add(image1_cropped_db)
-        self.db.commit()
-        self.db.refresh(image1_cropped_db)
-        
-        # 使用裁切後的圖像路徑
-        image1_cropped_path = cropped_file_path
-        
-        # 創建比對結果目錄
-        comparison_dir = Path(settings.LOGS_DIR) / "multi_seal_comparisons"
-        comparison_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 預載入所有印鑑圖像資訊（線程安全：在主線程中完成資料庫查詢）
-        seal_images_data = {}
-        for seal_image_id in seal_image_ids:
-            seal_image = self.get_image(seal_image_id)
-            if seal_image:
-                seal_image_path = Path(seal_image.file_path)
-                if seal_image_path.exists():
-                    seal_images_data[seal_image_id] = {
-                        'file_path': seal_image_path,
-                        'image': seal_image
-                    }
-        
-        # 準備線程池
-        max_workers = min(len(seal_image_ids), settings.MAX_COMPARISON_THREADS)
-        results = []
-        results_lock = threading.Lock()
-        
-        print(f"[服務層] 準備使用 {max_workers} 個線程進行並行比對")
-        comparison_start_time = time.time()
-        
-        def process_seal(seal_data):
-            """處理單個印鑑的比對（線程函數）"""
-            idx, seal_image_id = seal_data
-            seal_start_time = time.time()
-            result = self._compare_single_seal(
-                image1_cropped_path=image1_cropped_path,
-                seal_image_id=seal_image_id,
-                seal_index=idx + 1,
-                image1_id=image1_id,
-                comparison_dir=comparison_dir,
-                threshold=threshold,
-                similarity_ssim_weight=similarity_ssim_weight,
-                similarity_template_weight=similarity_template_weight,
-                pixel_similarity_weight=pixel_similarity_weight,
-                histogram_similarity_weight=histogram_similarity_weight,
-                seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
+            
+            # 確保文件名唯一
+            counter = 1
+            while cropped_file_path.exists():
+                cropped_filename = f"{original_name}_cropped_{counter}{extension}"
+                cropped_file_path = self.upload_dir / cropped_filename
+                counter += 1
+            
+            cv2.imwrite(str(cropped_file_path), image1_cropped)
+            
+            # 創建新的圖像記錄
+            image1_cropped_db = Image(
+                filename=cropped_filename,
+                file_path=str(cropped_file_path),
+                file_size=get_file_size(cropped_file_path),
+                mime_type=image1.mime_type
             )
-            seal_elapsed = time.time() - seal_start_time
-            print(f"[服務層] 印鑑 {idx + 1} 比對完成，耗時: {seal_elapsed:.2f} 秒")
-            with results_lock:
-                results.append(result)
+            self.db.add(image1_cropped_db)
+            self.db.commit()
+            self.db.refresh(image1_cropped_db)
+            
+            # 使用裁切後的圖像路徑
+            image1_cropped_path = cropped_file_path
+            
+            # 創建比對結果目錄
+            comparison_dir = Path(settings.LOGS_DIR) / "multi_seal_comparisons"
+            comparison_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 預載入所有印鑑圖像資訊（線程安全：在主線程中完成資料庫查詢）
+            seal_images_data = {}
+            for seal_image_id in seal_image_ids:
+                seal_image = self.get_image(seal_image_id)
+                if seal_image:
+                    seal_image_path = Path(seal_image.file_path)
+                    if seal_image_path.exists():
+                        seal_images_data[seal_image_id] = {
+                            'file_path': seal_image_path,
+                            'image': seal_image
+                        }
         
-        # 使用線程池並行處理
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(process_seal, (idx, seal_id))
-                for idx, seal_id in enumerate(seal_image_ids)
-            ]
-            # 等待所有任務完成
-            for future in as_completed(futures):
+            # 準備線程池
+            max_workers = min(len(seal_image_ids), settings.MAX_COMPARISON_THREADS)
+            results = []
+            results_lock = threading.Lock()
+            
+            logger.info(f"[服務層] 準備使用 {max_workers} 個線程進行並行比對")
+            logger.info(f"[服務層] 預載入的印鑑圖像數量: {len(seal_images_data)}")
+            comparison_start_time = time.time()
+            
+            def process_seal(seal_data):
+                """處理單個印鑑的比對（線程函數）"""
+                idx, seal_image_id = seal_data
+                seal_start_time = time.time()
+                logger.info(f"[服務層] 開始處理印鑑 {idx + 1}/{len(seal_image_ids)} (ID: {seal_image_id})")
+                result = None
                 try:
-                    future.result()  # 觸發異常處理
+                    result = self._compare_single_seal(
+                        image1_cropped_path=image1_cropped_path,
+                        seal_image_id=seal_image_id,
+                        seal_index=idx + 1,
+                        image1_id=image1_id,
+                        comparison_dir=comparison_dir,
+                        threshold=threshold,
+                        similarity_ssim_weight=similarity_ssim_weight,
+                        similarity_template_weight=similarity_template_weight,
+                        pixel_similarity_weight=pixel_similarity_weight,
+                        histogram_similarity_weight=histogram_similarity_weight,
+                        seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
+                    )
+                    seal_elapsed = time.time() - seal_start_time
+                    logger.info(f"[服務層] 印鑑 {idx + 1} 比對完成，耗時: {seal_elapsed:.2f} 秒，相似度: {result.get('similarity', 'N/A')}")
                 except Exception as e:
-                    print(f"線程執行錯誤: {e}")
+                    # 如果 _compare_single_seal 拋出未預期的異常，創建錯誤結果
+                    error_trace = traceback.format_exc()
+                    logger.error(f"[服務層] 印鑑 {idx + 1} 比對時發生未預期錯誤: {e}")
+                    logger.error(f"[服務層] 錯誤堆疊:\n{error_trace}")
+                    result = {
+                        'seal_index': idx + 1,
+                        'seal_image_id': seal_image_id,
+                        'similarity': None,
+                        'is_match': None,
+                        'overlay1_path': None,
+                        'overlay2_path': None,
+                        'heatmap_path': None,
+                        'input_image1_path': None,
+                        'input_image2_path': None,
+                        'alignment_angle': None,
+                        'alignment_offset': None,
+                        'alignment_similarity': None,
+                        'alignment_success': False,
+                        'error': f"比對過程發生未預期錯誤: {str(e)}"
+                    }
+                    seal_elapsed = time.time() - seal_start_time
+                    logger.warning(f"[服務層] 印鑑 {idx + 1} 比對失敗，耗時: {seal_elapsed:.2f} 秒")
+                
+                # 確保結果被添加到列表（無論成功或失敗）
+                with results_lock:
+                    results.append(result)
+                
+                # 如果有回調函數，立即更新任務記錄
+                if task_update_callback and result:
+                    try:
+                        task_update_callback(result, idx + 1, len(seal_image_ids))
+                    except Exception as callback_error:
+                        logger.error(f"[服務層] 更新任務記錄時出錯: {callback_error}")
         
-        comparison_elapsed = time.time() - comparison_start_time
-        service_elapsed = time.time() - service_start_time
+            # 使用線程池並行處理
+            logger.info(f"[服務層] 開始並行比對處理")
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(process_seal, (idx, seal_id))
+                    for idx, seal_id in enumerate(seal_image_ids)
+                ]
+                # 等待所有任務完成
+                # 注意：process_seal 內部已經處理了所有異常並返回結果，這裡不需要額外的異常處理
+                # 但如果 future 本身有問題（比如線程池關閉），仍然需要處理
+                for future in as_completed(futures):
+                    try:
+                        future.result()  # 觸發異常處理（process_seal 內部已處理，這裡主要處理線程池級別的異常）
+                    except Exception as e:
+                        error_trace = traceback.format_exc()
+                        logger.error(f"[服務層] 線程執行錯誤（線程池級別）: {e}")
+                        logger.error(f"[服務層] 錯誤堆疊:\n{error_trace}")
+                        # 注意：如果 future 本身失敗，process_seal 可能沒有執行，結果可能缺失
+                        # 但這種情況很少見，通常是線程池配置問題
         
-        # 按 seal_index 排序結果
-        results.sort(key=lambda x: x.get('seal_index', 0))
+            comparison_elapsed = time.time() - comparison_start_time
+            service_elapsed = time.time() - service_start_time
+            
+            # 按 seal_index 排序結果
+            results.sort(key=lambda x: x.get('seal_index', 0))
+            
+            # 驗證結果數量是否正確
+            expected_count = len(seal_image_ids)
+            actual_count = len(results)
+            if actual_count != expected_count:
+                logger.warning(f"[服務層] 警告：結果數量不匹配！預期 {expected_count} 個，實際 {actual_count} 個")
+                # 檢查缺失的印鑑索引
+                result_indices = {r.get('seal_index') for r in results}
+                expected_indices = set(range(1, expected_count + 1))
+                missing_indices = expected_indices - result_indices
+                if missing_indices:
+                    logger.warning(f"[服務層] 缺失的印鑑索引: {sorted(missing_indices)}")
+                    # 為缺失的印鑑創建錯誤結果
+                    for missing_idx in sorted(missing_indices):
+                        missing_seal_id = seal_image_ids[missing_idx - 1]
+                        error_result = {
+                            'seal_index': missing_idx,
+                            'seal_image_id': missing_seal_id,
+                            'similarity': None,
+                            'is_match': None,
+                            'overlay1_path': None,
+                            'overlay2_path': None,
+                            'heatmap_path': None,
+                            'input_image1_path': None,
+                            'input_image2_path': None,
+                            'alignment_angle': None,
+                            'alignment_offset': None,
+                            'alignment_similarity': None,
+                            'alignment_success': False,
+                            'error': "比對結果缺失（線程執行可能失敗）"
+                        }
+                        results.append(error_result)
+                    # 重新排序
+                    results.sort(key=lambda x: x.get('seal_index', 0))
+            
+            success_count = sum(1 for r in results if r.get('error') is None)
+            failure_count = sum(1 for r in results if r.get('error') is not None)
+            logger.info(f"[服務層] 多印鑑比對完成")
+            logger.info(f"[服務層] 比對階段耗時: {comparison_elapsed:.2f} 秒 ({comparison_elapsed/60:.2f} 分鐘)")
+            logger.info(f"[服務層] 總服務時間: {service_elapsed:.2f} 秒 ({service_elapsed/60:.2f} 分鐘)")
+            logger.info(f"[服務層] 平均每個印鑑比對時間: {comparison_elapsed/len(seal_image_ids):.2f} 秒")
+            if max_workers > 1:
+                logger.info(f"[服務層] 理論加速比: {len(seal_image_ids) * (comparison_elapsed/len(seal_image_ids)) / comparison_elapsed:.2f}x")
+            logger.info(f"[服務層] 比對結果統計: 總數={len(results)}, 成功={success_count}, 失敗={failure_count}")
+            
+            return results
+        except Exception as e:
+            error_trace = traceback.format_exc()
+            logger.error(f"[服務層] 多印鑑比對服務發生未預期錯誤")
+            logger.error(f"[服務層] 錯誤類型: {type(e).__name__}")
+            logger.error(f"[服務層] 錯誤訊息: {str(e)}")
+            logger.error(f"[服務層] 錯誤堆疊:\n{error_trace}")
+            raise
+    
+    def retry_missing_seals(
+        self,
+        image1_id: UUID,
+        missing_seal_image_ids: List[UUID],
+        missing_seal_indices: List[int],
+        threshold: float,
+        similarity_ssim_weight: float,
+        similarity_template_weight: float,
+        pixel_similarity_weight: float,
+        histogram_similarity_weight: float
+    ) -> List[Dict]:
+        """
+        重新比對缺失的印鑑（單線程執行，避免數據庫會話衝突）
         
-        print(f"[服務層] 多印鑑比對完成")
-        print(f"[服務層] 比對階段耗時: {comparison_elapsed:.2f} 秒 ({comparison_elapsed/60:.2f} 分鐘)")
-        print(f"[服務層] 總服務時間: {service_elapsed:.2f} 秒 ({service_elapsed/60:.2f} 分鐘)")
-        print(f"[服務層] 平均每個印鑑比對時間: {comparison_elapsed/len(seal_image_ids):.2f} 秒")
-        if max_workers > 1:
-            print(f"[服務層] 理論加速比: {len(seal_image_ids) * (comparison_elapsed/len(seal_image_ids)) / comparison_elapsed:.2f}x")
+        Args:
+            image1_id: 圖像1 ID
+            missing_seal_image_ids: 缺失的印鑑圖像 ID 列表
+            missing_seal_indices: 缺失的印鑑索引列表（從1開始）
+            threshold: 相似度閾值
+            similarity_ssim_weight: SSIM 權重
+            similarity_template_weight: 模板匹配權重
+            pixel_similarity_weight: 像素相似度權重
+            histogram_similarity_weight: 直方圖相似度權重
+            
+        Returns:
+            比對結果列表
+        """
+        logger.info(f"[服務層] 開始重新比對缺失的印鑑")
+        logger.info(f"[服務層] 缺失印鑑數量: {len(missing_seal_image_ids)}")
+        logger.info(f"[服務層] 缺失印鑑索引: {missing_seal_indices}")
         
-        return results
+        retry_results = []
+        retry_start_time = time.time()
+        
+        try:
+            # 獲取圖像1
+            image1 = self.get_image(image1_id)
+            if not image1:
+                logger.error(f"[服務層] 圖像1不存在: {image1_id}")
+                raise HTTPException(status_code=404, detail="圖像1不存在")
+            
+            image1_path = Path(image1.file_path)
+            if not image1_path.exists():
+                logger.error(f"[服務層] 圖像1文件不存在: {image1_path}")
+                raise HTTPException(status_code=404, detail="圖像1文件不存在")
+            
+            # 檢查圖像1是否有標記印鑑位置
+            if not image1.seal_bbox:
+                logger.error(f"[服務層] 圖像1未標記印鑑位置: {image1_id}")
+                raise HTTPException(status_code=400, detail="圖像1未標記印鑑位置，無法裁切")
+            
+            # 讀取原始圖像1
+            image1_original = cv2.imread(str(image1_path))
+            if image1_original is None:
+                raise HTTPException(status_code=500, detail="無法讀取圖像1文件")
+            
+            # 獲取 bbox
+            bbox1 = image1.seal_bbox
+            
+            # 計算裁切區域
+            h, w = image1_original.shape[:2]
+            x = max(0, bbox1['x'])
+            y = max(0, bbox1['y'])
+            crop_width = min(w - x, bbox1['width'])
+            crop_height = min(h - y, bbox1['height'])
+            
+            if x + crop_width > w:
+                crop_width = w - x
+            if y + crop_height > h:
+                crop_height = h - y
+            
+            if crop_width < 10 or crop_height < 10:
+                raise HTTPException(status_code=400, detail="裁切區域太小")
+            
+            # 裁切圖像
+            image1_cropped = image1_original[y:y+crop_height, x:x+crop_width]
+            
+            # 保存裁切後的圖像（重用現有的裁切圖像，如果存在）
+            original_name = Path(image1.filename).stem
+            extension = Path(image1.filename).suffix or '.jpg'
+            cropped_filename = f"{original_name}_cropped{extension}"
+            cropped_file_path = self.upload_dir / cropped_filename
+            
+            # 確保文件名唯一
+            counter = 1
+            while cropped_file_path.exists():
+                cropped_filename = f"{original_name}_cropped_{counter}{extension}"
+                cropped_file_path = self.upload_dir / cropped_filename
+                counter += 1
+            
+            # 如果文件不存在，創建它
+            if not cropped_file_path.exists():
+                cv2.imwrite(str(cropped_file_path), image1_cropped)
+            
+            image1_cropped_path = cropped_file_path
+            
+            # 創建比對結果目錄
+            comparison_dir = Path(settings.LOGS_DIR) / "multi_seal_comparisons"
+            comparison_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 預載入缺失的印鑑圖像資訊
+            seal_images_data = {}
+            for seal_image_id in missing_seal_image_ids:
+                seal_image = self.get_image(seal_image_id)
+                if seal_image:
+                    seal_image_path = Path(seal_image.file_path)
+                    if seal_image_path.exists():
+                        seal_images_data[seal_image_id] = {
+                            'file_path': seal_image_path,
+                            'image': seal_image
+                        }
+                    else:
+                        logger.warning(f"[服務層] 印鑑圖像文件不存在: {seal_image_path}")
+                else:
+                    logger.warning(f"[服務層] 印鑑圖像不存在: {seal_image_id}")
+            
+            # 單線程順序執行比對（避免數據庫會話衝突）
+            for idx, (seal_image_id, seal_index) in enumerate(zip(missing_seal_image_ids, missing_seal_indices)):
+                logger.info(f"[服務層] 重新比對印鑑 {seal_index} (ID: {seal_image_id}) [{idx + 1}/{len(missing_seal_image_ids)}]")
+                seal_start_time = time.time()
+                
+                try:
+                    result = self._compare_single_seal(
+                        image1_cropped_path=image1_cropped_path,
+                        seal_image_id=seal_image_id,
+                        seal_index=seal_index,
+                        image1_id=image1_id,
+                        comparison_dir=comparison_dir,
+                        threshold=threshold,
+                        similarity_ssim_weight=similarity_ssim_weight,
+                        similarity_template_weight=similarity_template_weight,
+                        pixel_similarity_weight=pixel_similarity_weight,
+                        histogram_similarity_weight=histogram_similarity_weight,
+                        seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
+                    )
+                    seal_elapsed = time.time() - seal_start_time
+                    logger.info(f"[服務層] 印鑑 {seal_index} 重新比對完成，耗時: {seal_elapsed:.2f} 秒，相似度: {result.get('similarity', 'N/A')}")
+                    retry_results.append(result)
+                except Exception as e:
+                    error_trace = traceback.format_exc()
+                    logger.error(f"[服務層] 印鑑 {seal_index} 重新比對時發生錯誤: {e}")
+                    logger.error(f"[服務層] 錯誤堆疊:\n{error_trace}")
+                    result = {
+                        'seal_index': seal_index,
+                        'seal_image_id': seal_image_id,
+                        'similarity': None,
+                        'is_match': None,
+                        'overlay1_path': None,
+                        'overlay2_path': None,
+                        'heatmap_path': None,
+                        'input_image1_path': None,
+                        'input_image2_path': None,
+                        'alignment_angle': None,
+                        'alignment_offset': None,
+                        'alignment_similarity': None,
+                        'alignment_success': False,
+                        'error': f"重新比對失敗: {str(e)}"
+                    }
+                    retry_results.append(result)
+            
+            retry_elapsed = time.time() - retry_start_time
+            success_count = sum(1 for r in retry_results if r.get('error') is None)
+            logger.info(f"[服務層] 重新比對完成，耗時: {retry_elapsed:.2f} 秒")
+            logger.info(f"[服務層] 重新比對結果統計: 總數={len(retry_results)}, 成功={success_count}, 失敗={len(retry_results) - success_count}")
+            
+            return retry_results
+            
+        except Exception as e:
+            error_trace = traceback.format_exc()
+            logger.error(f"[服務層] 重新比對缺失印鑑時發生未預期錯誤")
+            logger.error(f"[服務層] 錯誤類型: {type(e).__name__}")
+            logger.error(f"[服務層] 錯誤訊息: {str(e)}")
+            logger.error(f"[服務層] 錯誤堆疊:\n{error_trace}")
+            # 為所有缺失的印鑑創建錯誤結果
+            for seal_image_id, seal_index in zip(missing_seal_image_ids, missing_seal_indices):
+                retry_results.append({
+                    'seal_index': seal_index,
+                    'seal_image_id': seal_image_id,
+                    'similarity': None,
+                    'is_match': None,
+                    'overlay1_path': None,
+                    'overlay2_path': None,
+                    'heatmap_path': None,
+                    'input_image1_path': None,
+                    'input_image2_path': None,
+                    'alignment_angle': None,
+                    'alignment_offset': None,
+                    'alignment_similarity': None,
+                    'alignment_success': False,
+                    'error': f"重新比對過程發生未預期錯誤: {str(e)}"
+                })
+            return retry_results
     
     def _compare_single_seal(
         self,
@@ -777,27 +1077,42 @@ class ImageService:
                 image1_for_overlay = str(image1_corrected_path) if image1_corrected_path else str(image1_for_comparison)
                 image2_for_overlay = str(image2_corrected_path) if image2_corrected_path else str(image2_for_comparison)
                 
-                # 確保 seal_image_path 不為 None
-                if not seal_image_path:
-                    print(f"警告：印鑑 {seal_index} 的圖像路徑為 None，跳過疊圖生成")
+                # 確保圖像路徑存在
+                if not Path(image1_for_overlay).exists():
+                    print(f"警告：印鑑 {seal_index} 的圖像1路徑不存在: {image1_for_overlay}，跳過疊圖生成")
+                elif not Path(image2_for_overlay).exists():
+                    print(f"警告：印鑑 {seal_index} 的圖像2路徑不存在: {image2_for_overlay}，跳過疊圖生成")
                 else:
+                    # 使用對齊後的圖像生成疊圖
+                    # image1_path: 對齊後的圖像1
+                    # image2_path: 對齊後的圖像2（作為原始圖像2）
+                    # image2_corrected_path: 不需要，因為已經使用對齊後的圖像
                     overlay1_path, overlay2_path = create_overlay_image(
                         image1_for_overlay,
-                        str(seal_image_path),
+                        image2_for_overlay,  # 使用對齊後的圖像2作為原始圖像2
                         comparison_dir,
                         record_id,
-                        image2_corrected_path=image2_for_overlay  # 使用對齊後的圖像2
+                        image2_corrected_path=None  # 不需要，因為已經使用對齊後的圖像
                     )
-                    if overlay1_path:
+                    if overlay1_path and Path(overlay1_path).exists():
                         # 只保存文件名，前端通過 API 獲取
                         result['overlay1_path'] = Path(overlay1_path).name
-                    if overlay2_path:
+                        print(f"印鑑 {seal_index} 疊圖1生成成功: {result['overlay1_path']}")
+                    else:
+                        print(f"警告：印鑑 {seal_index} 疊圖1生成失敗或文件不存在")
+                    
+                    if overlay2_path and Path(overlay2_path).exists():
                         result['overlay2_path'] = Path(overlay2_path).name
+                        print(f"印鑑 {seal_index} 疊圖2生成成功: {result['overlay2_path']}")
+                    else:
+                        print(f"警告：印鑑 {seal_index} 疊圖2生成失敗或文件不存在")
             except Exception as e:
                 print(f"生成疊圖失敗 (印鑑 {seal_index}): {e}")
                 import traceback
                 traceback.print_exc()
-                # 不設置錯誤，繼續處理
+                # 記錄錯誤但不阻止比對完成
+                if 'overlay_error' not in result:
+                    result['overlay_error'] = str(e)
             
             # 9. 生成熱力圖（使用對齊後的圖像）
             try:

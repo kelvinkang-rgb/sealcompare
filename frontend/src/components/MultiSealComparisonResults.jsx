@@ -223,14 +223,23 @@ function MultiSealComparisonResults({ results, image1Id }) {
                               borderRadius: '4px',
                             }}
                             onError={(e) => {
+                              console.error(`疊圖1載入失敗 (印鑑 ${result.seal_index}):`, result.overlay1_path, getImageUrl(result.overlay1_path))
                               e.target.style.display = 'none'
-                              e.target.parentElement.innerHTML =
-                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                              const errorMsg = e.target.parentElement.querySelector('.error-message') || document.createElement('p')
+                              errorMsg.className = 'error-message'
+                              errorMsg.style.cssText = 'color: #f44336; text-align: center; padding: 20px; font-size: 0.75rem;'
+                              errorMsg.textContent = `圖片載入失敗: ${result.overlay1_path}`
+                              if (!e.target.parentElement.querySelector('.error-message')) {
+                                e.target.parentElement.appendChild(errorMsg)
+                              }
+                            }}
+                            onLoad={() => {
+                              console.log(`疊圖1載入成功 (印鑑 ${result.seal_index}):`, result.overlay1_path)
                             }}
                           />
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
-                            未生成
+                            {result.overlay_error ? '生成失敗' : '未生成'}
                           </Box>
                         )}
                       </Paper>
@@ -264,14 +273,23 @@ function MultiSealComparisonResults({ results, image1Id }) {
                               borderRadius: '4px',
                             }}
                             onError={(e) => {
+                              console.error(`疊圖2載入失敗 (印鑑 ${result.seal_index}):`, result.overlay2_path, getImageUrl(result.overlay2_path))
                               e.target.style.display = 'none'
-                              e.target.parentElement.innerHTML =
-                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                              const errorMsg = e.target.parentElement.querySelector('.error-message') || document.createElement('p')
+                              errorMsg.className = 'error-message'
+                              errorMsg.style.cssText = 'color: #f44336; text-align: center; padding: 20px; font-size: 0.75rem;'
+                              errorMsg.textContent = `圖片載入失敗: ${result.overlay2_path}`
+                              if (!e.target.parentElement.querySelector('.error-message')) {
+                                e.target.parentElement.appendChild(errorMsg)
+                              }
+                            }}
+                            onLoad={() => {
+                              console.log(`疊圖2載入成功 (印鑑 ${result.seal_index}):`, result.overlay2_path)
                             }}
                           />
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
-                            未生成
+                            {result.overlay_error ? '生成失敗' : '未生成'}
                           </Box>
                         )}
                       </Paper>

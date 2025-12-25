@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # 文件存儲設置
     UPLOAD_DIR: str = "/app/uploads"
     LOGS_DIR: str = "/app/logs"
-    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
+    MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100MB（允許上傳接近原始文件大小的高解析度圖像）
     
     # CORS 設置
     CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]

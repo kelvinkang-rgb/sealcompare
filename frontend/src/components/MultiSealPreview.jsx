@@ -259,7 +259,7 @@ function MultiSealPreview({ image, seals = [], label, onSealClick, onPreview }) 
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
           {hasSeals && (
             <Chip
-              label={`已檢測 ${seals.length} 個印鑑`}
+              label={`已檢測 ${displaySeals.length} 個印鑑`}
               size="small"
               color="success"
               variant="filled"
