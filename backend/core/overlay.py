@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
+from PIL import Image, ImageDraw, ImageFont
 
 
 def create_overlay_image(
@@ -228,9 +229,29 @@ def create_overlay_image(
         gray_diff = cv2.absdiff(gray1, gray2)  # 灰度差異圖，範圍 0-255
         pixel_diff_mask = (gray_diff > diff_threshold) & overlap_mask  # 重疊區域內的像素差異
         
-        # 將 gray_diff 轉換為熱力圖視覺化（使用 COLORMAP_HOT：黑色→紅色→黃色→白色）
+        # 計算 normalize 範圍（基於 mask1 和 mask2 各自區域內的 gray_diff 最大值和最小值）
+        mask1_max = np.max(gray_diff[mask1 > 0]) if np.any(mask1 > 0) else 255
+        mask1_min = np.min(gray_diff[mask1 > 0]) if np.any(mask1 > 0) else 0
+        mask2_max = np.max(gray_diff[mask2 > 0]) if np.any(mask2 > 0) else 255
+        mask2_min = np.min(gray_diff[mask2 > 0]) if np.any(mask2 > 0) else 0
+        
+        normalize_max = max(mask1_max, mask2_max)
+        normalize_min = min(mask1_min, mask2_min)
+        
+        # 保存原始的最大值和最小值用於 legend
+        gray_diff_abs_min = int(normalize_min)
+        gray_diff_abs_max = int(normalize_max)
+        
+        # Normalize gray_diff 到 0-255 範圍
+        if normalize_max > normalize_min:
+            gray_diff_normalized = ((gray_diff.astype(np.float32) - normalize_min) / (normalize_max - normalize_min) * 255).astype(np.uint8)
+        else:
+            # 如果最大值等於最小值，不進行 normalize
+            gray_diff_normalized = gray_diff
+        
+        # 將 normalize 後的 gray_diff 轉換為熱力圖視覺化（使用 COLORMAP_HOT：黑色→紅色→黃色→白色）
         # 值越大（差異越大）顏色越熱（越亮）
-        gray_diff_heatmap = cv2.applyColorMap(gray_diff, cv2.COLORMAP_HOT)
+        gray_diff_heatmap = cv2.applyColorMap(gray_diff_normalized, cv2.COLORMAP_HOT)
         # 只在重疊區域顯示熱力圖，非重疊區域設為黑色
         overlap_mask_3ch = np.stack([overlap_mask] * 3, axis=2)  # 擴展為3通道
         gray_diff_heatmap = np.where(overlap_mask_3ch, gray_diff_heatmap, 0)
@@ -314,7 +335,89 @@ def create_overlay_image(
             cv2.imwrite(str(pixel_diff_mask_file), pixel_diff_mask_img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
             cv2.imwrite(str(diff_mask_2_only_file), diff_mask_2_only_img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
             cv2.imwrite(str(diff_mask_1_only_file), diff_mask_1_only_img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-            cv2.imwrite(str(gray_diff_file), gray_diff_heatmap, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+            
+            # 創建帶 legend 的 gray_diff 圖像
+            h_heatmap, w_heatmap = gray_diff_heatmap.shape[:2]
+            legend_height = 80  # Legend 高度
+            legend_colorbar_height = 30  # 顏色條高度
+            legend_text_height = 50  # 文字區域高度
+            
+            # 創建包含 legend 的完整圖像
+            gray_diff_with_legend = np.ones((h_heatmap + legend_height, w_heatmap, 3), dtype=np.uint8) * 255
+            
+            # 將熱力圖複製到上方
+            gray_diff_with_legend[0:h_heatmap, 0:w_heatmap] = gray_diff_heatmap
+            
+            # 繪製水平顏色條（從最小值到最大值的顏色漸變）
+            colorbar_y_start = h_heatmap + 10
+            colorbar_width = w_heatmap - 20  # 左右各留 10 像素邊距
+            colorbar_x_start = 10
+            
+            # 生成顏色條漸變
+            colorbar = np.zeros((legend_colorbar_height, colorbar_width, 3), dtype=np.uint8)
+            for x in range(colorbar_width):
+                # 計算當前位置對應的 normalize 值（0-255）
+                normalized_value = int((x / colorbar_width) * 255)
+                # 將 normalize 值轉換為熱力圖顏色
+                color = cv2.applyColorMap(np.array([[normalized_value]], dtype=np.uint8), cv2.COLORMAP_HOT)[0, 0]
+                colorbar[:, x] = color
+            
+            # 將顏色條複製到圖像中
+            gray_diff_with_legend[colorbar_y_start:colorbar_y_start+legend_colorbar_height, 
+                                  colorbar_x_start:colorbar_x_start+colorbar_width] = colorbar
+            
+            # 使用 PIL 繪製文字標籤（支持中文）
+            gray_diff_pil = Image.fromarray(cv2.cvtColor(gray_diff_with_legend, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(gray_diff_pil)
+            
+            # 嘗試載入中文字體，如果失敗則使用默認字體
+            font_paths = [
+                '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',  # Linux (Docker容器中)
+                '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',  # Linux (Docker容器中)
+                '/System/Library/Fonts/PingFang.ttc',  # macOS
+                'C:/Windows/Fonts/msyh.ttc',  # Windows 微軟雅黑
+                'C:/Windows/Fonts/msjh.ttc',  # Windows 微軟正黑體
+                'C:/Windows/Fonts/simhei.ttf',  # Windows 黑體
+                'C:/Windows/Fonts/simsun.ttc',  # Windows 新細明體
+            ]
+            font = None
+            for font_path in font_paths:
+                if Path(font_path).exists():
+                    try:
+                        font = ImageFont.truetype(font_path, 16)
+                        break
+                    except:
+                        continue
+            if font is None:
+                font = ImageFont.load_default()
+            
+            # 計算文字位置
+            text_y = h_heatmap + legend_colorbar_height + 15
+            
+            # 繪製最小值標籤（左側）
+            min_text = f"最小值: {gray_diff_abs_min}"
+            draw.text((colorbar_x_start, text_y), min_text, fill=(0, 0, 0), font=font)
+            
+            # 繪製中間值標籤（中間）
+            mid_value = (gray_diff_abs_min + gray_diff_abs_max) // 2
+            mid_text = f"中間值: {mid_value}"
+            text_bbox = draw.textbbox((0, 0), mid_text, font=font)
+            mid_text_width = text_bbox[2] - text_bbox[0]
+            mid_x = colorbar_x_start + (colorbar_width - mid_text_width) // 2
+            draw.text((mid_x, text_y), mid_text, fill=(0, 0, 0), font=font)
+            
+            # 繪製最大值標籤（右側）
+            max_text = f"最大值: {gray_diff_abs_max}"
+            text_bbox = draw.textbbox((0, 0), max_text, font=font)
+            max_text_width = text_bbox[2] - text_bbox[0]
+            max_x = colorbar_x_start + colorbar_width - max_text_width
+            draw.text((max_x, text_y), max_text, fill=(0, 0, 0), font=font)
+            
+            # 轉換回 OpenCV 格式
+            gray_diff_with_legend = cv2.cvtColor(np.array(gray_diff_pil), cv2.COLOR_RGB2BGR)
+            
+            # 保存帶 legend 的完整圖像
+            cv2.imwrite(str(gray_diff_file), gray_diff_with_legend, [cv2.IMWRITE_PNG_COMPRESSION, 1])
             
             # 驗證mask文件和gray_diff文件是否成功保存
             mask_files_exist = all([
