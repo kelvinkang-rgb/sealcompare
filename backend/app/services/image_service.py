@@ -4,9 +4,12 @@
 
 from pathlib import Path
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Dict, List, Tuple
 from uuid import UUID
 import cv2
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import time
 
 from app.models import Image
 from app.schemas import ImageCreate, ImageResponse
@@ -437,6 +440,9 @@ class ImageService:
             - alignment_similarity: 對齊後的相似度
             - error: 錯誤訊息（如果失敗）
         """
+        service_start_time = time.time()
+        print(f"[服務層] 開始執行多印鑑比對服務，印鑑數量: {len(seal_image_ids)}")
+        
         # 獲取圖像1
         image1 = self.get_image(image1_id)
         if not image1:
@@ -510,151 +516,271 @@ class ImageService:
         comparison_dir = Path(settings.LOGS_DIR) / "multi_seal_comparisons"
         comparison_dir.mkdir(parents=True, exist_ok=True)
         
-        results = []
-        comparator = SealComparator(
-            threshold=threshold,
-            similarity_ssim_weight=similarity_ssim_weight,
-            similarity_template_weight=similarity_template_weight,
-            pixel_similarity_weight=pixel_similarity_weight,
-            histogram_similarity_weight=histogram_similarity_weight
-        )
-        
-        # 對每個印鑑進行比對
-        for idx, seal_image_id in enumerate(seal_image_ids):
-            result = {
-                'seal_index': idx + 1,
-                'seal_image_id': seal_image_id,
-                'similarity': None,
-                'is_match': None,
-                'overlay1_path': None,
-                'overlay2_path': None,
-                'heatmap_path': None,
-                'input_image1_path': None,
-                'input_image2_path': None,
-                'alignment_angle': None,
-                'alignment_offset': None,
-                'alignment_similarity': None,
-                'alignment_success': False,
-                'error': None
-            }
-            
-            try:
-                # 獲取印鑑圖像
-                seal_image = self.get_image(seal_image_id)
-                if not seal_image:
-                    result['error'] = "印鑑圖像不存在"
-                    results.append(result)
-                    continue
-                
+        # 預載入所有印鑑圖像資訊（線程安全：在主線程中完成資料庫查詢）
+        seal_images_data = {}
+        for seal_image_id in seal_image_ids:
+            seal_image = self.get_image(seal_image_id)
+            if seal_image:
                 seal_image_path = Path(seal_image.file_path)
-                if not seal_image_path.exists():
-                    result['error'] = "印鑑圖像文件不存在"
-                    results.append(result)
-                    continue
-                
-                # 執行比對
-                # 使用裁切後的圖像1和圖像2進行比對
-                # 流程：載入圖像 → 去背景 → 旋轉對齊 → 保存文件 → 計算相似度
-                
-                # 生成記錄 ID（用於文件命名）
-                record_id = f"{image1_id}_{seal_image_id}_{idx+1}"
-                
-                # 1. 載入圖像
-                img1_original = cv2.imread(str(image1_cropped_path))
-                img2_original = cv2.imread(str(seal_image_path))
-                
-                if img1_original is None:
-                    result['error'] = "無法載入圖像1"
-                    results.append(result)
-                    continue
-                
-                if img2_original is None:
-                    result['error'] = "無法載入印鑑圖像"
-                    results.append(result)
-                    continue
-                
-                # 2. 去背景處理（圖像1）
-                img1_no_bg, _, _, _, _ = self._remove_background_and_align(img1_original.copy())
-                
-                # 3. 去背景和對齊處理（圖像2，相對於圖像1）
-                img2_aligned, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics = self._remove_background_and_align(
-                    img2_original.copy(),
-                    reference_image=img1_no_bg,  # 傳入去背景後的圖像1作為參考
-                    is_image2=True
-                )
-                
-                # 記錄對齊結果
-                if alignment_angle is not None and alignment_offset is not None:
-                    result['alignment_success'] = True
-                    result['alignment_angle'] = float(alignment_angle)
-                    result['alignment_offset'] = {
-                        'x': int(alignment_offset[0]),
-                        'y': int(alignment_offset[1])
+                if seal_image_path.exists():
+                    seal_images_data[seal_image_id] = {
+                        'file_path': seal_image_path,
+                        'image': seal_image
                     }
-                    if alignment_similarity is not None:
-                        result['alignment_similarity'] = float(alignment_similarity)
-                    similarity_str = f"{alignment_similarity:.4f}" if alignment_similarity is not None else 'N/A'
-                    print(f"印鑑 {idx+1} 對齊成功: 角度={alignment_angle:.2f}度, 偏移=({alignment_offset[0]}, {alignment_offset[1]}), 相似度={similarity_str}")
-                else:
-                    result['alignment_success'] = False
-                    print(f"警告：印鑑 {idx+1} 對齊失敗，使用去背景後的圖像（未對齊）")
-                
-                # 4. 保存對齊後的圖像到文件（在比對之前）
+        
+        # 準備線程池
+        max_workers = min(len(seal_image_ids), settings.MAX_COMPARISON_THREADS)
+        results = []
+        results_lock = threading.Lock()
+        
+        print(f"[服務層] 準備使用 {max_workers} 個線程進行並行比對")
+        comparison_start_time = time.time()
+        
+        def process_seal(seal_data):
+            """處理單個印鑑的比對（線程函數）"""
+            idx, seal_image_id = seal_data
+            seal_start_time = time.time()
+            result = self._compare_single_seal(
+                image1_cropped_path=image1_cropped_path,
+                seal_image_id=seal_image_id,
+                seal_index=idx + 1,
+                image1_id=image1_id,
+                comparison_dir=comparison_dir,
+                threshold=threshold,
+                similarity_ssim_weight=similarity_ssim_weight,
+                similarity_template_weight=similarity_template_weight,
+                pixel_similarity_weight=pixel_similarity_weight,
+                histogram_similarity_weight=histogram_similarity_weight,
+                seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
+            )
+            seal_elapsed = time.time() - seal_start_time
+            print(f"[服務層] 印鑑 {idx + 1} 比對完成，耗時: {seal_elapsed:.2f} 秒")
+            with results_lock:
+                results.append(result)
+        
+        # 使用線程池並行處理
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(process_seal, (idx, seal_id))
+                for idx, seal_id in enumerate(seal_image_ids)
+            ]
+            # 等待所有任務完成
+            for future in as_completed(futures):
+                try:
+                    future.result()  # 觸發異常處理
+                except Exception as e:
+                    print(f"線程執行錯誤: {e}")
+        
+        comparison_elapsed = time.time() - comparison_start_time
+        service_elapsed = time.time() - service_start_time
+        
+        # 按 seal_index 排序結果
+        results.sort(key=lambda x: x.get('seal_index', 0))
+        
+        print(f"[服務層] 多印鑑比對完成")
+        print(f"[服務層] 比對階段耗時: {comparison_elapsed:.2f} 秒 ({comparison_elapsed/60:.2f} 分鐘)")
+        print(f"[服務層] 總服務時間: {service_elapsed:.2f} 秒 ({service_elapsed/60:.2f} 分鐘)")
+        print(f"[服務層] 平均每個印鑑比對時間: {comparison_elapsed/len(seal_image_ids):.2f} 秒")
+        if max_workers > 1:
+            print(f"[服務層] 理論加速比: {len(seal_image_ids) * (comparison_elapsed/len(seal_image_ids)) / comparison_elapsed:.2f}x")
+        
+        return results
+    
+    def _compare_single_seal(
+        self,
+        image1_cropped_path: Path,
+        seal_image_id: UUID,
+        seal_index: int,
+        image1_id: UUID,
+        comparison_dir: Path,
+        threshold: float,
+        similarity_ssim_weight: float,
+        similarity_template_weight: float,
+        pixel_similarity_weight: float,
+        histogram_similarity_weight: float,
+        seal_image_path: Optional[Path] = None
+    ) -> Dict:
+        """
+        單個印鑑的比對邏輯（線程安全版本）
+        
+        Args:
+            image1_cropped_path: 裁切後的圖像1路徑
+            seal_image_id: 印鑑圖像 ID
+            seal_index: 印鑑索引（從1開始）
+            image1_id: 圖像1 ID
+            comparison_dir: 比對結果目錄
+            threshold: 相似度閾值
+            similarity_ssim_weight: SSIM 權重
+            similarity_template_weight: 模板匹配權重
+            pixel_similarity_weight: 像素相似度權重
+            histogram_similarity_weight: 直方圖相似度權重
+            seal_image_path: 印鑑圖像路徑（預載入，避免線程中使用資料庫）
+            
+        Returns:
+            比對結果字典
+        """
+        result = {
+            'seal_index': seal_index,
+            'seal_image_id': seal_image_id,
+            'similarity': None,
+            'is_match': None,
+            'overlay1_path': None,
+            'overlay2_path': None,
+            'heatmap_path': None,
+            'input_image1_path': None,
+            'input_image2_path': None,
+            'alignment_angle': None,
+            'alignment_offset': None,
+            'alignment_similarity': None,
+            'alignment_success': False,
+            'error': None
+        }
+        
+        try:
+            # 檢查印鑑圖像路徑
+            if not seal_image_path or not seal_image_path.exists():
+                result['error'] = "印鑑圖像文件不存在"
+                return result
+            
+            # 執行比對
+            # 使用裁切後的圖像1和圖像2進行比對
+            # 流程：載入圖像 → 去背景 → 旋轉對齊 → 保存文件 → 計算相似度
+            
+            # 生成記錄 ID（用於文件命名）
+            record_id = f"{image1_id}_{seal_image_id}_{seal_index}"
+            
+            # 1. 載入圖像
+            img1_original = cv2.imread(str(image1_cropped_path))
+            img2_original = cv2.imread(str(seal_image_path))
+            
+            if img1_original is None:
+                result['error'] = "無法載入圖像1"
+                return result
+            
+            if img2_original is None:
+                result['error'] = "無法載入印鑑圖像"
+                return result
+            
+            # 2. 去背景處理（圖像1）
+            img1_no_bg, _, _, _, _ = self._remove_background_and_align(img1_original.copy())
+            
+            # 3. 去背景和對齊處理（圖像2，相對於圖像1）
+            img2_aligned, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics = self._remove_background_and_align(
+                img2_original.copy(),
+                reference_image=img1_no_bg,  # 傳入去背景後的圖像1作為參考
+                is_image2=True
+            )
+            
+            # 記錄對齊結果
+            if alignment_angle is not None and alignment_offset is not None:
+                result['alignment_success'] = True
+                result['alignment_angle'] = float(alignment_angle)
+                result['alignment_offset'] = {
+                    'x': int(alignment_offset[0]),
+                    'y': int(alignment_offset[1])
+                }
+                if alignment_similarity is not None:
+                    result['alignment_similarity'] = float(alignment_similarity)
+                similarity_str = f"{alignment_similarity:.4f}" if alignment_similarity is not None else 'N/A'
+                print(f"印鑑 {seal_index} 對齊成功: 角度={alignment_angle:.2f}度, 偏移=({alignment_offset[0]}, {alignment_offset[1]}), 相似度={similarity_str}")
+            else:
+                result['alignment_success'] = False
+                print(f"警告：印鑑 {seal_index} 對齊失敗，使用去背景後的圖像（未對齊）")
+            
+            # 4. 保存對齊後的圖像到文件（在比對之前）
+            try:
                 image1_for_comparison = comparison_dir / f"image1_cropped_{record_id}.jpg"
-                cv2.imwrite(str(image1_for_comparison), img1_no_bg)
+                if not cv2.imwrite(str(image1_for_comparison), img1_no_bg):
+                    raise IOError(f"無法保存圖像1到 {image1_for_comparison}")
                 
                 image2_for_comparison = comparison_dir / f"image2_cropped_{record_id}.jpg"
-                cv2.imwrite(str(image2_for_comparison), img2_aligned)
+                if not cv2.imwrite(str(image2_for_comparison), img2_aligned):
+                    raise IOError(f"無法保存圖像2到 {image2_for_comparison}")
                 
                 # 保存輸入圖像路徑到結果中（疊圖前的圖像）
                 result['input_image1_path'] = image1_for_comparison.name
                 result['input_image2_path'] = image2_for_comparison.name
+            except Exception as e:
+                result['error'] = f"保存對齊後的圖像失敗: {str(e)}"
+                print(f"錯誤：保存對齊後的圖像失敗 (印鑑 {seal_index}): {e}")
+                import traceback
+                traceback.print_exc()
+                return result
+            
+            # 5. 創建獨立的 comparator 實例（線程安全）
+            comparator = SealComparator(
+                threshold=threshold,
+                similarity_ssim_weight=similarity_ssim_weight,
+                similarity_template_weight=similarity_template_weight,
+                pixel_similarity_weight=pixel_similarity_weight,
+                histogram_similarity_weight=histogram_similarity_weight
+            )
+            
+            # 6. 使用 compare_files 比對（傳入文件路徑）
+            try:
+                # 確保文件存在
+                if not image1_for_comparison.exists():
+                    raise FileNotFoundError(f"圖像1文件不存在: {image1_for_comparison}")
+                if not image2_for_comparison.exists():
+                    raise FileNotFoundError(f"圖像2文件不存在: {image2_for_comparison}")
                 
-                # 5. 使用 compare_files 比對（傳入文件路徑）
+                is_match, similarity, details, img2_corrected, img1_corrected = comparator.compare_files(
+                    str(image1_for_comparison),
+                    str(image2_for_comparison),
+                    enable_rotation_search=False,  # 已經對齊，不需要旋轉搜索
+                    enable_translation_search=False,  # 已經對齊，不需要平移搜索
+                    bbox1=None,  # 已經裁切並對齊好了
+                    bbox2=None   # 已經裁切並對齊好了
+                )
+                
+                result['similarity'] = float(similarity)
+                result['is_match'] = is_match
+            except Exception as e:
+                result['error'] = f"相似度計算失敗: {str(e)}"
+                print(f"錯誤：相似度計算失敗 (印鑑 {seal_index}): {e}")
+                import traceback
+                traceback.print_exc()
+                return result
+            
+            # 7. 保存校正後的圖像（使用 compare_files 返回的圖像）
+            image1_corrected_path = None
+            image2_corrected_path = None
+            
+            if img1_corrected is not None:
                 try:
-                    is_match, similarity, details, img2_corrected, img1_corrected = comparator.compare_files(
-                        str(image1_for_comparison),
-                        str(image2_for_comparison),
-                        enable_rotation_search=False,  # 已經對齊，不需要旋轉搜索
-                        enable_translation_search=False,  # 已經對齊，不需要平移搜索
-                        bbox1=None,  # 已經裁切並對齊好了
-                        bbox2=None   # 已經裁切並對齊好了
-                    )
-                    
-                    result['similarity'] = float(similarity)
-                    result['is_match'] = is_match
-                except Exception as e:
-                    result['error'] = f"相似度計算失敗: {str(e)}"
-                    results.append(result)
-                    continue
-                
-                # 6. 保存校正後的圖像（使用 compare_files 返回的圖像）
-                image1_corrected_path = None
-                image2_corrected_path = None
-                
-                if img1_corrected is not None:
                     corrected_file1 = comparison_dir / f"corrected_image1_{record_id}.jpg"
                     cv2.imwrite(str(corrected_file1), img1_corrected)
                     image1_corrected_path = str(corrected_file1)
-                else:
-                    # 如果 compare_files 沒有返回 img1_corrected，使用已保存的去背景圖像
+                except Exception as e:
+                    print(f"警告：保存校正後的圖像1失敗 (印鑑 {seal_index}): {e}")
                     image1_corrected_path = str(image1_for_comparison)
-                
-                if img2_corrected is not None:
+            else:
+                # 如果 compare_files 沒有返回 img1_corrected，使用已保存的去背景圖像
+                image1_corrected_path = str(image1_for_comparison)
+            
+            if img2_corrected is not None:
+                try:
                     corrected_file2 = comparison_dir / f"corrected_{record_id}.jpg"
                     cv2.imwrite(str(corrected_file2), img2_corrected)
                     image2_corrected_path = str(corrected_file2)
-                else:
-                    # 如果 compare_files 沒有返回 img2_corrected，使用已保存的對齊圖像
+                except Exception as e:
+                    print(f"警告：保存校正後的圖像2失敗 (印鑑 {seal_index}): {e}")
                     image2_corrected_path = str(image2_for_comparison)
+            else:
+                # 如果 compare_files 沒有返回 img2_corrected，使用已保存的對齊圖像
+                image2_corrected_path = str(image2_for_comparison)
+            
+            # 8. 生成疊圖（使用對齊後的圖像）
+            try:
+                # 使用對齊後的圖像1和圖像2生成疊圖
+                # 優先使用 compare_files 返回的校正圖像，否則使用已保存的對齊圖像
+                image1_for_overlay = str(image1_corrected_path) if image1_corrected_path else str(image1_for_comparison)
+                image2_for_overlay = str(image2_corrected_path) if image2_corrected_path else str(image2_for_comparison)
                 
-                # 生成疊圖（使用對齊後的圖像）
-                try:
-                    # 使用對齊後的圖像1和圖像2生成疊圖
-                    # 優先使用 compare_files 返回的校正圖像，否則使用已保存的對齊圖像
-                    image1_for_overlay = image1_corrected_path if image1_corrected_path else str(image1_for_comparison)
-                    image2_for_overlay = image2_corrected_path if image2_corrected_path else str(image2_for_comparison)
-                    
+                # 確保 seal_image_path 不為 None
+                if not seal_image_path:
+                    print(f"警告：印鑑 {seal_index} 的圖像路徑為 None，跳過疊圖生成")
+                else:
                     overlay1_path, overlay2_path = create_overlay_image(
                         image1_for_overlay,
                         str(seal_image_path),
@@ -667,20 +793,26 @@ class ImageService:
                         result['overlay1_path'] = Path(overlay1_path).name
                     if overlay2_path:
                         result['overlay2_path'] = Path(overlay2_path).name
-                except Exception as e:
-                    print(f"生成疊圖失敗 (印鑑 {idx+1}): {e}")
-                    # 不設置錯誤，繼續處理
+            except Exception as e:
+                print(f"生成疊圖失敗 (印鑑 {seal_index}): {e}")
+                import traceback
+                traceback.print_exc()
+                # 不設置錯誤，繼續處理
+            
+            # 9. 生成熱力圖（使用對齊後的圖像）
+            try:
+                # create_difference_heatmap 需要 record_id 為 int，但我們使用字符串
+                # 使用 hash 轉換為數字
+                record_id_int = hash(record_id) % (10 ** 9)  # 轉換為正整數
                 
-                # 生成熱力圖（使用對齊後的圖像）
-                try:
-                    # create_difference_heatmap 需要 record_id 為 int，但我們使用字符串
-                    # 使用 hash 轉換為數字
-                    record_id_int = hash(record_id) % (10 ** 9)  # 轉換為正整數
-                    
-                    # 優先使用 compare_files 返回的校正圖像，否則使用已保存的對齊圖像
-                    image1_for_heatmap = image1_corrected_path if image1_corrected_path else str(image1_for_comparison)
-                    image2_for_heatmap = image2_corrected_path if image2_corrected_path else str(image2_for_comparison)
-                    
+                # 優先使用 compare_files 返回的校正圖像，否則使用已保存的對齊圖像
+                image1_for_heatmap = str(image1_corrected_path) if image1_corrected_path else str(image1_for_comparison)
+                image2_for_heatmap = str(image2_corrected_path) if image2_corrected_path else str(image2_for_comparison)
+                
+                # 確保 seal_image_path 不為 None
+                if not seal_image_path:
+                    print(f"警告：印鑑 {seal_index} 的圖像路徑為 None，跳過熱力圖生成")
+                else:
                     heatmap_path, _ = create_difference_heatmap(
                         image1_for_heatmap,  # 使用對齊後的圖像1
                         image2_for_heatmap,  # 使用對齊後的圖像2
@@ -690,21 +822,34 @@ class ImageService:
                     )
                     if heatmap_path:
                         # create_difference_heatmap 返回相對路徑 "heatmaps/heatmap_{record_id}.jpg"
-                        # 需要轉換為絕對路徑再提取文件名
-                        if not Path(heatmap_path).is_absolute():
-                            heatmap_path = comparison_dir / heatmap_path
-                        result['heatmap_path'] = Path(heatmap_path).name
-                except Exception as e:
-                    print(f"生成熱力圖失敗 (印鑑 {idx+1}): {e}")
-                    # 不設置錯誤，繼續處理
-                
+                        # 但實際文件保存在 comparison_dir / f"heatmap_{record_id}.jpg"
+                        # 直接使用實際保存的文件名
+                        actual_heatmap_file = comparison_dir / f"heatmap_{record_id_int}.jpg"
+                        if actual_heatmap_file.exists():
+                            result['heatmap_path'] = actual_heatmap_file.name
+                        else:
+                            # 如果實際文件不存在，嘗試使用返回的相對路徑
+                            if not Path(heatmap_path).is_absolute():
+                                heatmap_path_full = comparison_dir / heatmap_path
+                            else:
+                                heatmap_path_full = Path(heatmap_path)
+                            if heatmap_path_full.exists():
+                                result['heatmap_path'] = heatmap_path_full.name
+                            else:
+                                print(f"警告：熱力圖文件不存在，返回路徑={heatmap_path}, 實際路徑={actual_heatmap_file}")
             except Exception as e:
-                result['error'] = str(e)
-                print(f"比對印鑑 {idx+1} 時出錯: {e}")
+                print(f"生成熱力圖失敗 (印鑑 {seal_index}): {e}")
+                import traceback
+                traceback.print_exc()
+                # 不設置錯誤，繼續處理
             
-            results.append(result)
+        except Exception as e:
+            result['error'] = str(e)
+            print(f"比對印鑑 {seal_index} 時出錯: {e}")
+            import traceback
+            traceback.print_exc()
         
-        return results
+        return result
     
     def detect_matching_seals_with_rotation(
         self,

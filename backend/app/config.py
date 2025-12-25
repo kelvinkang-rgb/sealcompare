@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # API 設置
     API_V1_PREFIX: str = "/api/v1"
     
+    # 多執行緒設置
+    MAX_COMPARISON_THREADS: int = 16  # 多印鑑比對的最大線程數
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

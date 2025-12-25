@@ -134,6 +134,7 @@ function MultiSealTest() {
     mutationFn: imageAPI.upload,
     onSuccess: async (data) => {
       setImage2(data)
+      setCroppedImageIds([]) // 清除舊的裁切圖像ID
       // 自動檢測多個印鑑
       setIsDetecting2(true)
       try {
@@ -170,6 +171,7 @@ function MultiSealTest() {
     mutationFn: ({ imageId, seals }) => imageAPI.saveMultipleSeals(imageId, seals),
     onSuccess: (data) => {
       setImage2(data)
+      setCroppedImageIds([]) // 清除舊的裁切圖像ID，強制重新裁切
       // 同步更新 multipleSeals 狀態，確保與 image2.multiple_seals 一致
       if (data.multiple_seals && Array.isArray(data.multiple_seals)) {
         setMultipleSeals(data.multiple_seals)
@@ -319,6 +321,7 @@ function MultiSealTest() {
   const handleClearImage1 = () => {
     setImage1(null)
     setSealDetectionResult1(null)
+    setComparisonResults(null)
     uploadImage1Mutation.reset()
   }
 
@@ -326,6 +329,7 @@ function MultiSealTest() {
     setImage2(null)
     setMultipleSeals([])
     setCroppedImageIds([])
+    setComparisonResults(null)
     uploadImage2Mutation.reset()
   }
 
@@ -400,6 +404,80 @@ function MultiSealTest() {
       pixelSimilarityWeight: pixelSimilarityWeight,
       histogramSimilarityWeight: histogramSimilarityWeight
     })
+  }
+
+  // 合併處理：保存、裁切、比對
+  const handleCropAndCompare = async () => {
+    // 1. 驗證前置條件
+    if (!uploadImage1Mutation.data?.id || !image1?.seal_bbox) {
+      setSnackbar({
+        open: true,
+        message: '請先上傳並標記圖像1的印鑑位置',
+        severity: 'warning'
+      })
+      return
+    }
+
+    if (!uploadImage2Mutation.data?.id || multipleSeals.length === 0) {
+      setSnackbar({
+        open: true,
+        message: '請先完成圖像2的多印鑑檢測',
+        severity: 'warning'
+      })
+      return
+    }
+
+    // 清除舊的比對結果
+    setComparisonResults(null)
+
+    try {
+      // 2. 保存多印鑑位置（確保使用最新數據）
+      await saveMultipleSealsMutation.mutateAsync({
+        imageId: uploadImage2Mutation.data.id,
+        seals: multipleSeals
+      })
+
+      // 3. 裁切印鑑（使用保存後的最新數據）
+      const cropResult = await cropSealsMutation.mutateAsync({
+        imageId: uploadImage2Mutation.data.id,
+        seals: image2?.multiple_seals || multipleSeals,
+        margin: 10
+      })
+
+      // 4. 開始比對（使用最新的裁切圖像ID）
+      if (cropResult.cropped_image_ids && cropResult.cropped_image_ids.length > 0) {
+        await compareMutation.mutateAsync({
+          image1Id: uploadImage1Mutation.data.id,
+          sealImageIds: cropResult.cropped_image_ids,
+          threshold: threshold,
+          similaritySsimWeight: similaritySsimWeight,
+          similarityTemplateWeight: similarityTemplateWeight,
+          pixelSimilarityWeight: pixelSimilarityWeight,
+          histogramSimilarityWeight: histogramSimilarityWeight
+        })
+      } else {
+        setSnackbar({
+          open: true,
+          message: '裁切失敗，無法進行比對',
+          severity: 'error'
+        })
+      }
+    } catch (error) {
+      console.error('比對流程失敗:', error)
+      setSnackbar({
+        open: true,
+        message: error?.response?.data?.detail || '比對流程失敗',
+        severity: 'error'
+      })
+    }
+  }
+
+  // 動態按鈕文字
+  const getCompareButtonText = () => {
+    if (saveMultipleSealsMutation.isPending) return '保存中...'
+    if (cropSealsMutation.isPending) return '裁切中...'
+    if (compareMutation.isPending) return '比對中...'
+    return '開始比對多印鑑'
   }
 
   return (
@@ -755,6 +833,19 @@ function MultiSealTest() {
               showSealIndicator={true}
               onPreview={handlePreviewImage1}
             />
+
+            {/* 編輯印鑑位置按鈕 */}
+            {image1 && (
+              <Box sx={{ mt: 2 }}>
+                <Button
+                  variant="outlined"
+                  onClick={handleEditImage1Seal}
+                  fullWidth
+                >
+                  編輯印鑑位置
+                </Button>
+              </Box>
+            )}
           </Paper>
         </Grid>
 
@@ -825,52 +916,56 @@ function MultiSealTest() {
 
             {/* 操作按鈕 */}
             {multipleSeals.length > 0 && (
-              <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-                <Button
-                  variant="outlined"
-                  onClick={handleEditImage2Seals}
-                  fullWidth
-                >
-                  編輯印鑑位置
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={handleCropSeals}
-                  disabled={cropSealsMutation.isPending}
-                  fullWidth
-                  startIcon={cropSealsMutation.isPending && <CircularProgress size={16} />}
-                >
-                  {cropSealsMutation.isPending ? '裁切中...' : '保存並裁切'}
-                </Button>
-              </Box>
-            )}
-
-            {/* 顯示裁切結果 */}
-            {croppedImageIds.length > 0 && (
               <Box sx={{ mt: 2 }}>
-                <Alert severity="success" sx={{ mb: 2 }}>
-                  已成功裁切 {croppedImageIds.length} 個印鑑圖像
-                </Alert>
-                
-                {/* 開始比對按鈕 */}
-                {uploadImage1Mutation.data?.id && image1?.seal_bbox && (
+                <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                  <Button
+                    variant="outlined"
+                    onClick={handleEditImage2Seals}
+                    fullWidth
+                  >
+                    編輯印鑑位置
+                  </Button>
                   <Button
                     variant="contained"
                     color="primary"
-                    size="large"
+                    onClick={handleCropAndCompare}
+                    disabled={
+                      !uploadImage1Mutation.data?.id || 
+                      !image1?.seal_bbox ||
+                      saveMultipleSealsMutation.isPending ||
+                      cropSealsMutation.isPending ||
+                      compareMutation.isPending
+                    }
                     fullWidth
-                    onClick={handleStartComparison}
-                    disabled={compareMutation.isPending}
-                    startIcon={compareMutation.isPending && <CircularProgress size={20} />}
-                    sx={{ mb: 2 }}
+                    startIcon={
+                      (saveMultipleSealsMutation.isPending || 
+                       cropSealsMutation.isPending || 
+                       compareMutation.isPending) && (
+                        <CircularProgress size={16} />
+                      )
+                    }
                   >
-                    {compareMutation.isPending ? '比對中...' : '開始比對圖像1與所有印鑑'}
+                    {getCompareButtonText()}
                   </Button>
+                </Box>
+
+                {/* 操作狀態提示 */}
+                {(saveMultipleSealsMutation.isPending || 
+                  cropSealsMutation.isPending || 
+                  compareMutation.isPending) && (
+                  <Alert severity="info" sx={{ mt: 1 }}>
+                    {saveMultipleSealsMutation.isPending && '正在保存印鑑位置...'}
+                    {cropSealsMutation.isPending && '正在裁切印鑑圖像...'}
+                    {compareMutation.isPending && `正在比對圖像1與 ${croppedImageIds.length || multipleSeals.length} 個印鑑...`}
+                  </Alert>
                 )}
-                
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                  圖像 ID: {croppedImageIds.join(', ')}
-                </Typography>
+
+                {/* 顯示裁切結果（僅在比對完成後顯示） */}
+                {croppedImageIds.length > 0 && !compareMutation.isPending && (
+                  <Alert severity="success" sx={{ mt: 2 }}>
+                    已成功裁切 {croppedImageIds.length} 個印鑑圖像
+                  </Alert>
+                )}
               </Box>
             )}
           </Paper>
@@ -887,12 +982,12 @@ function MultiSealTest() {
         </Box>
       )}
 
-      {/* 比對進行中提示 */}
-      {compareMutation.isPending && (
+      {/* 比對進行中提示（僅在比對階段顯示，保存和裁切階段已在按鈕區域顯示） */}
+      {compareMutation.isPending && !saveMultipleSealsMutation.isPending && !cropSealsMutation.isPending && (
         <Box sx={{ mt: 4, textAlign: 'center' }}>
           <CircularProgress />
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-            正在比對圖像1與 {croppedImageIds.length} 個印鑑，請稍候...
+            正在比對圖像1與 {croppedImageIds.length || multipleSeals.length} 個印鑑，請稍候...
           </Typography>
         </Box>
       )}
@@ -910,8 +1005,8 @@ function MultiSealTest() {
           {uploadImage1Mutation.data?.id && (
             <SealDetectionBox
               imageId={uploadImage1Mutation.data.id}
-              initialBbox={sealDetectionResult1?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
-              initialCenter={sealDetectionResult1?.center || uploadImage1Mutation.data?.seal_center || null}
+              initialBbox={image1?.seal_bbox || sealDetectionResult1?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
+              initialCenter={image1?.seal_center || sealDetectionResult1?.center || uploadImage1Mutation.data?.seal_center || null}
               onConfirm={handleSealConfirm1}
               onCancel={() => setShowSealDialog1(false)}
             />

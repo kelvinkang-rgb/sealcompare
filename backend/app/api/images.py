@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
 from pathlib import Path
+import time
 
 from app.database import get_db
 from app.schemas import (
@@ -282,6 +283,13 @@ def compare_image1_with_seals(
     - **seal_image_ids**: 裁切後的印鑑圖像 ID 列表
     - **threshold**: 相似度閾值，默認0.95
     """
+    start_time = time.time()
+    print(f"=== 開始多印鑑比對 ===")
+    print(f"圖像1 ID: {image1_id}")
+    print(f"印鑑數量: {len(request.seal_image_ids)}")
+    print(f"相似度閾值: {request.threshold}")
+    print(f"開始時間: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}")
+    
     image_service = ImageService(db)
     try:
         results_data = image_service.compare_image1_with_seals(
@@ -313,6 +321,15 @@ def compare_image1_with_seals(
         
         success_count = sum(1 for r in results if r.error is None)
         
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"=== 多印鑑比對完成 ===")
+        print(f"結束時間: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}")
+        print(f"總耗時: {elapsed_time:.2f} 秒 ({elapsed_time/60:.2f} 分鐘)")
+        print(f"比對結果: {success_count}/{len(results)} 個印鑑成功")
+        print(f"平均每個印鑑耗時: {elapsed_time/len(request.seal_image_ids):.2f} 秒")
+        print(f"======================")
+        
         return MultiSealComparisonResponse(
             image1_id=image1_id,
             results=results,
@@ -322,6 +339,12 @@ def compare_image1_with_seals(
     except HTTPException:
         raise
     except Exception as e:
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"=== 多印鑑比對失敗 ===")
+        print(f"錯誤: {str(e)}")
+        print(f"耗時: {elapsed_time:.2f} 秒")
+        print(f"======================")
         raise HTTPException(status_code=500, detail=f"比對失敗: {str(e)}")
 
 
