@@ -617,7 +617,7 @@ class ComparisonService:
         
         # 生成疊圖
         overlay_path = self.logs_dir / "overlays"
-        overlay1_path, overlay2_path = create_overlay_image(
+        overlay1_path, overlay2_path, _, _, _, _, _ = create_overlay_image(
             image1_path,
             image2_path,
             overlay_path,

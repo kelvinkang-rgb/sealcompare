@@ -22,7 +22,7 @@ from pathlib import Path as PathLib
 core_path = PathLib(__file__).parent.parent.parent / "core"
 sys.path.insert(0, str(core_path))
 from seal_compare import SealComparator
-from overlay import create_overlay_image
+from overlay import create_overlay_image, calculate_mask_statistics, calculate_mask_based_similarity
 from verification import create_difference_heatmap
 from fastapi import UploadFile, HTTPException
 from app.config import settings
@@ -278,14 +278,15 @@ class ImageService:
         
         return db_image
     
-    def crop_seals(self, image_id: UUID, seals: List[Dict], margin: int = 10) -> List[UUID]:
+    def crop_seals(self, image_id: UUID, seals: List[Dict], margin: int = 15) -> List[UUID]:
         """
         裁切圖像中的多個印鑑區域並保存為獨立圖像
         
         Args:
             image_id: 原圖像 ID
             seals: 印鑑列表，每個元素包含 bbox, center, confidence
-            margin: 邊距（像素），默認10
+            margin: 邊距（像素），默認15。邊距用於確保裁切後的圖像邊緣有足夠的背景區域，
+                   供 remove_background_and_make_transparent 函數檢測背景色（至少需要5像素邊緣）
             
         Returns:
             裁切後的圖像 ID 列表
@@ -418,6 +419,9 @@ class ImageService:
         similarity_template_weight: float = 0.35,
         pixel_similarity_weight: float = 0.1,
         histogram_similarity_weight: float = 0.05,
+        overlap_weight: float = 0.5,
+        pixel_diff_penalty_weight: float = 0.3,
+        unique_region_penalty_weight: float = 0.2,
         task_uid: Optional[str] = None,
         task_update_callback: Optional[Callable[[Dict, int, int], None]] = None
     ) -> List[Dict]:
@@ -453,6 +457,7 @@ class ImageService:
         logger.info(f"[服務層] 印鑑數量: {len(seal_image_ids)}")
         logger.info(f"[服務層] 相似度閾值: {threshold}")
         logger.info(f"[服務層] 相似度權重 - SSIM: {similarity_ssim_weight}, Template: {similarity_template_weight}, Pixel: {pixel_similarity_weight}, Histogram: {histogram_similarity_weight}")
+        logger.info(f"[服務層] Mask相似度權重 - 重疊區域: {overlap_weight}, 像素差異懲罰: {pixel_diff_penalty_weight}, 獨有區域懲罰: {unique_region_penalty_weight}")
         
         try:
             # 獲取圖像1
@@ -575,6 +580,9 @@ class ImageService:
                         similarity_template_weight=similarity_template_weight,
                         pixel_similarity_weight=pixel_similarity_weight,
                         histogram_similarity_weight=histogram_similarity_weight,
+                        overlap_weight=overlap_weight,
+                        pixel_diff_penalty_weight=pixel_diff_penalty_weight,
+                        unique_region_penalty_weight=unique_region_penalty_weight,
                         seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
                     )
                     seal_elapsed = time.time() - seal_start_time
@@ -592,6 +600,12 @@ class ImageService:
                         'overlay1_path': None,
                         'overlay2_path': None,
                         'heatmap_path': None,
+                        'overlap_mask_path': None,
+                        'pixel_diff_mask_path': None,
+                        'diff_mask_2_only_path': None,
+                        'diff_mask_1_only_path': None,
+                        'mask_statistics': None,
+                        'mask_based_similarity': None,
                         'input_image1_path': None,
                         'input_image2_path': None,
                         'alignment_angle': None,
@@ -662,6 +676,12 @@ class ImageService:
                             'overlay1_path': None,
                             'overlay2_path': None,
                             'heatmap_path': None,
+                            'overlap_mask_path': None,
+                            'pixel_diff_mask_path': None,
+                            'diff_mask_2_only_path': None,
+                            'diff_mask_1_only_path': None,
+                            'mask_statistics': None,
+                            'mask_based_similarity': None,
                             'input_image1_path': None,
                             'input_image2_path': None,
                             'alignment_angle': None,
@@ -826,6 +846,9 @@ class ImageService:
                         similarity_template_weight=similarity_template_weight,
                         pixel_similarity_weight=pixel_similarity_weight,
                         histogram_similarity_weight=histogram_similarity_weight,
+                        overlap_weight=overlap_weight,
+                        pixel_diff_penalty_weight=pixel_diff_penalty_weight,
+                        unique_region_penalty_weight=unique_region_penalty_weight,
                         seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
                     )
                     seal_elapsed = time.time() - seal_start_time
@@ -843,6 +866,12 @@ class ImageService:
                         'overlay1_path': None,
                         'overlay2_path': None,
                         'heatmap_path': None,
+                        'overlap_mask_path': None,
+                        'pixel_diff_mask_path': None,
+                        'diff_mask_2_only_path': None,
+                        'diff_mask_1_only_path': None,
+                        'mask_statistics': None,
+                        'mask_based_similarity': None,
                         'input_image1_path': None,
                         'input_image2_path': None,
                         'alignment_angle': None,
@@ -876,6 +905,12 @@ class ImageService:
                     'overlay1_path': None,
                     'overlay2_path': None,
                     'heatmap_path': None,
+                    'overlap_mask_path': None,
+                    'pixel_diff_mask_path': None,
+                    'diff_mask_2_only_path': None,
+                    'diff_mask_1_only_path': None,
+                    'mask_statistics': None,
+                    'mask_based_similarity': None,
                     'input_image1_path': None,
                     'input_image2_path': None,
                     'alignment_angle': None,
@@ -898,10 +933,16 @@ class ImageService:
         similarity_template_weight: float,
         pixel_similarity_weight: float,
         histogram_similarity_weight: float,
+        overlap_weight: float = 0.5,
+        pixel_diff_penalty_weight: float = 0.3,
+        unique_region_penalty_weight: float = 0.2,
         seal_image_path: Optional[Path] = None
     ) -> Dict:
         """
         單個印鑑的比對邏輯（線程安全版本）
+        
+        注意：is_match 的判定基於 mask_based_similarity 與 threshold 的比較，
+        而不是傳統的相似度指標。如果 mask 相似度計算失敗，is_match 將設為 None。
         
         Args:
             image1_cropped_path: 裁切後的圖像1路徑
@@ -909,15 +950,19 @@ class ImageService:
             seal_index: 印鑑索引（從1開始）
             image1_id: 圖像1 ID
             comparison_dir: 比對結果目錄
-            threshold: 相似度閾值
-            similarity_ssim_weight: SSIM 權重
-            similarity_template_weight: 模板匹配權重
-            pixel_similarity_weight: 像素相似度權重
-            histogram_similarity_weight: 直方圖相似度權重
+            threshold: 相似度閾值（用於判定 mask_based_similarity 是否匹配）
+            similarity_ssim_weight: SSIM 權重（用於傳統相似度計算，僅用於顯示）
+            similarity_template_weight: 模板匹配權重（用於傳統相似度計算，僅用於顯示）
+            pixel_similarity_weight: 像素相似度權重（用於傳統相似度計算，僅用於顯示）
+            histogram_similarity_weight: 直方圖相似度權重（用於傳統相似度計算，僅用於顯示）
             seal_image_path: 印鑑圖像路徑（預載入，避免線程中使用資料庫）
             
         Returns:
-            比對結果字典
+            比對結果字典，包含：
+            - similarity: 傳統相似度（用於顯示）
+            - mask_based_similarity: 基於mask的相似度（用於判定is_match）
+            - is_match: 是否匹配（基於mask_based_similarity >= threshold判定）
+            - 如果mask相似度計算失敗，is_match為None
         """
         result = {
             'seal_index': seal_index,
@@ -927,6 +972,12 @@ class ImageService:
             'overlay1_path': None,
             'overlay2_path': None,
             'heatmap_path': None,
+            'overlap_mask_path': None,
+            'pixel_diff_mask_path': None,
+            'diff_mask_2_only_path': None,
+            'diff_mask_1_only_path': None,
+            'mask_statistics': None,
+            'mask_based_similarity': None,
             'input_image1_path': None,
             'input_image2_path': None,
             'alignment_angle': None,
@@ -1033,8 +1084,9 @@ class ImageService:
                     bbox2=None   # 已經裁切並對齊好了
                 )
                 
+                # 保留傳統相似度用於顯示，但is_match將基於mask相似度判定
                 result['similarity'] = float(similarity)
-                result['is_match'] = is_match
+                # 注意：is_match將在計算完mask相似度後設定
             except Exception as e:
                 result['error'] = f"相似度計算失敗: {str(e)}"
                 print(f"錯誤：相似度計算失敗 (印鑑 {seal_index}): {e}")
@@ -1080,14 +1132,20 @@ class ImageService:
                 # 確保圖像路徑存在
                 if not Path(image1_for_overlay).exists():
                     print(f"警告：印鑑 {seal_index} 的圖像1路徑不存在: {image1_for_overlay}，跳過疊圖生成")
+                    # 無法生成mask，is_match設為None
+                    if 'is_match' not in result or result.get('is_match') is None:
+                        result['is_match'] = None
                 elif not Path(image2_for_overlay).exists():
                     print(f"警告：印鑑 {seal_index} 的圖像2路徑不存在: {image2_for_overlay}，跳過疊圖生成")
+                    # 無法生成mask，is_match設為None
+                    if 'is_match' not in result or result.get('is_match') is None:
+                        result['is_match'] = None
                 else:
                     # 使用對齊後的圖像生成疊圖
                     # image1_path: 對齊後的圖像1
                     # image2_path: 對齊後的圖像2（作為原始圖像2）
                     # image2_corrected_path: 不需要，因為已經使用對齊後的圖像
-                    overlay1_path, overlay2_path = create_overlay_image(
+                    overlay1_path, overlay2_path, overlap_mask_path, pixel_diff_mask_path, diff_mask_2_only_path, diff_mask_1_only_path, gray_diff_path = create_overlay_image(
                         image1_for_overlay,
                         image2_for_overlay,  # 使用對齊後的圖像2作為原始圖像2
                         comparison_dir,
@@ -1106,6 +1164,57 @@ class ImageService:
                         print(f"印鑑 {seal_index} 疊圖2生成成功: {result['overlay2_path']}")
                     else:
                         print(f"警告：印鑑 {seal_index} 疊圖2生成失敗或文件不存在")
+                    
+                    # 保存mask路徑和gray_diff路徑
+                    if overlap_mask_path and Path(overlap_mask_path).exists():
+                        result['overlap_mask_path'] = Path(overlap_mask_path).name
+                    if pixel_diff_mask_path and Path(pixel_diff_mask_path).exists():
+                        result['pixel_diff_mask_path'] = Path(pixel_diff_mask_path).name
+                    if diff_mask_2_only_path and Path(diff_mask_2_only_path).exists():
+                        result['diff_mask_2_only_path'] = Path(diff_mask_2_only_path).name
+                    if diff_mask_1_only_path and Path(diff_mask_1_only_path).exists():
+                        result['diff_mask_1_only_path'] = Path(diff_mask_1_only_path).name
+                    if gray_diff_path and Path(gray_diff_path).exists():
+                        result['gray_diff_path'] = Path(gray_diff_path).name
+                        print(f"印鑑 {seal_index} gray_diff視覺化生成成功: {result['gray_diff_path']}")
+                    
+                    # 計算mask統計資訊和基於mask的相似度
+                    try:
+                        mask_stats = calculate_mask_statistics(
+                            overlap_mask_path,
+                            pixel_diff_mask_path,
+                            diff_mask_2_only_path,
+                            diff_mask_1_only_path
+                        )
+                        
+                        # 檢查是否有有效的mask數據（total_seal_pixels > 0）
+                        if mask_stats.get('total_seal_pixels', 0) == 0:
+                            # 沒有有效的mask數據，無法計算相似度
+                            result['is_match'] = None
+                            print(f"警告：印鑑 {seal_index} 沒有有效的mask數據（total_seal_pixels=0），無法判定匹配狀態")
+                        else:
+                            mask_based_similarity = calculate_mask_based_similarity(
+                                mask_stats,
+                                overlap_weight=overlap_weight,
+                                pixel_diff_penalty_weight=pixel_diff_penalty_weight,
+                                unique_region_penalty_weight=unique_region_penalty_weight
+                            )
+                            result['mask_statistics'] = mask_stats
+                            result['mask_based_similarity'] = float(mask_based_similarity)
+                            
+                            # 使用mask相似度與threshold比較來判定is_match
+                            if mask_based_similarity is not None:
+                                result['is_match'] = mask_based_similarity >= threshold
+                                print(f"印鑑 {seal_index} mask-based相似度: {mask_based_similarity:.4f}, 判定結果: {'匹配' if result['is_match'] else '不匹配'} (threshold={threshold})")
+                            else:
+                                result['is_match'] = None
+                                print(f"警告：印鑑 {seal_index} mask相似度為None，無法判定匹配狀態")
+                    except Exception as e:
+                        print(f"警告：計算mask統計資訊失敗 (印鑑 {seal_index}): {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # mask相似度計算失敗，is_match設為None
+                        result['is_match'] = None
             except Exception as e:
                 print(f"生成疊圖失敗 (印鑑 {seal_index}): {e}")
                 import traceback
@@ -1113,6 +1222,9 @@ class ImageService:
                 # 記錄錯誤但不阻止比對完成
                 if 'overlay_error' not in result:
                     result['overlay_error'] = str(e)
+                # overlay生成失敗，無法計算mask相似度，is_match設為None
+                if 'is_match' not in result or result.get('is_match') is None:
+                    result['is_match'] = None
             
             # 9. 生成熱力圖（使用對齊後的圖像）
             try:

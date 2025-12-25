@@ -24,7 +24,7 @@ import {
   IconButton,
   Collapse,
 } from '@mui/material'
-import { ExpandMore as ExpandMoreIcon, Settings as SettingsIcon, Error as ErrorIcon, ContentCopy as ContentCopyIcon, ExpandMore, ExpandLess } from '@mui/icons-material'
+import { ExpandMore as ExpandMoreIcon, Settings as SettingsIcon, Error as ErrorIcon, ContentCopy as ContentCopyIcon, ExpandMore, ExpandLess, Info as InfoIcon } from '@mui/icons-material'
 import { useMutation } from '@tanstack/react-query'
 import { imageAPI } from '../services/api'
 import ImagePreview from '../components/ImagePreview'
@@ -32,7 +32,6 @@ import SealDetectionBox from '../components/SealDetectionBox'
 import MultiSealPreview from '../components/MultiSealPreview'
 import MultiSealDetectionBox from '../components/MultiSealDetectionBox'
 import MultiSealComparisonResults from '../components/MultiSealComparisonResults'
-import ImagePreviewDialog from '../components/ImagePreviewDialog'
 
 function MultiSealTest() {
   const navigate = useNavigate()
@@ -58,24 +57,22 @@ function MultiSealTest() {
   const [comparisonResults, setComparisonResults] = useState(null)
   
   // 相似度閾值
-  const [threshold, setThreshold] = useState(0.5) // 默認 50%
+  const [threshold, setThreshold] = useState(0.88) // 默認 88%
   
   // 比對印鑑數量上限
   const [maxSeals, setMaxSeals] = useState(6) // 默認 6
   const [lastDetectionMaxSeals, setLastDetectionMaxSeals] = useState(null) // 記錄上次檢測使用的 maxSeals
   
-  // 相似度權重參數
-  const [similaritySsimWeight, setSimilaritySsimWeight] = useState(0.5) // 默認 50%
-  const [similarityTemplateWeight, setSimilarityTemplateWeight] = useState(0.35) // 默認 35%
-  const [pixelSimilarityWeight, setPixelSimilarityWeight] = useState(0.1) // 默認 10%
-  const [histogramSimilarityWeight, setHistogramSimilarityWeight] = useState(0.05) // 默認 5%
+  // Mask相似度權重參數
+  const [overlapWeight, setOverlapWeight] = useState(0.5) // 默認 50%
+  const [pixelDiffPenaltyWeight, setPixelDiffPenaltyWeight] = useState(0.3) // 默認 30%
+  const [uniqueRegionPenaltyWeight, setUniqueRegionPenaltyWeight] = useState(0.2) // 默認 20%
+  
+  // Mask相似度說明Dialog狀態
+  const [maskWeightDialogOpen, setMaskWeightDialogOpen] = useState(false)
   
   // 進階設定收折狀態
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
-  
-  // 預覽對話框狀態
-  const [previewImage1, setPreviewImage1] = useState(false)
-  const [previewImage2, setPreviewImage2] = useState(false)
   
   // 錯誤詳情狀態
   const [lastError, setLastError] = useState(null)
@@ -259,8 +256,6 @@ function MultiSealTest() {
       // 更新任務狀態（從結果中提取狀態信息）
       const statusInfo = {
         status: polledTaskResult.status,
-        progress: polledTaskResult.progress,
-        progress_message: polledTaskResult.progress_message,
         total_count: polledTaskResult.total_count,
         success_count: polledTaskResult.success_count,
         error: polledTaskResult.error
@@ -315,15 +310,13 @@ function MultiSealTest() {
   
   // 比對圖像1與多個印鑑（創建任務）
   const compareMutation = useMutation({
-    mutationFn: ({ image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight }) => 
-      imageAPI.compareImage1WithSeals(image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight),
+    mutationFn: ({ image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight }) => 
+      imageAPI.compareImage1WithSeals(image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight),
     onSuccess: (taskData) => {
       // 保存任務 UID 並開始輪詢
       setCurrentTaskUid(taskData.task_uid)
       setTaskStatus({
-        status: taskData.status,
-        progress: taskData.progress,
-        progress_message: taskData.progress_message
+        status: taskData.status
       })
       setLastError(null)
       setErrorStage(null)
@@ -537,19 +530,6 @@ function MultiSealTest() {
     setShowSealDialog2(true)
   }
 
-  // 處理預覽圖像1
-  const handlePreviewImage1 = (image) => {
-    if (image) {
-      setPreviewImage1(true)
-    }
-  }
-
-  // 處理預覽圖像2
-  const handlePreviewImage2 = (image) => {
-    if (image) {
-      setPreviewImage2(true)
-    }
-  }
 
   // 處理開始比對
   const handleStartComparison = () => {
@@ -584,10 +564,13 @@ function MultiSealTest() {
       image1Id: uploadImage1Mutation.data.id,
       sealImageIds: croppedImageIds,
       threshold: threshold,
-      similaritySsimWeight: similaritySsimWeight,
-      similarityTemplateWeight: similarityTemplateWeight,
-      pixelSimilarityWeight: pixelSimilarityWeight,
-      histogramSimilarityWeight: histogramSimilarityWeight
+      similaritySsimWeight: 0.5, // 保留以向後兼容，但不再使用
+      similarityTemplateWeight: 0.35,
+      pixelSimilarityWeight: 0.1,
+      histogramSimilarityWeight: 0.05,
+      overlapWeight: overlapWeight,
+      pixelDiffPenaltyWeight: pixelDiffPenaltyWeight,
+      uniqueRegionPenaltyWeight: uniqueRegionPenaltyWeight
     })
   }
 
@@ -646,21 +629,23 @@ function MultiSealTest() {
           image1Id: uploadImage1Mutation.data.id, 
           sealCount: cropResult.cropped_image_ids.length,
           threshold,
-          weights: {
-            ssim: similaritySsimWeight,
-            template: similarityTemplateWeight,
-            pixel: pixelSimilarityWeight,
-            histogram: histogramSimilarityWeight
+          maskWeights: {
+            overlap: overlapWeight,
+            pixelDiffPenalty: pixelDiffPenaltyWeight,
+            uniqueRegionPenalty: uniqueRegionPenaltyWeight
           }
         })
         await compareMutation.mutateAsync({
           image1Id: uploadImage1Mutation.data.id,
           sealImageIds: cropResult.cropped_image_ids,
           threshold: threshold,
-          similaritySsimWeight: similaritySsimWeight,
-          similarityTemplateWeight: similarityTemplateWeight,
-          pixelSimilarityWeight: pixelSimilarityWeight,
-          histogramSimilarityWeight: histogramSimilarityWeight
+          similaritySsimWeight: 0.5, // 保留以向後兼容，但不再使用
+          similarityTemplateWeight: 0.35,
+          pixelSimilarityWeight: 0.1,
+          histogramSimilarityWeight: 0.05,
+          overlapWeight: overlapWeight,
+          pixelDiffPenaltyWeight: pixelDiffPenaltyWeight,
+          uniqueRegionPenaltyWeight: uniqueRegionPenaltyWeight
         })
         console.log('比對完成')
         setErrorStage(null) // 清除錯誤階段（成功）
@@ -858,24 +843,33 @@ function MultiSealTest() {
             </Box>
           </Box>
 
-          {/* 相似度權重參數設定 */}
+          {/* Mask相似度權重參數設定 */}
           <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-            <Typography variant="h6" gutterBottom>
-              相似度權重參數設定
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <Typography variant="h6">
+                Mask相似度權重參數設定
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={() => setMaskWeightDialogOpen(true)}
+                sx={{ color: 'primary.main' }}
+              >
+                <InfoIcon />
+              </IconButton>
+            </Box>
             <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
-              設定比對時各演算法的權重（總和建議為 1.0）
+              設定Mask相似度計算時各項權重（總和建議為 1.0）
             </Typography>
             <Grid container spacing={2}>
-          {/* SSIM 權重 */}
-          <Grid item xs={12} sm={6} md={3}>
+          {/* 重疊區域權重 */}
+          <Grid item xs={12} sm={6} md={4}>
             <Typography variant="body2" gutterBottom fontWeight="bold">
-              SSIM 權重
+              重疊區域權重
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Slider
-                value={similaritySsimWeight}
-                onChange={(e, value) => setSimilaritySsimWeight(value)}
+                value={overlapWeight}
+                onChange={(e, value) => setOverlapWeight(value)}
                 min={0}
                 max={1}
                 step={0.01}
@@ -885,11 +879,11 @@ function MultiSealTest() {
               />
               <TextField
                 type="number"
-                value={similaritySsimWeight}
+                value={overlapWeight}
                 onChange={(e) => {
                   const val = parseFloat(e.target.value)
                   if (!isNaN(val) && val >= 0 && val <= 1) {
-                    setSimilaritySsimWeight(val)
+                    setOverlapWeight(val)
                   }
                 }}
                 inputProps={{ min: 0, max: 1, step: 0.01 }}
@@ -899,19 +893,19 @@ function MultiSealTest() {
               />
             </Box>
             <Typography variant="caption" color="text.secondary">
-              當前: {Math.round(similaritySsimWeight * 100)}%
+              當前: {Math.round(overlapWeight * 100)}%
             </Typography>
           </Grid>
 
-          {/* Template Match 權重 */}
-          <Grid item xs={12} sm={6} md={3}>
+          {/* 像素差異懲罰權重 */}
+          <Grid item xs={12} sm={6} md={4}>
             <Typography variant="body2" gutterBottom fontWeight="bold">
-              Template Match 權重
+              像素差異懲罰權重
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Slider
-                value={similarityTemplateWeight}
-                onChange={(e, value) => setSimilarityTemplateWeight(value)}
+                value={pixelDiffPenaltyWeight}
+                onChange={(e, value) => setPixelDiffPenaltyWeight(value)}
                 min={0}
                 max={1}
                 step={0.01}
@@ -921,11 +915,11 @@ function MultiSealTest() {
               />
               <TextField
                 type="number"
-                value={similarityTemplateWeight}
+                value={pixelDiffPenaltyWeight}
                 onChange={(e) => {
                   const val = parseFloat(e.target.value)
                   if (!isNaN(val) && val >= 0 && val <= 1) {
-                    setSimilarityTemplateWeight(val)
+                    setPixelDiffPenaltyWeight(val)
                   }
                 }}
                 inputProps={{ min: 0, max: 1, step: 0.01 }}
@@ -935,19 +929,19 @@ function MultiSealTest() {
               />
             </Box>
             <Typography variant="caption" color="text.secondary">
-              當前: {Math.round(similarityTemplateWeight * 100)}%
+              當前: {Math.round(pixelDiffPenaltyWeight * 100)}%
             </Typography>
           </Grid>
 
-          {/* Pixel Similarity 權重 */}
-          <Grid item xs={12} sm={6} md={3}>
+          {/* 獨有區域懲罰權重 */}
+          <Grid item xs={12} sm={6} md={4}>
             <Typography variant="body2" gutterBottom fontWeight="bold">
-              Pixel Similarity 權重
+              獨有區域懲罰權重
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Slider
-                value={pixelSimilarityWeight}
-                onChange={(e, value) => setPixelSimilarityWeight(value)}
+                value={uniqueRegionPenaltyWeight}
+                onChange={(e, value) => setUniqueRegionPenaltyWeight(value)}
                 min={0}
                 max={1}
                 step={0.01}
@@ -957,11 +951,11 @@ function MultiSealTest() {
               />
               <TextField
                 type="number"
-                value={pixelSimilarityWeight}
+                value={uniqueRegionPenaltyWeight}
                 onChange={(e) => {
                   const val = parseFloat(e.target.value)
                   if (!isNaN(val) && val >= 0 && val <= 1) {
-                    setPixelSimilarityWeight(val)
+                    setUniqueRegionPenaltyWeight(val)
                   }
                 }}
                 inputProps={{ min: 0, max: 1, step: 0.01 }}
@@ -971,50 +965,14 @@ function MultiSealTest() {
               />
             </Box>
             <Typography variant="caption" color="text.secondary">
-              當前: {Math.round(pixelSimilarityWeight * 100)}%
-            </Typography>
-          </Grid>
-
-          {/* Histogram Similarity 權重 */}
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="body2" gutterBottom fontWeight="bold">
-              Histogram Similarity 權重
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Slider
-                value={histogramSimilarityWeight}
-                onChange={(e, value) => setHistogramSimilarityWeight(value)}
-                min={0}
-                max={1}
-                step={0.01}
-                valueLabelDisplay="auto"
-                valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
-                sx={{ flex: 1 }}
-              />
-              <TextField
-                type="number"
-                value={histogramSimilarityWeight}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value)
-                  if (!isNaN(val) && val >= 0 && val <= 1) {
-                    setHistogramSimilarityWeight(val)
-                  }
-                }}
-                inputProps={{ min: 0, max: 1, step: 0.01 }}
-                size="small"
-                sx={{ width: '80px' }}
-                label="權重"
-              />
-            </Box>
-            <Typography variant="caption" color="text.secondary">
-              當前: {Math.round(histogramSimilarityWeight * 100)}%
+              當前: {Math.round(uniqueRegionPenaltyWeight * 100)}%
             </Typography>
           </Grid>
         </Grid>
         <Box sx={{ mt: 2 }}>
-              <Typography variant="caption" color={Math.abs(similaritySsimWeight + similarityTemplateWeight + pixelSimilarityWeight + histogramSimilarityWeight - 1.0) < 0.01 ? 'success.main' : 'warning.main'}>
-                權重總和: {(similaritySsimWeight + similarityTemplateWeight + pixelSimilarityWeight + histogramSimilarityWeight).toFixed(2)} 
-                {Math.abs(similaritySsimWeight + similarityTemplateWeight + pixelSimilarityWeight + histogramSimilarityWeight - 1.0) < 0.01 ? ' ✓' : ' (建議調整為 1.0)'}
+              <Typography variant="caption" color={Math.abs(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight - 1.0) < 0.01 ? 'success.main' : 'warning.main'}>
+                權重總和: {(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight).toFixed(2)} 
+                {Math.abs(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight - 1.0) < 0.01 ? ' ✓' : ' (建議調整為 1.0)'}
               </Typography>
             </Box>
           </Box>
@@ -1083,7 +1041,6 @@ function MultiSealTest() {
               label="圖像1預覽"
               onEdit={handleEditImage1Seal}
               showSealIndicator={true}
-              onPreview={handlePreviewImage1}
             />
 
             {/* 編輯印鑑位置按鈕 */}
@@ -1164,7 +1121,6 @@ function MultiSealTest() {
               seals={image2?.multiple_seals || multipleSeals || []}
               label="圖像2預覽"
               onSealClick={handleSealClick}
-              onPreview={handlePreviewImage2}
             />
 
             {/* 操作按鈕 */}
@@ -1233,16 +1189,6 @@ function MultiSealTest() {
                           {taskStatus.status === 'completed' && `比對完成：${taskStatus.success_count}/${taskStatus.total_count} 個印鑑成功`}
                           {taskStatus.status === 'failed' && `比對失敗：${taskStatus.error || '未知錯誤'}`}
                         </Typography>
-                        {taskStatus.progress_message && (
-                          <Typography variant="caption" display="block">
-                            {taskStatus.progress_message}
-                          </Typography>
-                        )}
-                        {taskStatus.progress !== null && taskStatus.progress !== undefined && taskStatus.status !== 'completed' && (
-                          <Typography variant="caption" display="block">
-                            進度: {Math.round(taskStatus.progress)}%
-                          </Typography>
-                        )}
                         <Typography variant="caption" display="block" sx={{ mt: 0.5, fontFamily: 'monospace' }}>
                           任務 UID: {currentTaskUid}
                         </Typography>
@@ -1279,10 +1225,13 @@ function MultiSealTest() {
                                 image1Id: uploadImage1Mutation.data.id,
                                 sealImageIds: croppedImageIds,
                                 threshold: threshold,
-                                similaritySsimWeight: similaritySsimWeight,
-                                similarityTemplateWeight: similarityTemplateWeight,
-                                pixelSimilarityWeight: pixelSimilarityWeight,
-                                histogramSimilarityWeight: histogramSimilarityWeight
+                                similaritySsimWeight: 0.5, // 保留以向後兼容，但不再使用
+                                similarityTemplateWeight: 0.35,
+                                pixelSimilarityWeight: 0.1,
+                                histogramSimilarityWeight: 0.05,
+                                overlapWeight: overlapWeight,
+                                pixelDiffPenaltyWeight: pixelDiffPenaltyWeight,
+                                uniqueRegionPenaltyWeight: uniqueRegionPenaltyWeight
                               })
                             }}
                             disabled={compareMutation.isPending}
@@ -1381,24 +1330,6 @@ function MultiSealTest() {
           )}
         </DialogContent>
       </Dialog>
-
-      {/* 圖像1預覽對話框 */}
-      <ImagePreviewDialog
-        open={previewImage1}
-        onClose={() => setPreviewImage1(false)}
-        image={image1}
-        sealBbox={image1?.seal_bbox || null}
-        seals={[]}
-      />
-
-      {/* 圖像2預覽對話框 */}
-      <ImagePreviewDialog
-        open={previewImage2}
-        onClose={() => setPreviewImage2(false)}
-        image={image2}
-        sealBbox={null}
-        seals={image2?.multiple_seals || multipleSeals || []}
-      />
 
       {/* 操作反饋提示 */}
       <Snackbar
@@ -1563,6 +1494,117 @@ function MultiSealTest() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setErrorDialogOpen(false)}>關閉</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Mask相似度權重參數說明Dialog */}
+      <Dialog open={maskWeightDialogOpen} onClose={() => setMaskWeightDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <InfoIcon color="primary" />
+            Mask相似度權重參數說明
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mt: 1 }}>
+            {/* 重疊區域權重說明 */}
+            <Paper sx={{ p: 2, backgroundColor: '#e3f2fd' }}>
+              <Typography variant="h6" gutterBottom sx={{ color: 'primary.main' }}>
+                重疊區域權重
+              </Typography>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                <strong>預設值：</strong>0.5 (50%)
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                <strong>說明：</strong>
+                <br />
+                重疊區域比例越高，相似度越高。此權重控制重疊區域在最終相似度計算中的影響程度。
+                <br />
+                重疊區域是指兩個圖像中都有印鑑像素的區域，代表兩圖像的共同部分。
+              </Typography>
+            </Paper>
+
+            {/* 像素差異懲罰權重說明 */}
+            <Paper sx={{ p: 2, backgroundColor: '#fff3e0' }}>
+              <Typography variant="h6" gutterBottom sx={{ color: 'warning.main' }}>
+                像素差異懲罰權重
+              </Typography>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                <strong>預設值：</strong>0.3 (30%)
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                <strong>說明：</strong>
+                <br />
+                重疊區域內的像素差異比例越高，相似度越低。此權重控制像素差異對相似度的懲罰程度。
+                <br />
+                即使兩個圖像有重疊區域，如果重疊區域內的像素值差異很大，也會降低相似度分數。
+              </Typography>
+            </Paper>
+
+            {/* 獨有區域懲罰權重說明 */}
+            <Paper sx={{ p: 2, backgroundColor: '#fce4ec' }}>
+              <Typography variant="h6" gutterBottom sx={{ color: 'error.main' }}>
+                獨有區域懲罰權重
+              </Typography>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                <strong>預設值：</strong>0.2 (20%)
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                <strong>說明：</strong>
+                <br />
+                獨有區域比例越高，相似度越低。此權重控制獨有區域對相似度的懲罰程度。
+                <br />
+                獨有區域是指只在其中一個圖像中存在的印鑑像素區域，代表兩圖像的差異部分。
+              </Typography>
+            </Paper>
+
+            {/* 計算公式說明 */}
+            <Paper sx={{ p: 2, backgroundColor: '#f1f8e9' }}>
+              <Typography variant="h6" gutterBottom sx={{ color: 'success.main' }}>
+                計算公式
+              </Typography>
+              <Box
+                sx={{
+                  mt: 1.5,
+                  p: 2,
+                  backgroundColor: 'white',
+                  borderRadius: 1,
+                  border: '1px solid #e0e0e0',
+                }}
+              >
+                <Typography
+                  variant="body1"
+                  sx={{ fontFamily: 'monospace', textAlign: 'center', fontWeight: 'bold' }}
+                >
+                  相似度 = 重疊區域分數 × 重疊區域權重 + 像素差異懲罰 × 像素差異懲罰權重 + 獨有區域懲罰 × 獨有區域懲罰權重
+                </Typography>
+              </Box>
+              <Typography variant="body2" sx={{ mt: 1.5 }}>
+                <strong>權重說明：</strong>
+                <br />
+                • <strong>重疊區域分數</strong>：重疊區域像素數 / 總印鑑像素數
+                <br />
+                • <strong>像素差異懲罰</strong>：1 - (重疊區域內像素差異比例)
+                <br />
+                • <strong>獨有區域懲罰</strong>：1 - (圖像1獨有區域比例 + 圖像2獨有區域比例)
+              </Typography>
+            </Paper>
+
+            {/* 權重總和建議 */}
+            <Paper sx={{ p: 2, backgroundColor: '#f3e5f5' }}>
+              <Typography variant="h6" gutterBottom sx={{ color: 'secondary.main' }}>
+                權重總和建議
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                三個權重參數的總和建議為 <strong>1.0</strong>，這樣可以確保各項指標在最終相似度計算中的比例平衡。
+                <br />
+                如果總和不為1.0，系統仍會正常運作，但可能會影響相似度分數的絕對值。
+              </Typography>
+            </Paper>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMaskWeightDialogOpen(false)}>關閉</Button>
         </DialogActions>
       </Dialog>
     </Container>

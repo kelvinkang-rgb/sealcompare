@@ -77,7 +77,7 @@ class MultipleSealsSaveRequest(BaseModel):
 class CropSealsRequest(BaseModel):
     """裁切印鑑請求"""
     seals: list[SealInfo] = Field(..., description="要裁切的印鑑列表")
-    margin: Optional[int] = Field(10, ge=0, le=50, description="邊距（像素）")
+    margin: Optional[int] = Field(15, ge=0, le=50, description="邊距（像素），默認15。用於確保裁切後的圖像邊緣有足夠的背景區域，供去背景函數檢測背景色")
 
 
 class CropSealsResponse(BaseModel):
@@ -90,10 +90,15 @@ class MultiSealComparisonRequest(BaseModel):
     """多印鑑比對請求"""
     seal_image_ids: list[UUID] = Field(..., description="裁切後的印鑑圖像 ID 列表")
     threshold: Optional[float] = Field(0.95, ge=0.0, le=1.0, description="相似度閾值")
+    # 傳統相似度權重參數（保留以向後兼容，但不再使用）
     similarity_ssim_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="SSIM 權重")
     similarity_template_weight: Optional[float] = Field(0.35, ge=0.0, le=1.0, description="Template Match 權重")
     pixel_similarity_weight: Optional[float] = Field(0.1, ge=0.0, le=1.0, description="Pixel Similarity 權重")
     histogram_similarity_weight: Optional[float] = Field(0.05, ge=0.0, le=1.0, description="Histogram Similarity 權重")
+    # Mask相似度權重參數
+    overlap_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="重疊區域權重")
+    pixel_diff_penalty_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0, description="像素差異懲罰權重")
+    unique_region_penalty_weight: Optional[float] = Field(0.2, ge=0.0, le=1.0, description="獨有區域懲罰權重")
 
 
 class SealComparisonResult(BaseModel):
@@ -105,6 +110,13 @@ class SealComparisonResult(BaseModel):
     overlay1_path: Optional[str] = Field(None, description="疊圖1路徑（圖像1疊在印鑑上）")
     overlay2_path: Optional[str] = Field(None, description="疊圖2路徑（印鑑疊在圖像1上）")
     heatmap_path: Optional[str] = Field(None, description="熱力圖路徑")
+    overlap_mask_path: Optional[str] = Field(None, description="重疊區域mask路徑")
+    pixel_diff_mask_path: Optional[str] = Field(None, description="像素差異mask路徑")
+    diff_mask_2_only_path: Optional[str] = Field(None, description="圖像2獨有區域mask路徑")
+    diff_mask_1_only_path: Optional[str] = Field(None, description="圖像1獨有區域mask路徑")
+    gray_diff_path: Optional[str] = Field(None, description="灰度差異圖路徑（熱力圖視覺化）")
+    mask_statistics: Optional[Dict[str, Any]] = Field(None, description="Mask統計資訊")
+    mask_based_similarity: Optional[float] = Field(None, description="基於mask的相似度")
     input_image1_path: Optional[str] = Field(None, description="疊圖前的圖像1路徑（去背景後的裁切圖像）")
     input_image2_path: Optional[str] = Field(None, description="疊圖前的圖像2路徑（對齊後的印鑑圖像）")
     error: Optional[str] = Field(None, description="錯誤訊息（如果比對失敗）")

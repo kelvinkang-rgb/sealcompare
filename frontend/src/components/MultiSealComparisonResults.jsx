@@ -9,8 +9,16 @@ import {
   Alert,
   Card,
   CardContent,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableRow,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material'
-import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon } from '@mui/icons-material'
+import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, ExpandMore as ExpandMoreIcon } from '@mui/icons-material'
 import ImagePreviewDialog from './ImagePreviewDialog'
 
 function MultiSealComparisonResults({ results, image1Id }) {
@@ -87,7 +95,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
                       color="error"
                       size="small"
                     />
-                  ) : result.similarity !== null ? (
+                  ) : result.mask_based_similarity !== null && result.mask_based_similarity !== undefined ? (
                     <>
                       <Chip
                         icon={result.is_match ? <CheckCircleIcon /> : <CancelIcon />}
@@ -96,8 +104,8 @@ function MultiSealComparisonResults({ results, image1Id }) {
                         size="small"
                       />
                       <Chip
-                        label={`相似度: ${(result.similarity * 100).toFixed(2)}%`}
-                        color={result.is_match ? 'success' : 'default'}
+                        label={`Mask相似度: ${(result.mask_based_similarity * 100).toFixed(2)}%`}
+                        color={result.is_match ? 'success' : 'info'}
                         size="small"
                         variant="outlined"
                       />
@@ -116,7 +124,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
                 {!result.error && (
                   <Grid container spacing={1}>
                     {/* 輸入圖像1：去背景後的圖像1 */}
-                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
+                    <Grid item xs={12} sm={6} md={3} sx={{ flexBasis: { md: '25%' }, maxWidth: { md: '25%' } }}>
                       <Paper
                         sx={{
                           p: 1,
@@ -156,7 +164,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
                     </Grid>
 
                     {/* 輸入圖像2：對齊後的印鑑圖像 */}
-                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
+                    <Grid item xs={12} sm={6} md={3} sx={{ flexBasis: { md: '25%' }, maxWidth: { md: '25%' } }}>
                       <Paper
                         sx={{
                           p: 1,
@@ -196,7 +204,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
                     </Grid>
 
                     {/* 疊圖1 */}
-                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
+                    <Grid item xs={12} sm={6} md={3} sx={{ flexBasis: { md: '25%' }, maxWidth: { md: '25%' } }}>
                       <Paper
                         sx={{
                           p: 1,
@@ -246,7 +254,7 @@ function MultiSealComparisonResults({ results, image1Id }) {
                     </Grid>
 
                     {/* 疊圖2 */}
-                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
+                    <Grid item xs={12} sm={6} md={3} sx={{ flexBasis: { md: '25%' }, maxWidth: { md: '25%' } }}>
                       <Paper
                         sx={{
                           p: 1,
@@ -294,28 +302,209 @@ function MultiSealComparisonResults({ results, image1Id }) {
                         )}
                       </Paper>
                     </Grid>
+                  </Grid>
+                )}
 
-                    {/* 熱力圖 */}
-                    <Grid item xs={12} sm={6} md={2} sx={{ flexBasis: { md: '20%' }, maxWidth: { md: '20%' } }}>
+                {/* Mask像素差異視覺化區域 */}
+                {!result.error && (
+                  <Box sx={{ mt: 2 }}>
+                    <Accordion defaultExpanded={false}>
+                      <AccordionSummary
+                        expandIcon={<ExpandMoreIcon />}
+                        aria-controls="mask-visualization-content"
+                        id="mask-visualization-header"
+                      >
+                        <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
+                          Mask像素差異視覺化
+                        </Typography>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        <Grid container spacing={1}>
+                          {/* 重疊區域mask */}
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Paper
+                              sx={{
+                                p: 1,
+                                textAlign: 'center',
+                                cursor: result.overlap_mask_path ? 'pointer' : 'default',
+                                '&:hover': result.overlap_mask_path ? { opacity: 0.8 } : {},
+                              }}
+                              onClick={() => result.overlap_mask_path && handleImageClick(
+                                result.overlap_mask_path,
+                                `印鑑 ${result.seal_index} - 重疊區域 (Overlap Mask)`
+                              )}
+                            >
+                              <Typography variant="caption" display="block" gutterBottom>
+                                重疊區域 (Overlap Mask)
+                              </Typography>
+                              {result.overlap_mask_path ? (
+                                <img
+                                  src={getImageUrl(result.overlap_mask_path)}
+                                  alt="重疊區域mask"
+                                  style={{
+                                    width: '100%',
+                                    height: '200px',
+                                    objectFit: 'contain',
+                                    borderRadius: '4px',
+                                  }}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none'
+                                    e.target.parentElement.innerHTML =
+                                      '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                                  }}
+                                />
+                              ) : (
+                                <Box sx={{ p: 2, color: 'text.secondary' }}>
+                                  未生成
+                                </Box>
+                              )}
+                            </Paper>
+                          </Grid>
+
+                          {/* 像素差異mask */}
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Paper
+                              sx={{
+                                p: 1,
+                                textAlign: 'center',
+                                cursor: result.pixel_diff_mask_path ? 'pointer' : 'default',
+                                '&:hover': result.pixel_diff_mask_path ? { opacity: 0.8 } : {},
+                              }}
+                              onClick={() => result.pixel_diff_mask_path && handleImageClick(
+                                result.pixel_diff_mask_path,
+                                `印鑑 ${result.seal_index} - 像素差異 (Pixel Difference Mask)`
+                              )}
+                            >
+                              <Typography variant="caption" display="block" gutterBottom>
+                                像素差異 (Pixel Difference Mask)
+                              </Typography>
+                              {result.pixel_diff_mask_path ? (
+                                <img
+                                  src={getImageUrl(result.pixel_diff_mask_path)}
+                                  alt="像素差異mask"
+                                  style={{
+                                    width: '100%',
+                                    height: '200px',
+                                    objectFit: 'contain',
+                                    borderRadius: '4px',
+                                  }}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none'
+                                    e.target.parentElement.innerHTML =
+                                      '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                                  }}
+                                />
+                              ) : (
+                                <Box sx={{ p: 2, color: 'text.secondary' }}>
+                                  未生成
+                                </Box>
+                              )}
+                            </Paper>
+                          </Grid>
+
+                          {/* 圖像2獨有區域mask */}
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Paper
+                              sx={{
+                                p: 1,
+                                textAlign: 'center',
+                                cursor: result.diff_mask_2_only_path ? 'pointer' : 'default',
+                                '&:hover': result.diff_mask_2_only_path ? { opacity: 0.8 } : {},
+                              }}
+                              onClick={() => result.diff_mask_2_only_path && handleImageClick(
+                                result.diff_mask_2_only_path,
+                                `印鑑 ${result.seal_index} - 圖像2獨有區域 (Image 2 Only)`
+                              )}
+                            >
+                              <Typography variant="caption" display="block" gutterBottom>
+                                圖像2獨有區域 (Image 2 Only)
+                              </Typography>
+                              {result.diff_mask_2_only_path ? (
+                                <img
+                                  src={getImageUrl(result.diff_mask_2_only_path)}
+                                  alt="圖像2獨有區域mask"
+                                  style={{
+                                    width: '100%',
+                                    height: '200px',
+                                    objectFit: 'contain',
+                                    borderRadius: '4px',
+                                  }}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none'
+                                    e.target.parentElement.innerHTML =
+                                      '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                                  }}
+                                />
+                              ) : (
+                                <Box sx={{ p: 2, color: 'text.secondary' }}>
+                                  未生成
+                          </Box>
+                        )}
+                      </Paper>
+                    </Grid>
+
+                          {/* 圖像1獨有區域mask */}
+                          <Grid item xs={12} sm={6} md={3}>
                       <Paper
                         sx={{
                           p: 1,
                           textAlign: 'center',
-                          cursor: result.heatmap_path ? 'pointer' : 'default',
-                          '&:hover': result.heatmap_path ? { opacity: 0.8 } : {},
+                                cursor: result.diff_mask_1_only_path ? 'pointer' : 'default',
+                                '&:hover': result.diff_mask_1_only_path ? { opacity: 0.8 } : {},
                         }}
-                        onClick={() => result.heatmap_path && handleImageClick(
-                          result.heatmap_path,
-                          `印鑑 ${result.seal_index} - 差異熱力圖`
+                              onClick={() => result.diff_mask_1_only_path && handleImageClick(
+                                result.diff_mask_1_only_path,
+                                `印鑑 ${result.seal_index} - 圖像1獨有區域 (Image 1 Only)`
                         )}
                       >
                         <Typography variant="caption" display="block" gutterBottom>
-                          差異熱力圖
+                                圖像1獨有區域 (Image 1 Only)
                         </Typography>
-                        {result.heatmap_path ? (
+                              {result.diff_mask_1_only_path ? (
                           <img
-                            src={getImageUrl(result.heatmap_path)}
-                            alt="熱力圖"
+                                  src={getImageUrl(result.diff_mask_1_only_path)}
+                                  alt="圖像1獨有區域mask"
+                            style={{
+                              width: '100%',
+                              height: '200px',
+                              objectFit: 'contain',
+                              borderRadius: '4px',
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = 'none'
+                              e.target.parentElement.innerHTML =
+                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                            }}
+                          />
+                        ) : (
+                          <Box sx={{ p: 2, color: 'text.secondary' }}>
+                            未生成
+                          </Box>
+                        )}
+                      </Paper>
+                    </Grid>
+
+                    {/* 灰度差異圖 (Gray Diff) */}
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Paper
+                        sx={{
+                          p: 1,
+                          textAlign: 'center',
+                          cursor: result.gray_diff_path ? 'pointer' : 'default',
+                          '&:hover': result.gray_diff_path ? { opacity: 0.8 } : {},
+                        }}
+                        onClick={() => result.gray_diff_path && handleImageClick(
+                          result.gray_diff_path,
+                          `印鑑 ${result.seal_index} - 灰度差異圖 (Gray Diff)`
+                        )}
+                      >
+                        <Typography variant="caption" display="block" gutterBottom>
+                          灰度差異圖 (Gray Diff)
+                        </Typography>
+                        {result.gray_diff_path ? (
+                          <img
+                            src={getImageUrl(result.gray_diff_path)}
+                            alt="灰度差異圖"
                             style={{
                               width: '100%',
                               height: '200px',
@@ -336,6 +525,127 @@ function MultiSealComparisonResults({ results, image1Id }) {
                       </Paper>
                     </Grid>
                   </Grid>
+                      </AccordionDetails>
+                    </Accordion>
+                  </Box>
+                )}
+
+                {/* Mask統計資訊區域 */}
+                {!result.error && result.mask_statistics && (
+                  <Box sx={{ mt: 2 }}>
+                    <Accordion>
+                      <AccordionSummary
+                        expandIcon={<ExpandMoreIcon />}
+                        aria-controls="mask-statistics-content"
+                        id="mask-statistics-header"
+                      >
+                        <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
+                          Mask統計資訊
+                        </Typography>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        <TableContainer component={Paper} variant="outlined">
+                          <Table size="small">
+                            <TableBody>
+                              {/* 像素數量組 */}
+                              <TableRow>
+                                <TableCell colSpan={2} sx={{ backgroundColor: 'grey.100', fontWeight: 'bold' }}>
+                                  像素數量
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'success.main', fontWeight: 'medium' }}>
+                                  重疊區域像素
+                                </TableCell>
+                                <TableCell align="right">
+                                  {result.mask_statistics.overlap_pixels?.toLocaleString() || 0}
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'error.main', fontWeight: 'medium' }}>
+                                  像素差異數量
+                                </TableCell>
+                                <TableCell align="right">
+                                  {result.mask_statistics.pixel_diff_pixels?.toLocaleString() || 0}
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'warning.main', fontWeight: 'medium' }}>
+                                  圖像2獨有區域像素
+                                </TableCell>
+                                <TableCell align="right">
+                                  {result.mask_statistics.diff_2_only_pixels?.toLocaleString() || 0}
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'warning.main', fontWeight: 'medium' }}>
+                                  圖像1獨有區域像素
+                                </TableCell>
+                                <TableCell align="right">
+                                  {result.mask_statistics.diff_1_only_pixels?.toLocaleString() || 0}
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ fontWeight: 'bold' }}>
+                                  總印章像素
+                                </TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>
+                                  {result.mask_statistics.total_seal_pixels?.toLocaleString() || 0}
+                                </TableCell>
+                              </TableRow>
+
+                              {/* 比例組 */}
+                              <TableRow>
+                                <TableCell colSpan={2} sx={{ backgroundColor: 'grey.100', fontWeight: 'bold', pt: 2 }}>
+                                  比例
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'success.main', fontWeight: 'medium' }}>
+                                  重疊區域比例
+                                </TableCell>
+                                <TableCell align="right">
+                                  {(result.mask_statistics.overlap_ratio * 100)?.toFixed(2) || '0.00'}%
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'error.main', fontWeight: 'medium' }}>
+                                  像素差異比例
+                                </TableCell>
+                                <TableCell align="right">
+                                  {(result.mask_statistics.pixel_diff_ratio * 100)?.toFixed(2) || '0.00'}%
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'warning.main', fontWeight: 'medium' }}>
+                                  圖像2獨有區域比例
+                                </TableCell>
+                                <TableCell align="right">
+                                  {(result.mask_statistics.diff_2_only_ratio * 100)?.toFixed(2) || '0.00'}%
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'warning.main', fontWeight: 'medium' }}>
+                                  圖像1獨有區域比例
+                                </TableCell>
+                                <TableCell align="right">
+                                  {(result.mask_statistics.diff_1_only_ratio * 100)?.toFixed(2) || '0.00'}%
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell sx={{ color: 'error.main', fontWeight: 'bold' }}>
+                                  總差異比例
+                                </TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold' }}>
+                                  {(result.mask_statistics.total_diff_ratio * 100)?.toFixed(2) || '0.00'}%
+                                </TableCell>
+                              </TableRow>
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </AccordionDetails>
+                    </Accordion>
+                  </Box>
                 )}
               </CardContent>
             </Card>

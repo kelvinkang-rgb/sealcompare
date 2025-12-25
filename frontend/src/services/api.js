@@ -80,7 +80,7 @@ export const imageAPI = {
   },
   
   // 多印鑑比對相關 API（測試功能）- 異步任務模式
-  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.95, similaritySsimWeight = 0.5, similarityTemplateWeight = 0.35, pixelSimilarityWeight = 0.1, histogramSimilarityWeight = 0.05) => {
+  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.95, similaritySsimWeight = 0.5, similarityTemplateWeight = 0.35, pixelSimilarityWeight = 0.1, histogramSimilarityWeight = 0.05, overlapWeight = 0.5, pixelDiffPenaltyWeight = 0.3, uniqueRegionPenaltyWeight = 0.2) => {
     // 創建比對任務（異步模式）
     const response = await api.post(`/images/${image1Id}/compare-with-seals`, {
       seal_image_ids: sealImageIds,
@@ -88,7 +88,10 @@ export const imageAPI = {
       similarity_ssim_weight: similaritySsimWeight,
       similarity_template_weight: similarityTemplateWeight,
       pixel_similarity_weight: pixelSimilarityWeight,
-      histogram_similarity_weight: histogramSimilarityWeight
+      histogram_similarity_weight: histogramSimilarityWeight,
+      overlap_weight: overlapWeight,
+      pixel_diff_penalty_weight: pixelDiffPenaltyWeight,
+      unique_region_penalty_weight: uniqueRegionPenaltyWeight
     })
     return response.data // 返回任務信息，包含 task_uid
   },

@@ -252,7 +252,8 @@ def crop_seals(
     
     - **image_id**: 原圖像 ID
     - **seals**: 印鑑列表，每個元素包含 bbox, center, confidence
-    - **margin**: 邊距（像素），默認10
+    - **margin**: 邊距（像素），默認15。邊距用於確保裁切後的圖像邊緣有足夠的背景區域，
+                  供 remove_background_and_make_transparent 函數檢測背景色（至少需要5像素邊緣）
     """
     image_service = ImageService(db)
     try:
@@ -268,7 +269,7 @@ def crop_seals(
         cropped_image_ids = image_service.crop_seals(
             image_id, 
             seals_data, 
-            margin=request.margin or 10
+            margin=request.margin or 15
         )
         return CropSealsResponse(
             cropped_image_ids=cropped_image_ids,
@@ -321,8 +322,13 @@ def compare_image1_with_seals(
     db.commit()
     db.refresh(task)
     
+    # 提取mask權重參數（如果存在），否則使用預設值
+    overlap_weight = request.overlap_weight if request.overlap_weight is not None else 0.5
+    pixel_diff_penalty_weight = request.pixel_diff_penalty_weight if request.pixel_diff_penalty_weight is not None else 0.3
+    unique_region_penalty_weight = request.unique_region_penalty_weight if request.unique_region_penalty_weight is not None else 0.2
+    
     # 添加後台任務處理比對
-    def process_comparison_task(task_uid_str: str):
+    def process_comparison_task(task_uid_str: str, overlap_w: float, pixel_diff_penalty_w: float, unique_region_penalty_w: float):
         """後台任務：處理比對"""
         db_task = SessionLocal()
         try:
@@ -382,6 +388,13 @@ def compare_image1_with_seals(
                             'overlay1_path': result['overlay1_path'],
                             'overlay2_path': result['overlay2_path'],
                             'heatmap_path': result['heatmap_path'],
+                            'overlap_mask_path': result.get('overlap_mask_path'),
+                            'pixel_diff_mask_path': result.get('pixel_diff_mask_path'),
+                            'diff_mask_2_only_path': result.get('diff_mask_2_only_path'),
+                            'diff_mask_1_only_path': result.get('diff_mask_1_only_path'),
+                            'gray_diff_path': result.get('gray_diff_path'),
+                            'mask_statistics': result.get('mask_statistics'),
+                            'mask_based_similarity': result.get('mask_based_similarity'),
                             'input_image1_path': result.get('input_image1_path'),
                             'input_image2_path': result.get('input_image2_path'),
                             'error': result['error'],
@@ -439,6 +452,9 @@ def compare_image1_with_seals(
                 similarity_template_weight=task_record.similarity_template_weight,
                 pixel_similarity_weight=task_record.pixel_similarity_weight,
                 histogram_similarity_weight=task_record.histogram_similarity_weight,
+                overlap_weight=overlap_w,
+                pixel_diff_penalty_weight=pixel_diff_penalty_w,
+                unique_region_penalty_weight=unique_region_penalty_w,
                 task_uid=task_uid_str,
                 task_update_callback=update_task_with_result
             )
@@ -516,6 +532,13 @@ def compare_image1_with_seals(
                                             'overlay1_path': retry_result['overlay1_path'],
                                             'overlay2_path': retry_result['overlay2_path'],
                                             'heatmap_path': retry_result['heatmap_path'],
+                                            'overlap_mask_path': retry_result.get('overlap_mask_path'),
+                                            'pixel_diff_mask_path': retry_result.get('pixel_diff_mask_path'),
+                                            'diff_mask_2_only_path': retry_result.get('diff_mask_2_only_path'),
+                                            'diff_mask_1_only_path': retry_result.get('diff_mask_1_only_path'),
+                                            'gray_diff_path': retry_result.get('gray_diff_path'),
+                                            'mask_statistics': retry_result.get('mask_statistics'),
+                                            'mask_based_similarity': retry_result.get('mask_based_similarity'),
                                             'input_image1_path': retry_result.get('input_image1_path'),
                                             'input_image2_path': retry_result.get('input_image2_path'),
                                             'error': retry_result['error'],
@@ -600,7 +623,7 @@ def compare_image1_with_seals(
         finally:
             db_task.close()
     
-    background_tasks.add_task(process_comparison_task, task_uid)
+    background_tasks.add_task(process_comparison_task, task_uid, overlap_weight, pixel_diff_penalty_weight, unique_region_penalty_weight)
     
     logger.info(f"任務已創建並加入後台處理: {task_uid}")
     
