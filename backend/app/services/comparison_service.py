@@ -503,7 +503,9 @@ class ComparisonService:
         self, 
         image: np.ndarray, 
         reference_image: Optional[np.ndarray] = None,
-        is_image2: bool = False
+        is_image2: bool = False,
+        rotation_range: float = 15.0,
+        translation_range: int = 100
     ) -> Tuple[np.ndarray, Optional[float], Optional[Tuple[int, int]], Optional[float], Optional[Dict[str, float]]]:
         """
         去背景並對齊圖像
@@ -535,7 +537,7 @@ class ComparisonService:
             try:
                 # reference_image 已經是去背景後的圖像（img1_no_bg），不需要再次處理
                 image_aligned, angle, offset, similarity, metrics = comparator._align_image2_to_image1(
-                    reference_image, image, rotation_range=15.0, translation_range=100
+                    reference_image, image, rotation_range=rotation_range, translation_range=translation_range
                 )
                 return image_aligned, angle, offset, similarity, metrics
             except Exception as e:

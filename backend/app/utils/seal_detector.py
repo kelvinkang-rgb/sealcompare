@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 import signal
 import time
+import logging
 
 
 class TimeoutError(Exception):
@@ -448,33 +449,42 @@ def _detect_multiple_by_contours(image: np.ndarray, max_seals: int = 10) -> list
         
         # 篩選輪廓（基於面積和圓度）- 降低判定標準以檢測更多相似圖像
         valid_seals = []
+        error_count = 0
         for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < (w * h * 0.001):  # 降低最小面積要求（從1%降到0.1%）
-                continue
-            if area > (w * h * 0.95):  # 放寬最大面積限制（從90%提高到95%）
-                continue
-            circularity = _calculate_circularity(contour)
-            if circularity > 0.05:  # 降低圓度要求（從0.2降到0.05）
-                # 計算邊界框和中心點
-                bbox, center, radius = _calculate_bbox_and_center(contour)
-                
-                # 計算置信度
-                area_ratio = area / (w * h)
-                confidence = min(0.9, 0.4 + circularity * 0.3 + min(area_ratio * 5, 0.2))
-                
-                # 驗證檢測結果
-                if _validate_detection({
-                    'detected': True,
-                    'bbox': bbox,
-                    'center': center
-                }, w, h):
-                    valid_seals.append({
+            try:
+                area = cv2.contourArea(contour)
+                if area < (w * h * 0.001):  # 降低最小面積要求（從1%降到0.1%）
+                    continue
+                if area > (w * h * 0.95):  # 放寬最大面積限制（從90%提高到95%）
+                    continue
+                circularity = _calculate_circularity(contour)
+                if circularity > 0.05:  # 降低圓度要求（從0.2降到0.05）
+                    # 計算邊界框和中心點
+                    bbox, center, radius = _calculate_bbox_and_center(contour)
+                    
+                    # 計算置信度
+                    area_ratio = area / (w * h)
+                    confidence = min(0.9, 0.4 + circularity * 0.3 + min(area_ratio * 5, 0.2))
+                    
+                    # 驗證檢測結果
+                    if _validate_detection({
+                        'detected': True,
                         'bbox': bbox,
-                        'center': center,
-                        'confidence': confidence,
-                        'circularity': circularity
-                    })
+                        'center': center
+                    }, w, h):
+                        valid_seals.append({
+                            'bbox': bbox,
+                            'center': center,
+                            'confidence': confidence,
+                            'circularity': circularity
+                        })
+            except Exception as e:
+                # 單個輪廓處理失敗時，記錄錯誤但繼續處理下一個輪廓
+                error_count += 1
+                # 如果錯誤太多（超過總輪廓數的50%），記錄警告但繼續處理
+                if error_count > len(contours) * 0.5:
+                    logging.warning(f"檢測過程中遇到較多錯誤 ({error_count}/{len(contours)})，但繼續處理剩餘輪廓")
+                continue
         
         if not valid_seals:
             return []
@@ -483,12 +493,19 @@ def _detect_multiple_by_contours(image: np.ndarray, max_seals: int = 10) -> list
         valid_seals.sort(key=lambda x: x['confidence'], reverse=True)
         
         # 使用 NMS 過濾重疊的檢測結果（提高IoU閾值以保留更多重疊結果）
-        filtered_seals = _apply_nms(valid_seals, iou_threshold=0.6)
+        try:
+            filtered_seals = _apply_nms(valid_seals, iou_threshold=0.6)
+        except Exception as e:
+            # 如果 NMS 處理失敗，返回原始排序結果
+            logging.warning(f"NMS 處理失敗: {str(e)}，返回原始檢測結果")
+            filtered_seals = valid_seals
         
         # 返回前 max_seals 個
         return filtered_seals[:max_seals]
         
     except Exception as e:
+        # 記錄錯誤但返回空列表（外層函數會處理）
+        logging.error(f"多印鑑檢測過程出錯: {str(e)}")
         return []
 
 

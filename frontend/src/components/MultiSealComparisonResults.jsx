@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   Box,
   Paper,
@@ -17,14 +17,27 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  TextField,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Stack,
 } from '@mui/material'
-import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, ExpandMore as ExpandMoreIcon } from '@mui/icons-material'
+import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, ExpandMore as ExpandMoreIcon, Search as SearchIcon } from '@mui/icons-material'
 import ImagePreviewDialog from './ImagePreviewDialog'
 
-function MultiSealComparisonResults({ results, image1Id }) {
+function MultiSealComparisonResults({ results, image1Id, similarityRange }) {
   const [modalOpen, setModalOpen] = useState(false)
   const [modalImageUrl, setModalImageUrl] = useState('')
   const [modalImage, setModalImage] = useState(null)
+  
+  // 篩選、排序、搜尋狀態
+  const [searchText, setSearchText] = useState('')
+  const [matchFilter, setMatchFilter] = useState('all') // 'all', 'match', 'no-match'
+  const [sortBy, setSortBy] = useState('index-asc') // 'index-asc', 'index-desc', 'similarity-asc', 'similarity-desc'
+  const [minSimilarity, setMinSimilarity] = useState('') // mask相似度最小值（0-100）
+  const [maxSimilarity, setMaxSimilarity] = useState('') // mask相似度最大值（0-100）
 
   const handleImageClick = (imagePath, title) => {
     if (!imagePath) return
@@ -64,6 +77,75 @@ function MultiSealComparisonResults({ results, image1Id }) {
     setModalImage(null)
   }
 
+  // 篩選、排序、搜尋邏輯
+  const filteredAndSortedResults = useMemo(() => {
+    if (!results || results.length === 0) return []
+
+    let filtered = [...results]
+
+    // 1. 相似度範圍篩選（來自 histogram）
+    if (similarityRange) {
+      const [minSimilarity, maxSimilarity] = similarityRange
+      filtered = filtered.filter(result => {
+        if (result.mask_based_similarity === null || result.mask_based_similarity === undefined) return false
+        return result.mask_based_similarity >= minSimilarity && result.mask_based_similarity <= maxSimilarity
+      })
+    }
+
+    // 2. 匹配狀態篩選
+    if (matchFilter !== 'all') {
+      filtered = filtered.filter(result => {
+        if (matchFilter === 'match') {
+          return result.is_match === true
+        } else if (matchFilter === 'no-match') {
+          return result.is_match === false || result.error
+        }
+        return true
+      })
+    }
+
+    // 3. Mask相似度範圍篩選
+    if (minSimilarity !== '' || maxSimilarity !== '') {
+      filtered = filtered.filter(result => {
+        if (result.mask_based_similarity === null || result.mask_based_similarity === undefined) return false
+        const similarityPercent = result.mask_based_similarity * 100
+        const min = minSimilarity !== '' ? parseFloat(minSimilarity) : 0
+        const max = maxSimilarity !== '' ? parseFloat(maxSimilarity) : 100
+        return similarityPercent >= min && similarityPercent <= max
+      })
+    }
+
+    // 4. 印鑑索引搜尋
+    if (searchText.trim()) {
+      const searchLower = searchText.toLowerCase().trim()
+      filtered = filtered.filter(result => {
+        return result.seal_index.toString().includes(searchLower)
+      })
+    }
+
+    // 5. 排序
+    filtered.sort((a, b) => {
+      switch (sortBy) {
+        case 'index-asc':
+          return a.seal_index - b.seal_index
+        case 'index-desc':
+          return b.seal_index - a.seal_index
+        case 'similarity-asc':
+          const simA = a.mask_based_similarity ?? 0
+          const simB = b.mask_based_similarity ?? 0
+          return simA - simB
+        case 'similarity-desc':
+          const simA2 = a.mask_based_similarity ?? 0
+          const simB2 = b.mask_based_similarity ?? 0
+          return simB2 - simA2
+        default:
+          return 0
+      }
+    })
+
+    return filtered
+  }, [results, similarityRange, matchFilter, searchText, sortBy, minSimilarity, maxSimilarity])
+
   if (!results || results.length === 0) {
     return (
       <Alert severity="info" sx={{ mt: 2 }}>
@@ -74,12 +156,97 @@ function MultiSealComparisonResults({ results, image1Id }) {
 
   return (
     <Box sx={{ mt: 3 }}>
-      <Typography variant="h6" gutterBottom>
-        比對結果 ({results.length} 個印鑑)
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6">
+          比對結果 ({filteredAndSortedResults.length} / {results.length} 個印鑑)
+        </Typography>
+      </Box>
+
+      {/* 篩選、排序、搜尋控制項 */}
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          {/* 搜尋框 */}
+          <TextField
+            size="small"
+            placeholder="搜尋印鑑索引..."
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            InputProps={{
+              startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+            }}
+            sx={{ flex: 1 }}
+          />
+
+          {/* Mask相似度範圍篩選 */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <TextField
+              size="small"
+              type="number"
+              placeholder="最小%"
+              value={minSimilarity}
+              onChange={(e) => {
+                const val = e.target.value
+                if (val === '' || (parseFloat(val) >= 0 && parseFloat(val) <= 100)) {
+                  setMinSimilarity(val)
+                }
+              }}
+              inputProps={{ min: 0, max: 100, step: 0.1 }}
+              sx={{ width: 80 }}
+              label="最小相似度"
+            />
+            <Typography variant="body2" color="text.secondary">
+              ~
+            </Typography>
+            <TextField
+              size="small"
+              type="number"
+              placeholder="最大%"
+              value={maxSimilarity}
+              onChange={(e) => {
+                const val = e.target.value
+                if (val === '' || (parseFloat(val) >= 0 && parseFloat(val) <= 100)) {
+                  setMaxSimilarity(val)
+                }
+              }}
+              inputProps={{ min: 0, max: 100, step: 0.1 }}
+              sx={{ width: 80 }}
+              label="最大相似度"
+            />
+          </Box>
+
+          {/* 匹配狀態篩選 */}
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>匹配狀態</InputLabel>
+            <Select
+              value={matchFilter}
+              label="匹配狀態"
+              onChange={(e) => setMatchFilter(e.target.value)}
+            >
+              <MenuItem value="all">全部</MenuItem>
+              <MenuItem value="match">匹配</MenuItem>
+              <MenuItem value="no-match">不匹配</MenuItem>
+            </Select>
+          </FormControl>
+
+          {/* 排序 */}
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>排序方式</InputLabel>
+            <Select
+              value={sortBy}
+              label="排序方式"
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <MenuItem value="index-asc">印鑑索引 ↑</MenuItem>
+              <MenuItem value="index-desc">印鑑索引 ↓</MenuItem>
+              <MenuItem value="similarity-asc">相似度 ↑</MenuItem>
+              <MenuItem value="similarity-desc">相似度 ↓</MenuItem>
+            </Select>
+          </FormControl>
+        </Stack>
+      </Paper>
       
       <Grid container spacing={2}>
-        {results.map((result, index) => (
+        {filteredAndSortedResults.map((result, index) => (
           <Grid item xs={12} key={result.seal_image_id || index}>
             <Card>
               <CardContent>

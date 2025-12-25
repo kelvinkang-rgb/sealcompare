@@ -191,14 +191,14 @@ def update_seal_location(
 @router.post("/{image_id}/detect-multiple-seals", response_model=MultipleSealsDetectionResponse)
 def detect_multiple_seals(
     image_id: UUID,
-    max_seals: int = Query(10, ge=1, le=50, description="最大檢測數量"),
+    max_seals: int = Query(10, ge=1, le=160, description="最大檢測數量"),
     db: Session = Depends(get_db)
 ):
     """
     檢測圖像中的多個印鑑位置（測試功能）
     
     - **image_id**: 圖像 ID
-    - **max_seals**: 最大檢測數量，默認10，範圍1-50
+    - **max_seals**: 最大檢測數量，默認10，範圍1-160
     """
     image_service = ImageService(db)
     try:
@@ -326,9 +326,12 @@ def compare_image1_with_seals(
     overlap_weight = request.overlap_weight if request.overlap_weight is not None else 0.5
     pixel_diff_penalty_weight = request.pixel_diff_penalty_weight if request.pixel_diff_penalty_weight is not None else 0.3
     unique_region_penalty_weight = request.unique_region_penalty_weight if request.unique_region_penalty_weight is not None else 0.2
+    # 提取圖像對齊參數（如果存在），否則使用預設值
+    rotation_range = request.rotation_range if request.rotation_range is not None else 15.0
+    translation_range = request.translation_range if request.translation_range is not None else 100
     
     # 添加後台任務處理比對
-    def process_comparison_task(task_uid_str: str, overlap_w: float, pixel_diff_penalty_w: float, unique_region_penalty_w: float):
+    def process_comparison_task(task_uid_str: str, overlap_w: float, pixel_diff_penalty_w: float, unique_region_penalty_w: float, rotation_r: float, translation_r: int):
         """後台任務：處理比對"""
         db_task = SessionLocal()
         try:
@@ -455,6 +458,8 @@ def compare_image1_with_seals(
                 overlap_weight=overlap_w,
                 pixel_diff_penalty_weight=pixel_diff_penalty_w,
                 unique_region_penalty_weight=unique_region_penalty_w,
+                rotation_range=rotation_r,
+                translation_range=translation_r,
                 task_uid=task_uid_str,
                 task_update_callback=update_task_with_result
             )
@@ -623,7 +628,7 @@ def compare_image1_with_seals(
         finally:
             db_task.close()
     
-    background_tasks.add_task(process_comparison_task, task_uid, overlap_weight, pixel_diff_penalty_weight, unique_region_penalty_weight)
+    background_tasks.add_task(process_comparison_task, task_uid, overlap_weight, pixel_diff_penalty_weight, unique_region_penalty_weight, rotation_range, translation_range)
     
     logger.info(f"任務已創建並加入後台處理: {task_uid}")
     

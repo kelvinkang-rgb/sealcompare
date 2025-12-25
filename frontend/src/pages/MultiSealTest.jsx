@@ -32,6 +32,7 @@ import SealDetectionBox from '../components/SealDetectionBox'
 import MultiSealPreview from '../components/MultiSealPreview'
 import MultiSealDetectionBox from '../components/MultiSealDetectionBox'
 import MultiSealComparisonResults from '../components/MultiSealComparisonResults'
+import SimilarityHistogram from '../components/SimilarityHistogram'
 
 function MultiSealTest() {
   const navigate = useNavigate()
@@ -60,7 +61,7 @@ function MultiSealTest() {
   const [threshold, setThreshold] = useState(0.88) // 默認 88%
   
   // 比對印鑑數量上限
-  const [maxSeals, setMaxSeals] = useState(6) // 默認 6
+  const [maxSeals, setMaxSeals] = useState(3) // 默認 3
   const [lastDetectionMaxSeals, setLastDetectionMaxSeals] = useState(null) // 記錄上次檢測使用的 maxSeals
   
   // Mask相似度權重參數
@@ -766,13 +767,15 @@ function MultiSealTest() {
                 value={maxSeals}
                 onChange={(e, value) => setMaxSeals(value)}
                 min={1}
-                max={20}
+                max={160}
                 step={1}
                 marks={[
                   { value: 1, label: '1' },
-                  { value: 6, label: '6' },
+                  { value: 3, label: '3' },
                   { value: 10, label: '10' },
-                  { value: 20, label: '20' }
+                  { value: 50, label: '50' },
+                  { value: 100, label: '100' },
+                  { value: 160, label: '160' }
                 ]}
                 valueLabelDisplay="auto"
                 sx={{ flex: 1 }}
@@ -782,13 +785,13 @@ function MultiSealTest() {
                 value={maxSeals}
                 onChange={(e) => {
                   const val = parseInt(e.target.value)
-                  if (!isNaN(val) && val >= 1 && val <= 20) {
+                  if (!isNaN(val) && val >= 1 && val <= 160) {
                     setMaxSeals(val)
                   }
                 }}
                 inputProps={{ 
                   min: 1, 
-                  max: 20, 
+                  max: 160, 
                   step: 1 
                 }}
                 size="small"
@@ -1268,12 +1271,20 @@ function MultiSealTest() {
         </Grid>
       </Grid>
 
+      {/* Histogram 統計圖表 */}
+      {comparisonResults && comparisonResults.length > 0 && (
+        <SimilarityHistogram
+          results={comparisonResults}
+        />
+      )}
+
       {/* 顯示比對結果 */}
       {comparisonResults && comparisonResults.length > 0 && (
         <Box sx={{ mt: 4 }}>
           <MultiSealComparisonResults 
             results={comparisonResults}
             image1Id={uploadImage1Mutation.data?.id}
+            similarityRange={null}
           />
         </Box>
       )}

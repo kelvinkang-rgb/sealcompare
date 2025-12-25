@@ -99,6 +99,9 @@ class MultiSealComparisonRequest(BaseModel):
     overlap_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="重疊區域權重")
     pixel_diff_penalty_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0, description="像素差異懲罰權重")
     unique_region_penalty_weight: Optional[float] = Field(0.2, ge=0.0, le=1.0, description="獨有區域懲罰權重")
+    # 圖像對齊參數
+    rotation_range: Optional[float] = Field(15.0, ge=0.0, le=180.0, description="旋轉角度搜索範圍（度）")
+    translation_range: Optional[int] = Field(100, ge=0, le=1000, description="平移偏移搜索範圍（像素）")
 
 
 class SealComparisonResult(BaseModel):

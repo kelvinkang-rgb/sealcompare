@@ -367,7 +367,9 @@ class ImageService:
         self, 
         image: np.ndarray, 
         reference_image: Optional[np.ndarray] = None,
-        is_image2: bool = False
+        is_image2: bool = False,
+        rotation_range: float = 15.0,
+        translation_range: int = 100
     ) -> Tuple[np.ndarray, Optional[float], Optional[Tuple[int, int]], Optional[float], Optional[Dict[str, float]]]:
         """
         去背景並對齊圖像（與 comparison_service 保持一致）
@@ -399,7 +401,7 @@ class ImageService:
             try:
                 # reference_image 已經是去背景後的圖像（img1_no_bg），不需要再次處理
                 image_aligned, angle, offset, similarity, metrics = comparator._align_image2_to_image1(
-                    reference_image, image, rotation_range=15.0, translation_range=100
+                    reference_image, image, rotation_range=rotation_range, translation_range=translation_range
                 )
                 return image_aligned, angle, offset, similarity, metrics
             except Exception as e:
@@ -422,6 +424,8 @@ class ImageService:
         overlap_weight: float = 0.5,
         pixel_diff_penalty_weight: float = 0.3,
         unique_region_penalty_weight: float = 0.2,
+        rotation_range: float = 15.0,
+        translation_range: int = 100,
         task_uid: Optional[str] = None,
         task_update_callback: Optional[Callable[[Dict, int, int], None]] = None
     ) -> List[Dict]:
@@ -458,6 +462,7 @@ class ImageService:
         logger.info(f"[服務層] 相似度閾值: {threshold}")
         logger.info(f"[服務層] 相似度權重 - SSIM: {similarity_ssim_weight}, Template: {similarity_template_weight}, Pixel: {pixel_similarity_weight}, Histogram: {histogram_similarity_weight}")
         logger.info(f"[服務層] Mask相似度權重 - 重疊區域: {overlap_weight}, 像素差異懲罰: {pixel_diff_penalty_weight}, 獨有區域懲罰: {unique_region_penalty_weight}")
+        logger.info(f"[服務層] 圖像對齊參數 - 旋轉角度範圍: {rotation_range}度, 平移範圍: {translation_range}像素")
         
         try:
             # 獲取圖像1
@@ -583,6 +588,8 @@ class ImageService:
                         overlap_weight=overlap_weight,
                         pixel_diff_penalty_weight=pixel_diff_penalty_weight,
                         unique_region_penalty_weight=unique_region_penalty_weight,
+                        rotation_range=rotation_range,
+                        translation_range=translation_range,
                         seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
                     )
                     seal_elapsed = time.time() - seal_start_time
@@ -849,6 +856,8 @@ class ImageService:
                         overlap_weight=overlap_weight,
                         pixel_diff_penalty_weight=pixel_diff_penalty_weight,
                         unique_region_penalty_weight=unique_region_penalty_weight,
+                        rotation_range=rotation_range,
+                        translation_range=translation_range,
                         seal_image_path=seal_images_data.get(seal_image_id, {}).get('file_path')
                     )
                     seal_elapsed = time.time() - seal_start_time
@@ -936,6 +945,8 @@ class ImageService:
         overlap_weight: float = 0.5,
         pixel_diff_penalty_weight: float = 0.3,
         unique_region_penalty_weight: float = 0.2,
+        rotation_range: float = 15.0,
+        translation_range: int = 100,
         seal_image_path: Optional[Path] = None
     ) -> Dict:
         """
@@ -1019,7 +1030,9 @@ class ImageService:
             img2_aligned, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics = self._remove_background_and_align(
                 img2_original.copy(),
                 reference_image=img1_no_bg,  # 傳入去背景後的圖像1作為參考
-                is_image2=True
+                is_image2=True,
+                rotation_range=rotation_range,
+                translation_range=translation_range
             )
             
             # 記錄對齊結果
