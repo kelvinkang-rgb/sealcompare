@@ -224,7 +224,12 @@ def create_overlay_image(
         #   - threshold 越小，越敏感，更多像素被標記為差異
         #   - threshold 越大，越嚴格，只有明顯差異的像素被標記
         #   - 預設值 100 約為灰度範圍 (0-255) 的 39%，適合一般情況
-        diff_threshold = 70  # 差異閾值 (0-255)
+        #   對於同一印鑑的比對，使用更寬鬆的閾值（100-120），允許輕微的像素差異
+        #   因為同一印鑑蓋出來的圖像可能因為：
+        #   1. 蓋印力度不同導致顏色深淺不同
+        #   2. 紙張質地不同導致墨水擴散不同
+        #   3. 掃描或拍攝條件不同導致亮度對比度不同
+        diff_threshold = 100  # 差異閾值 (0-255)，從70提高到100，更適合同一印鑑的比對
         gray_diff = cv2.absdiff(gray1, gray2)  # 灰度差異圖，範圍 0-255
         pixel_diff_mask = (gray_diff > diff_threshold) & overlap_mask  # 重疊區域內的像素差異
         
@@ -542,21 +547,32 @@ def calculate_mask_based_similarity(
         overlap_ratio = mask_stats.get('overlap_ratio', 0.0)
         overlap_score = overlap_ratio
         
-        # 2. 像素差異懲罰
+        # 2. 像素差異懲罰（改進：使用更寬鬆的懲罰機制）
         pixel_diff_ratio = mask_stats.get('pixel_diff_ratio', 1.0)
-        pixel_diff_penalty = 1.0 - pixel_diff_ratio
+        # 對於同一印鑑，即使有像素差異，也應該給予較高的分數
+        # 使用平方根函數減緩懲罰強度：當 pixel_diff_ratio 較小時，懲罰較輕
+        pixel_diff_penalty = 1.0 - (pixel_diff_ratio ** 0.7)  # 使用0.7次方減緩懲罰
         
-        # 3. 獨有區域懲罰
+        # 3. 獨有區域懲罰（改進：對小範圍獨有區域更寬容）
         diff_1_only_ratio = mask_stats.get('diff_1_only_ratio', 0.0)
         diff_2_only_ratio = mask_stats.get('diff_2_only_ratio', 0.0)
-        unique_penalty = 1.0 - (diff_1_only_ratio + diff_2_only_ratio)
+        total_unique_ratio = diff_1_only_ratio + diff_2_only_ratio
+        # 對於同一印鑑，對齊不完美時會產生少量獨有區域，使用平方根函數減緩懲罰
+        unique_penalty = 1.0 - (total_unique_ratio ** 0.6)  # 使用0.6次方減緩懲罰
         
-        # 最終相似度計算
+        # 最終相似度計算（改進：提高重疊區域權重，降低懲罰權重）
+        # 對於同一印鑑，重疊區域應該是最重要的指標
         similarity = (
             overlap_score * overlap_weight +
             pixel_diff_penalty * pixel_diff_penalty_weight +
             unique_penalty * unique_region_penalty_weight
         )
+        
+        # 額外優化：如果重疊區域比例很高（>80%），即使有像素差異和獨有區域，也應該給予較高分數
+        # 這適用於同一印鑑但對齊略有偏差的情況
+        if overlap_ratio > 0.8:
+            # 使用重疊區域作為主要指標，其他指標作為微調
+            similarity = overlap_ratio * 0.7 + similarity * 0.3
         
         # 確保返回值在 [0.0, 1.0] 範圍內
         similarity = max(0.0, min(1.0, similarity))
