@@ -1277,6 +1277,43 @@ function MultiSealTest() {
         />
       )}
 
+      {/* 顯示任務級別時間統計 */}
+      {polledTaskResult?.task_timing && polledTaskResult.status === 'completed' && (
+        <Box sx={{ mt: 4 }}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="h6" gutterBottom>
+              任務時間統計
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={4}>
+                <Typography variant="body2" color="text.secondary">
+                  總時間
+                </Typography>
+                <Typography variant="h6">
+                  {polledTaskResult.task_timing.total_time?.toFixed(2) || '0.00'} 秒
+                </Typography>
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <Typography variant="body2" color="text.secondary">
+                  並行處理時間
+                </Typography>
+                <Typography variant="h6">
+                  {polledTaskResult.task_timing.parallel_processing_time?.toFixed(2) || '0.00'} 秒
+                </Typography>
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <Typography variant="body2" color="text.secondary">
+                  平均每個印鑑時間
+                </Typography>
+                <Typography variant="h6">
+                  {polledTaskResult.task_timing.average_seal_time?.toFixed(2) || '0.00'} 秒
+                </Typography>
+              </Grid>
+            </Grid>
+          </Paper>
+        </Box>
+      )}
+
       {/* 顯示比對結果 */}
       {comparisonResults && comparisonResults.length > 0 && (
         <Box sx={{ mt: 4 }}>

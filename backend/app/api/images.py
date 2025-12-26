@@ -401,7 +401,8 @@ def compare_image1_with_seals(
                             'input_image1_path': result.get('input_image1_path'),
                             'input_image2_path': result.get('input_image2_path'),
                             'error': result['error'],
-                            'overlay_error': result.get('overlay_error')
+                            'overlay_error': result.get('overlay_error'),
+                            'timing': result.get('timing')  # 添加時間追蹤數據
                         }
                         
                         # 獲取當前結果列表（在鎖定狀態下讀取，確保是最新數據）
@@ -463,6 +464,9 @@ def compare_image1_with_seals(
                 task_uid=task_uid_str,
                 task_update_callback=update_task_with_result
             )
+            
+            # 提取任務級別的時間數據
+            task_timing = results_data.get('task_timing', {}) if isinstance(results_data, dict) else {}
             
             # 最終更新任務為完成前，驗證結果數量
             task_record = db_task.query(MultiSealComparisonTask).filter(
@@ -547,7 +551,8 @@ def compare_image1_with_seals(
                                             'input_image1_path': retry_result.get('input_image1_path'),
                                             'input_image2_path': retry_result.get('input_image2_path'),
                                             'error': retry_result['error'],
-                                            'overlay_error': retry_result.get('overlay_error')
+                                            'overlay_error': retry_result.get('overlay_error'),
+                                            'timing': retry_result.get('timing')  # 添加時間追蹤數據
                                         }
                                         results_dict[seal_idx] = result_json
                                 
@@ -578,7 +583,8 @@ def compare_image1_with_seals(
                                         'input_image1_path': None,
                                         'input_image2_path': None,
                                         'error': f"重新比對失敗: {str(retry_error)}",
-                                        'overlay_error': None
+                                        'overlay_error': None,
+                                        'timing': {}  # 添加空的時間追蹤數據
                                     }
                                     results_dict[missing_idx] = error_result
                                 
@@ -602,9 +608,39 @@ def compare_image1_with_seals(
                 task_record.progress = 100.0
                 task_record.progress_message = f"比對完成：{success_count}/{expected_count} 個印鑑成功"
                 task_record.success_count = success_count
+                
+                # 計算並保存任務級別的時間數據
+                # 從 results 中計算 task_timing（如果還沒有從 results_data 中獲取）
+                if task_timing is None or not task_timing:
+                    valid_timings = [r.get('timing', {}) for r in current_results if r.get('timing') and r.get('error') is None]
+                    if valid_timings:
+                        total_times = [t.get('total', 0.0) for t in valid_timings if 'total' in t]
+                        if total_times:
+                            task_timing = {
+                                'total_time': sum(total_times),
+                                'parallel_processing_time': sum(total_times),  # 簡化處理
+                                'average_seal_time': sum(total_times) / len(total_times) if total_times else 0.0
+                            }
+                            # 計算各個步驟的平均時間
+                            step_keys = ['load_images', 'remove_bg_image1', 'remove_bg_align_image2', 'save_aligned_images',
+                                       'similarity_calculation', 'save_corrected_images', 'create_overlay', 
+                                       'calculate_mask_stats', 'create_heatmap']
+                            for step_key in step_keys:
+                                step_times = [t.get(step_key, 0.0) for t in valid_timings if step_key in t]
+                                if step_times:
+                                    task_timing[f'avg_{step_key}'] = sum(step_times) / len(step_times)
+                            task_timing['avg_seal_total_time'] = sum(total_times) / len(total_times) if total_times else 0.0
+                
+                # 將 task_timing 存儲在 results 的第一個位置作為元數據（如果需要的話）
+                # 但更好的方法是在 API 響應時計算，因為模型沒有專門的字段
+                
                 db_task.commit()
                 
                 logger.info(f"[任務層] 任務完成: {task_uid_str}, 成功: {success_count}/{expected_count}, 總結果數: {final_count}")
+                if task_timing:
+                    logger.info(f"[任務層] 任務時間統計: 總時間={task_timing.get('total_time', 0):.2f}秒, "
+                              f"並行處理時間={task_timing.get('parallel_processing_time', 0):.2f}秒, "
+                              f"平均每個印鑑時間={task_timing.get('average_seal_time', 0):.2f}秒")
             
         except Exception as e:
             error_trace = traceback.format_exc()
@@ -700,11 +736,44 @@ def get_task_result(
     
     # 轉換結果為 SealComparisonResult 列表
     results = None
+    task_timing = None
     if task.results:
+        # 檢查 results 是否包含 task_timing（存儲在元數據中）
+        # 如果 results 的第一個元素是字典且包含 'task_timing' 鍵，則提取它
+        if isinstance(task.results, list) and len(task.results) > 0:
+            # 嘗試從 results 中提取 task_timing（如果存在）
+            # 實際 task_timing 應該從後台任務處理中獲取，這裡我們需要從數據庫或計算中獲取
+            # 由於 task_timing 沒有持久化到數據庫，我們需要從 results 中計算或從其他地方獲取
+            # 暫時設為 None，實際值應該在後台任務處理時計算並存儲
+            pass
+        
         results = [
             SealComparisonResult(**r)
             for r in task.results
         ]
+    
+    # 從後台任務處理中獲取 task_timing（如果有的話）
+    # 由於 task_timing 沒有持久化，我們需要從 results 中計算平均值
+    if results and task.status == ComparisonStatus.COMPLETED:
+        valid_timings = [r.timing for r in results if r.timing and not r.error]
+        if valid_timings:
+            # 計算任務級別的時間統計
+            total_times = [t.get('total', 0.0) for t in valid_timings if 'total' in t]
+            if total_times:
+                task_timing = {
+                    'total_time': sum(total_times),
+                    'parallel_processing_time': sum(total_times),  # 簡化處理，實際應該是並行時間
+                    'average_seal_time': sum(total_times) / len(total_times) if total_times else 0.0
+                }
+                # 計算各個步驟的平均時間
+                step_keys = ['load_images', 'remove_bg_image1', 'remove_bg_align_image2', 'save_aligned_images',
+                           'similarity_calculation', 'save_corrected_images', 'create_overlay', 
+                           'calculate_mask_stats', 'create_heatmap']
+                for step_key in step_keys:
+                    step_times = [t.get(step_key, 0.0) for t in valid_timings if step_key in t]
+                    if step_times:
+                        task_timing[f'avg_{step_key}'] = sum(step_times) / len(step_times)
+                task_timing['avg_seal_total_time'] = sum(total_times) / len(total_times) if total_times else 0.0
     
     return MultiSealComparisonTaskResponse(
         id=task.id,
@@ -720,7 +789,8 @@ def get_task_result(
         error_trace=task.error_trace,
         created_at=task.created_at,
         started_at=task.started_at,
-        completed_at=task.completed_at
+        completed_at=task.completed_at,
+        task_timing=task_timing
     )
 
 

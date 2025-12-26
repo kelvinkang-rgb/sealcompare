@@ -927,6 +927,180 @@ function MultiSealComparisonResults({
                     </Accordion>
                   </Box>
                 )}
+
+                {/* 時間詳情區域 */}
+                {!result.error && result.timing && (
+                  <Box sx={{ mt: 2 }}>
+                    <Accordion>
+                      <AccordionSummary
+                        expandIcon={<ExpandMoreIcon />}
+                        aria-controls="timing-content"
+                        id="timing-header"
+                      >
+                        <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
+                          時間詳情
+                        </Typography>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        <TableContainer component={Paper} variant="outlined">
+                          <Table size="small">
+                            <TableBody>
+                              {result.timing.total !== undefined && (
+                                <TableRow>
+                                  <TableCell colSpan={2} sx={{ backgroundColor: 'primary.light', fontWeight: 'bold', color: 'primary.contrastText' }}>
+                                    總時間: {result.timing.total.toFixed(2)} 秒
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.load_images !== undefined && (
+                                <TableRow>
+                                  <TableCell>載入圖像</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.load_images.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.load_images / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.remove_bg_image1 !== undefined && (
+                                <TableRow>
+                                  <TableCell>圖像1去背景</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.remove_bg_image1.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.remove_bg_image1 / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.remove_bg_align_image2 !== undefined && (
+                                <>
+                                  <TableRow>
+                                    <TableCell sx={{ fontWeight: 'medium' }}>圖像2去背景和對齊</TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 'medium' }}>
+                                      {result.timing.remove_bg_align_image2.toFixed(2)} 秒
+                                      {result.timing.total ? ` (${((result.timing.remove_bg_align_image2 / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                    </TableCell>
+                                  </TableRow>
+                                  {result.timing.alignment_stages && (
+                                    <>
+                                      {result.timing.alignment_stages.remove_background !== undefined && (
+                                        <TableRow>
+                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
+                                            └─ 去背景
+                                          </TableCell>
+                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                            {result.timing.alignment_stages.remove_background.toFixed(2)} 秒
+                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.remove_background / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                      {result.timing.alignment_stages.stage1_coarse_search !== undefined && (
+                                        <TableRow>
+                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
+                                            └─ 階段1: 粗搜索
+                                          </TableCell>
+                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                            {result.timing.alignment_stages.stage1_coarse_search.toFixed(2)} 秒
+                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage1_coarse_search / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                      {result.timing.alignment_stages.stage2_full_evaluation !== undefined && (
+                                        <TableRow>
+                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
+                                            └─ 階段2: 完整尺寸評估
+                                          </TableCell>
+                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                            {result.timing.alignment_stages.stage2_full_evaluation.toFixed(2)} 秒
+                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage2_full_evaluation / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                      {result.timing.alignment_stages.stage3_fine_search !== undefined && (
+                                        <TableRow>
+                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
+                                            └─ 階段3: 細搜索優化
+                                          </TableCell>
+                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                            {result.timing.alignment_stages.stage3_fine_search.toFixed(2)} 秒
+                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage3_fine_search / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                      {result.timing.alignment_stages.stage4_ultra_fine_search !== undefined && (
+                                        <TableRow>
+                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
+                                            └─ 階段4: 超細搜索優化
+                                          </TableCell>
+                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                            {result.timing.alignment_stages.stage4_ultra_fine_search.toFixed(2)} 秒
+                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage4_ultra_fine_search / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                    </>
+                                  )}
+                                </>
+                              )}
+                              {result.timing.save_aligned_images !== undefined && (
+                                <TableRow>
+                                  <TableCell>保存對齊圖像</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.save_aligned_images.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.save_aligned_images / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.similarity_calculation !== undefined && (
+                                <TableRow>
+                                  <TableCell>相似度計算</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.similarity_calculation.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.similarity_calculation / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.save_corrected_images !== undefined && (
+                                <TableRow>
+                                  <TableCell>保存校正圖像</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.save_corrected_images.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.save_corrected_images / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.create_overlay !== undefined && (
+                                <TableRow>
+                                  <TableCell>生成疊圖</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.create_overlay.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.create_overlay / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.calculate_mask_stats !== undefined && (
+                                <TableRow>
+                                  <TableCell>計算Mask統計</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.calculate_mask_stats.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.calculate_mask_stats / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {result.timing.create_heatmap !== undefined && (
+                                <TableRow>
+                                  <TableCell>生成熱力圖</TableCell>
+                                  <TableCell align="right">
+                                    {result.timing.create_heatmap.toFixed(2)} 秒
+                                    {result.timing.total ? ` (${((result.timing.create_heatmap / result.timing.total) * 100).toFixed(1)}%)` : ''}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </AccordionDetails>
+                    </Accordion>
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </Grid>

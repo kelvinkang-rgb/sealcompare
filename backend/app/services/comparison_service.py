@@ -253,7 +253,7 @@ class ComparisonService:
                 img1_cropped = img1_original.copy()
             
             # 對圖像1進行去背景（不對齊）
-            img1_no_bg, _, _, _, _ = self._remove_background_and_align(img1_cropped)
+            img1_no_bg, _, _, _, _, _ = self._remove_background_and_align(img1_cropped)
             
             # 保存去背景後的圖像1
             image1_cropped_path = corrected_dir / f"image1_cropped_{comparison_id}.jpg"
@@ -279,7 +279,7 @@ class ComparisonService:
                 img2_cropped = img2_original.copy()
             
             # 對圖像2進行去背景和對齊（相對於圖像1優化）
-            img2_cropped, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics = self._remove_background_and_align(
+            img2_cropped, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics, alignment_timing = self._remove_background_and_align(
                 img2_cropped, 
                 reference_image=img1_no_bg,  # 傳入去背景後的圖像1作為參考
                 is_image2=True
@@ -517,36 +517,44 @@ class ComparisonService:
             
         Returns:
             如果 is_image2=True 且 reference_image 不為 None:
-                (對齊後的圖像, 旋轉角度, (x偏移, y偏移), 相似度, 詳細指標)
+                (對齊後的圖像, 旋轉角度, (x偏移, y偏移), 相似度, 詳細指標, 對齊階段時間)
             否則:
-                (去背景後的圖像, None, None, None, None)
+                (去背景後的圖像, None, None, None, None, None)
         """
+        import time
         comparator = SealComparator()
         
         # 去背景
+        remove_bg_start = time.time()
         try:
             image = comparator._auto_detect_bounds_and_remove_background(image)
         except Exception as e:
             print(f"警告：自動外框偵測失敗，使用原圖: {str(e)}")
             # 如果處理失敗，使用原圖繼續處理
             pass
+        remove_bg_time = time.time() - remove_bg_start
         
         # 對齊處理
         if is_image2 and reference_image is not None:
             # 圖像2：相對於圖像1進行優化對齊
             try:
                 # reference_image 已經是去背景後的圖像（img1_no_bg），不需要再次處理
-                image_aligned, angle, offset, similarity, metrics = comparator._align_image2_to_image1(
+                image_aligned, angle, offset, similarity, metrics, alignment_timing = comparator._align_image2_to_image1(
                     reference_image, image, rotation_range=rotation_range, translation_range=translation_range
                 )
-                return image_aligned, angle, offset, similarity, metrics
+                # 將去背景時間添加到對齊時間字典中
+                if alignment_timing is None:
+                    alignment_timing = {}
+                alignment_timing['remove_background'] = remove_bg_time
+                return image_aligned, angle, offset, similarity, metrics, alignment_timing
             except Exception as e:
                 print(f"警告：圖像2對齊優化失敗，使用原圖: {str(e)}")
                 # 如果對齊失敗，直接返回原圖
-                return image, None, None, None, None
+                alignment_timing = {'remove_background': remove_bg_time}
+                return image, None, None, None, None, alignment_timing
         else:
             # 圖像1：只去背景，不對齊
-            return image, None, None, None, None
+            return image, None, None, None, None, None
     
     def _generate_visualizations(
         self,

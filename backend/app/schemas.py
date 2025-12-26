@@ -124,6 +124,7 @@ class SealComparisonResult(BaseModel):
     input_image2_path: Optional[str] = Field(None, description="疊圖前的圖像2路徑（對齊後的印鑑圖像）")
     error: Optional[str] = Field(None, description="錯誤訊息（如果比對失敗）")
     overlay_error: Optional[str] = Field(None, description="疊圖生成錯誤訊息（如果疊圖生成失敗）")
+    timing: Optional[Dict[str, Any]] = Field(None, description="時間追蹤數據（各步驟耗時，單位：秒）。可能包含嵌套字典 alignment_stages 記錄對齊各階段時間")
 
 
 class MultiSealComparisonResponse(BaseModel):
@@ -162,6 +163,7 @@ class MultiSealComparisonTaskResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    task_timing: Optional[Dict[str, float]] = Field(None, description="任務級別時間追蹤數據（總時間、平均時間等，單位：秒）")
     
     class Config:
         from_attributes = True

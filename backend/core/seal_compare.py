@@ -218,7 +218,7 @@ class SealComparator:
         image2: np.ndarray,
         rotation_range: float = 15.0,
         translation_range: int = 100
-    ) -> Tuple[np.ndarray, float, Tuple[int, int], float, Dict[str, float]]:
+    ) -> Tuple[np.ndarray, float, Tuple[int, int], float, Dict[str, float], Dict[str, float]]:
         """
         將圖像2對齊到圖像1，使用相似度計算優化對齊參數
         
@@ -229,8 +229,11 @@ class SealComparator:
             translation_range: 平移偏移搜索範圍（像素）
             
         Returns:
-            (對齊後的圖像2, 最佳旋轉角度, (最佳x偏移, 最佳y偏移), 最佳相似度, 詳細指標)
+            (對齊後的圖像2, 最佳旋轉角度, (最佳x偏移, 最佳y偏移), 最佳相似度, 詳細指標, 階段時間字典)
         """
+        import time
+        alignment_timing = {}
+        
         # 轉換為灰度圖（如果輸入是彩色圖像）
         if len(image1.shape) == 3:
             img1_gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
@@ -246,6 +249,7 @@ class SealComparator:
         h1, w1 = img1_gray.shape
         
         # 階段1：快速旋轉搜索（分離旋轉和平移）
+        stage1_start = time.time()
         # 使用縮小圖像進行快速評估
         scale_factor = 0.3  # 提高縮放比例以保持更多細節
         small_h = int(h2 * scale_factor)
@@ -297,6 +301,8 @@ class SealComparator:
                         score = self._fast_rotation_match(img1_small, img2_trans_small)
                         candidates.append((angle, dx_try, dy_try, score))
         
+        alignment_timing['stage1_coarse_search'] = time.time() - stage1_start
+        
         # 按分數排序，動態調整候選數量
         if not candidates:
             # 如果沒有候選，使用默認值（不變換）
@@ -324,6 +330,7 @@ class SealComparator:
                 top_candidates = candidates[:5]
             
             # 階段2：完整相似度計算
+            stage2_start = time.time()
             best_angle = 0.0
             best_offset_x = 0
             best_offset_y = 0
@@ -352,27 +359,19 @@ class SealComparator:
                     best_offset_x = offset_x
                     best_offset_y = offset_y
                     best_metrics = {}  # 不再使用 enhanced_metrics
+            
+            alignment_timing['stage2_full_evaluation'] = time.time() - stage2_start
         
-        # 階段3：細搜索優化（在最佳候選附近）
+        # 階段3：細搜索優化（在階段2的最佳值附近進行細搜索）
         if best_similarity > 0.0:
-            # 先在最佳旋轉角度下，使用模板匹配精確估算平移
-            center = (w2 // 2, h2 // 2)
-            M_rot_best = cv2.getRotationMatrix2D(center, best_angle, 1.0)
-            img2_rot_best = cv2.warpAffine(img2_gray, M_rot_best, (w2, h2),
-                                          borderMode=cv2.BORDER_CONSTANT,
-                                          borderValue=255)
-            
-            # 使用模板匹配精確估算平移
-            fine_offset_x, fine_offset_y, _ = self._estimate_translation_template_match(
-                img1_gray, img2_rot_best, translation_range, 1.0
-            )
-            
-            # 在估算的平移附近進行細搜索（擴大範圍並提高精度）
-            fine_angle_range = np.arange(-3.0, 3.1, 0.5)  # ±3度，每0.5度（擴大範圍）
-            fine_offset_range = range(-8, 9, 1)  # ±8像素，每1像素（擴大範圍）
+            stage3_start = time.time()
+            # 直接使用階段2找到的最佳角度和平移值作為搜索中心
+            # 在最佳值附近進行細搜索（縮小範圍以提高效率，保持精度）
+            fine_angle_range = np.arange(-2.0, 2.1, 0.5)  # ±2度，每0.5度（從±3度優化）
+            fine_offset_range = range(-5, 6, 1)  # ±5像素，每1像素（從±8像素優化）
             
             for angle_offset in fine_angle_range:
-                angle = best_angle + angle_offset
+                angle = best_angle + angle_offset  # 以階段2的最佳角度為中心
                 if angle < -80 or angle > 80:
                     continue
                 
@@ -383,11 +382,11 @@ class SealComparator:
                                          borderMode=cv2.BORDER_CONSTANT,
                                          borderValue=255)
                 
-                # 在估算的平移附近搜索
+                # 直接使用階段2的最佳平移值作為搜索中心
                 for dx in fine_offset_range:
                     for dy in fine_offset_range:
-                        offset_x = fine_offset_x + dx
-                        offset_y = fine_offset_y + dy
+                        offset_x = best_offset_x + dx  # 以階段2的最佳平移為中心
+                        offset_y = best_offset_y + dy
                         
                         if abs(offset_x) > translation_range or abs(offset_y) > translation_range:
                             continue
@@ -407,15 +406,19 @@ class SealComparator:
                             best_offset_x = offset_x
                             best_offset_y = offset_y
                             best_metrics = {}  # 不再使用 enhanced_metrics
+            
+            alignment_timing['stage3_fine_search'] = time.time() - stage3_start
         
-        # 階段4：超細搜索優化（最高精度，0.1度角度，0.5像素平移）
+        # 階段4：超細搜索優化（在階段3的最佳值附近進行最高精度搜索）
         if best_similarity > 0.0:
-            # 在最佳結果附近進行超細搜索
-            ultra_fine_angle_range = np.arange(-0.5, 0.51, 0.1)  # ±0.5度，每0.1度
-            ultra_fine_offset_range = np.arange(-2.0, 2.1, 0.5)  # ±2像素，每0.5像素
+            stage4_start = time.time()
+            # 直接使用階段3找到的最佳角度和平移值作為搜索中心
+            # 在最佳值附近進行超細搜索（優化參數以平衡精度和效率）
+            ultra_fine_angle_range = np.arange(-0.5, 0.51, 0.1)  # ±0.5度，每0.1度（保持）
+            ultra_fine_offset_range = np.arange(-2.0, 2.1, 1.0)  # ±2像素，每1像素（從0.5像素優化）
             
             for angle_offset in ultra_fine_angle_range:
-                angle = best_angle + angle_offset
+                angle = best_angle + angle_offset  # 以階段3的最佳角度為中心
                 if angle < -80 or angle > 80:
                     continue
                 
@@ -426,10 +429,10 @@ class SealComparator:
                                          borderMode=cv2.BORDER_CONSTANT,
                                          borderValue=255)
                 
-                # 在最佳平移附近進行超細搜索
+                # 直接使用階段3的最佳平移值作為搜索中心
                 for dx in ultra_fine_offset_range:
                     for dy in ultra_fine_offset_range:
-                        offset_x = best_offset_x + dx
+                        offset_x = best_offset_x + dx  # 以階段3的最佳平移為中心
                         offset_y = best_offset_y + dy
                         
                         if abs(offset_x) > translation_range or abs(offset_y) > translation_range:
@@ -450,6 +453,8 @@ class SealComparator:
                             best_offset_x = offset_x
                             best_offset_y = offset_y
                             best_metrics = {}  # 不再使用 enhanced_metrics
+            
+            alignment_timing['stage4_ultra_fine_search'] = time.time() - stage4_start
         
         # 應用最佳變換到原始圖像（保持原始顏色）
         if len(image2.shape) == 3:
@@ -472,7 +477,7 @@ class SealComparator:
                                      borderMode=cv2.BORDER_CONSTANT,
                                      borderValue=(255, 255, 255))
         
-        return img2_aligned, best_angle, (best_offset_x, best_offset_y), best_similarity, best_metrics
+        return img2_aligned, best_angle, (best_offset_x, best_offset_y), best_similarity, best_metrics, alignment_timing
     
     def _estimate_translation_template_match(
         self, 

@@ -370,7 +370,7 @@ class ImageService:
         is_image2: bool = False,
         rotation_range: float = 15.0,
         translation_range: int = 100
-    ) -> Tuple[np.ndarray, Optional[float], Optional[Tuple[int, int]], Optional[float], Optional[Dict[str, float]]]:
+    ) -> Tuple[np.ndarray, Optional[float], Optional[Tuple[int, int]], Optional[float], Optional[Dict[str, float]], Optional[Dict[str, float]]]:
         """
         去背景並對齊圖像（與 comparison_service 保持一致）
         
@@ -381,36 +381,44 @@ class ImageService:
             
         Returns:
             如果 is_image2=True 且 reference_image 不為 None:
-                (對齊後的圖像, 旋轉角度, (x偏移, y偏移), 相似度, 詳細指標)
+                (對齊後的圖像, 旋轉角度, (x偏移, y偏移), 相似度, 詳細指標, 對齊階段時間)
             否則:
-                (去背景後的圖像, None, None, None, None)
+                (去背景後的圖像, None, None, None, None, None)
         """
+        import time
         comparator = SealComparator()
         
         # 去背景
+        remove_bg_start = time.time()
         try:
             image = comparator._auto_detect_bounds_and_remove_background(image)
         except Exception as e:
             print(f"警告：自動外框偵測失敗，使用原圖: {str(e)}")
             # 如果處理失敗，使用原圖繼續處理
             pass
+        remove_bg_time = time.time() - remove_bg_start
         
         # 對齊處理
         if is_image2 and reference_image is not None:
             # 圖像2：相對於圖像1進行優化對齊
             try:
                 # reference_image 已經是去背景後的圖像（img1_no_bg），不需要再次處理
-                image_aligned, angle, offset, similarity, metrics = comparator._align_image2_to_image1(
+                image_aligned, angle, offset, similarity, metrics, alignment_timing = comparator._align_image2_to_image1(
                     reference_image, image, rotation_range=rotation_range, translation_range=translation_range
                 )
-                return image_aligned, angle, offset, similarity, metrics
+                # 將去背景時間添加到對齊時間字典中
+                if alignment_timing is None:
+                    alignment_timing = {}
+                alignment_timing['remove_background'] = remove_bg_time
+                return image_aligned, angle, offset, similarity, metrics, alignment_timing
             except Exception as e:
                 print(f"警告：圖像2對齊優化失敗，使用原圖: {str(e)}")
                 # 如果對齊失敗，直接返回原圖
-                return image, None, None, None, None
+                alignment_timing = {'remove_background': remove_bg_time}
+                return image, None, None, None, None, alignment_timing
         else:
             # 圖像1：只去背景，不對齊
-            return image, None, None, None, None
+            return image, None, None, None, None, None
     
     def compare_image1_with_seals(
         self, 
@@ -607,6 +615,7 @@ class ImageService:
                         'overlay1_path': None,
                         'overlay2_path': None,
                         'heatmap_path': None,
+                        'timing': {},  # 添加時間追蹤數據
                         'overlap_mask_path': None,
                         'pixel_diff_mask_path': None,
                         'diff_mask_2_only_path': None,
@@ -711,7 +720,35 @@ class ImageService:
                 logger.info(f"[服務層] 理論加速比: {len(seal_image_ids) * (comparison_elapsed/len(seal_image_ids)) / comparison_elapsed:.2f}x")
             logger.info(f"[服務層] 比對結果統計: 總數={len(results)}, 成功={success_count}, 失敗={failure_count}")
             
-            return results
+            # 計算任務級別的時間數據
+            task_timing = {
+                'total_time': service_elapsed,  # 總服務時間
+                'parallel_processing_time': comparison_elapsed,  # 並行處理時間
+                'average_seal_time': comparison_elapsed / len(seal_image_ids) if len(seal_image_ids) > 0 else 0.0  # 平均每個印鑑時間
+            }
+            
+            # 從各個結果中提取時間數據並計算平均值
+            valid_timings = [r.get('timing', {}) for r in results if r.get('timing') and r.get('error') is None]
+            if valid_timings:
+                # 計算各個步驟的平均時間
+                step_keys = ['load_images', 'remove_bg_image1', 'remove_bg_align_image2', 'save_aligned_images',
+                           'similarity_calculation', 'save_corrected_images', 'create_overlay', 
+                           'calculate_mask_stats', 'create_heatmap']
+                for step_key in step_keys:
+                    step_times = [t.get(step_key, 0.0) for t in valid_timings if step_key in t]
+                    if step_times:
+                        task_timing[f'avg_{step_key}'] = sum(step_times) / len(step_times)
+                
+                # 計算平均總時間（從各個結果的 total 字段）
+                total_times = [t.get('total', 0.0) for t in valid_timings if 'total' in t]
+                if total_times:
+                    task_timing['avg_seal_total_time'] = sum(total_times) / len(total_times)
+            
+            # 返回結果和任務級別時間數據
+            return {
+                'results': results,
+                'task_timing': task_timing
+            }
         except Exception as e:
             error_trace = traceback.format_exc()
             logger.error(f"[服務層] 多印鑑比對服務發生未預期錯誤")
@@ -887,7 +924,8 @@ class ImageService:
                         'alignment_offset': None,
                         'alignment_similarity': None,
                         'alignment_success': False,
-                        'error': f"重新比對失敗: {str(e)}"
+                        'error': f"重新比對失敗: {str(e)}",
+                        'timing': {}  # 添加時間追蹤數據
                     }
                     retry_results.append(result)
             
@@ -995,8 +1033,14 @@ class ImageService:
             'alignment_offset': None,
             'alignment_similarity': None,
             'alignment_success': False,
-            'error': None
+            'error': None,
+            'timing': {}  # 時間追蹤數據
         }
+        
+        # 初始化時間追蹤
+        timing = {}
+        step_start_time = time.time()
+        total_start_time = step_start_time
         
         try:
             # 檢查印鑑圖像路徑
@@ -1012,28 +1056,39 @@ class ImageService:
             record_id = f"{image1_id}_{seal_image_id}_{seal_index}"
             
             # 1. 載入圖像
+            step_start = time.time()
             img1_original = cv2.imread(str(image1_cropped_path))
             img2_original = cv2.imread(str(seal_image_path))
+            timing['load_images'] = time.time() - step_start
             
             if img1_original is None:
                 result['error'] = "無法載入圖像1"
+                result['timing'] = timing
                 return result
             
             if img2_original is None:
                 result['error'] = "無法載入印鑑圖像"
+                result['timing'] = timing
                 return result
             
             # 2. 去背景處理（圖像1）
-            img1_no_bg, _, _, _, _ = self._remove_background_and_align(img1_original.copy())
+            step_start = time.time()
+            img1_no_bg, _, _, _, _, _ = self._remove_background_and_align(img1_original.copy())
+            timing['remove_bg_image1'] = time.time() - step_start
             
             # 3. 去背景和對齊處理（圖像2，相對於圖像1）
-            img2_aligned, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics = self._remove_background_and_align(
+            step_start = time.time()
+            img2_aligned, alignment_angle, alignment_offset, alignment_similarity, alignment_metrics, alignment_timing = self._remove_background_and_align(
                 img2_original.copy(),
                 reference_image=img1_no_bg,  # 傳入去背景後的圖像1作為參考
                 is_image2=True,
                 rotation_range=rotation_range,
                 translation_range=translation_range
             )
+            timing['remove_bg_align_image2'] = time.time() - step_start
+            # 將對齊各階段時間存儲到 timing 中
+            if alignment_timing:
+                timing['alignment_stages'] = alignment_timing
             
             # 記錄對齊結果
             if alignment_angle is not None and alignment_offset is not None:
@@ -1052,6 +1107,7 @@ class ImageService:
                 print(f"警告：印鑑 {seal_index} 對齊失敗，使用去背景後的圖像（未對齊）")
             
             # 4. 保存對齊後的圖像到文件（在比對之前）
+            step_start = time.time()
             try:
                 image1_for_comparison = comparison_dir / f"image1_cropped_{record_id}.jpg"
                 if not cv2.imwrite(str(image1_for_comparison), img1_no_bg):
@@ -1064,8 +1120,11 @@ class ImageService:
                 # 保存輸入圖像路徑到結果中（疊圖前的圖像）
                 result['input_image1_path'] = image1_for_comparison.name
                 result['input_image2_path'] = image2_for_comparison.name
+                timing['save_aligned_images'] = time.time() - step_start
             except Exception as e:
+                timing['save_aligned_images'] = time.time() - step_start
                 result['error'] = f"保存對齊後的圖像失敗: {str(e)}"
+                result['timing'] = timing
                 print(f"錯誤：保存對齊後的圖像失敗 (印鑑 {seal_index}): {e}")
                 import traceback
                 traceback.print_exc()
@@ -1081,6 +1140,7 @@ class ImageService:
             )
             
             # 6. 使用 compare_files 比對（傳入文件路徑）
+            step_start = time.time()
             try:
                 # 確保文件存在
                 if not image1_for_comparison.exists():
@@ -1100,14 +1160,18 @@ class ImageService:
                 # 保留傳統相似度用於顯示，但is_match將基於mask相似度判定
                 result['similarity'] = float(similarity)
                 # 注意：is_match將在計算完mask相似度後設定
+                timing['similarity_calculation'] = time.time() - step_start
             except Exception as e:
+                timing['similarity_calculation'] = time.time() - step_start
                 result['error'] = f"相似度計算失敗: {str(e)}"
+                result['timing'] = timing
                 print(f"錯誤：相似度計算失敗 (印鑑 {seal_index}): {e}")
                 import traceback
                 traceback.print_exc()
                 return result
             
             # 7. 保存校正後的圖像（使用 compare_files 返回的圖像）
+            step_start = time.time()
             image1_corrected_path = None
             image2_corrected_path = None
             
@@ -1134,8 +1198,10 @@ class ImageService:
             else:
                 # 如果 compare_files 沒有返回 img2_corrected，使用已保存的對齊圖像
                 image2_corrected_path = str(image2_for_comparison)
+            timing['save_corrected_images'] = time.time() - step_start
             
             # 8. 生成疊圖（使用對齊後的圖像）
+            step_start = time.time()
             try:
                 # 使用對齊後的圖像1和圖像2生成疊圖
                 # 優先使用 compare_files 返回的校正圖像，否則使用已保存的對齊圖像
@@ -1148,11 +1214,13 @@ class ImageService:
                     # 無法生成mask，is_match設為None
                     if 'is_match' not in result or result.get('is_match') is None:
                         result['is_match'] = None
+                    timing['create_overlay'] = time.time() - step_start
                 elif not Path(image2_for_overlay).exists():
                     print(f"警告：印鑑 {seal_index} 的圖像2路徑不存在: {image2_for_overlay}，跳過疊圖生成")
                     # 無法生成mask，is_match設為None
                     if 'is_match' not in result or result.get('is_match') is None:
                         result['is_match'] = None
+                    timing['create_overlay'] = time.time() - step_start
                 else:
                     # 使用對齊後的圖像生成疊圖
                     # image1_path: 對齊後的圖像1
@@ -1165,6 +1233,7 @@ class ImageService:
                         record_id,
                         image2_corrected_path=None  # 不需要，因為已經使用對齊後的圖像
                     )
+                    timing['create_overlay'] = time.time() - step_start
                     if overlay1_path and Path(overlay1_path).exists():
                         # 只保存文件名，前端通過 API 獲取
                         result['overlay1_path'] = Path(overlay1_path).name
@@ -1192,6 +1261,7 @@ class ImageService:
                         print(f"印鑑 {seal_index} gray_diff視覺化生成成功: {result['gray_diff_path']}")
                     
                     # 計算mask統計資訊和基於mask的相似度
+                    step_start = time.time()
                     try:
                         mask_stats = calculate_mask_statistics(
                             overlap_mask_path,
@@ -1199,6 +1269,7 @@ class ImageService:
                             diff_mask_2_only_path,
                             diff_mask_1_only_path
                         )
+                        timing['calculate_mask_stats'] = time.time() - step_start
                         
                         # 檢查是否有有效的mask數據（total_seal_pixels > 0）
                         if mask_stats.get('total_seal_pixels', 0) == 0:
@@ -1223,6 +1294,7 @@ class ImageService:
                                 result['is_match'] = None
                                 print(f"警告：印鑑 {seal_index} mask相似度為None，無法判定匹配狀態")
                     except Exception as e:
+                        timing['calculate_mask_stats'] = time.time() - step_start
                         print(f"警告：計算mask統計資訊失敗 (印鑑 {seal_index}): {e}")
                         import traceback
                         traceback.print_exc()
@@ -1240,6 +1312,7 @@ class ImageService:
                     result['is_match'] = None
             
             # 9. 生成熱力圖（使用對齊後的圖像）
+            step_start = time.time()
             try:
                 # create_difference_heatmap 需要 record_id 為 int，但我們使用字符串
                 # 使用 hash 轉換為數字
@@ -1252,6 +1325,7 @@ class ImageService:
                 # 確保 seal_image_path 不為 None
                 if not seal_image_path:
                     print(f"警告：印鑑 {seal_index} 的圖像路徑為 None，跳過熱力圖生成")
+                    timing['create_heatmap'] = time.time() - step_start
                 else:
                     heatmap_path, _ = create_difference_heatmap(
                         image1_for_heatmap,  # 使用對齊後的圖像1
@@ -1260,6 +1334,7 @@ class ImageService:
                         comparison_dir,
                         record_id_int
                     )
+                    timing['create_heatmap'] = time.time() - step_start
                     if heatmap_path:
                         # create_difference_heatmap 返回相對路徑 "heatmaps/heatmap_{record_id}.jpg"
                         # 但實際文件保存在 comparison_dir / f"heatmap_{record_id}.jpg"
@@ -1278,12 +1353,22 @@ class ImageService:
                             else:
                                 print(f"警告：熱力圖文件不存在，返回路徑={heatmap_path}, 實際路徑={actual_heatmap_file}")
             except Exception as e:
+                timing['create_heatmap'] = time.time() - step_start
                 print(f"生成熱力圖失敗 (印鑑 {seal_index}): {e}")
                 import traceback
                 traceback.print_exc()
                 # 不設置錯誤，繼續處理
             
+            # 計算總時間
+            timing['total'] = time.time() - total_start_time
+            
+            # 將時間數據添加到結果中
+            result['timing'] = timing
+            
         except Exception as e:
+            # 即使出錯也要記錄已完成的步驟時間
+            timing['total'] = time.time() - total_start_time
+            result['timing'] = timing
             result['error'] = str(e)
             print(f"比對印鑑 {seal_index} 時出錯: {e}")
             import traceback
