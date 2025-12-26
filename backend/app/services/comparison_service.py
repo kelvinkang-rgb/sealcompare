@@ -105,7 +105,7 @@ class ComparisonService:
         if enable_translation_search:
             processing_stages['stages'].append({
                 'name': 'translation_search', 
-                'label': '平移位置搜索', 
+                'label': '圖像2去背景和對齊', 
                 'status': 'pending', 
                 'progress': 0
             })
@@ -253,7 +253,7 @@ class ComparisonService:
                 img1_cropped = img1_original.copy()
             
             # 對圖像1進行去背景（不對齊）
-            img1_no_bg, _, _, _, _, _ = self._remove_background_and_align(img1_cropped)
+            img1_no_bg = self._remove_background_and_align(img1_cropped)[0]
             
             # 保存去背景後的圖像1
             image1_cropped_path = corrected_dir / f"image1_cropped_{comparison_id}.jpg"
@@ -296,7 +296,8 @@ class ComparisonService:
                         'y': int(alignment_offset[1])
                     },
                     'similarity': float(alignment_similarity) if alignment_similarity is not None else None,
-                    'similarity_metrics': alignment_metrics if alignment_metrics else {}
+                    'similarity_metrics': alignment_metrics if alignment_metrics else {},
+                    'timing': alignment_timing if alignment_timing else {}  # 保存對齊時間詳情
                 }
                 self.db.commit()
             
@@ -331,6 +332,124 @@ class ComparisonService:
                     if stage['name'] == 'translation_search':
                         processing_stages['stages'][idx]['status'] = 'completed'
                         processing_stages['stages'][idx]['progress'] = 100
+                        
+                        # 構建詳細的時間步驟結構
+                        print(f"DEBUG: alignment_timing 是否存在: {alignment_timing is not None}")
+                        print(f"DEBUG: alignment_timing 內容: {alignment_timing}")
+                        if alignment_timing:
+                            sub_stages = []
+                            total_duration = 0.0
+                            
+                            # 1. 去背景步驟（包含9個詳細子步驟）
+                            remove_bg_steps = []
+                            remove_bg_total = alignment_timing.get('remove_background_total', 0.0)
+                            if remove_bg_total == 0.0:
+                                remove_bg_total = alignment_timing.get('remove_background', 0.0)
+                            
+                            # 去背景的9個詳細步驟
+                            bg_step_labels = {
+                                'step1_convert_to_gray': '轉換灰度',
+                                'step2_detect_bg_color': '偵測背景色',
+                                'step3_otsu_threshold': 'OTSU二值化',
+                                'step4_combine_masks': '結合遮罩',
+                                'step5_morphology_bg': '形態學處理背景',
+                                'step6_contour_detection': '輪廓偵測',
+                                'step7_calculate_bbox': '計算邊界框',
+                                'step8_crop_image': '裁切圖像',
+                                'step9_remove_bg_final': '最終移除背景'
+                            }
+                            
+                            for step_key, step_label in bg_step_labels.items():
+                                if step_key in alignment_timing:
+                                    duration = alignment_timing[step_key]
+                                    remove_bg_steps.append({
+                                        'name': step_key,
+                                        'label': step_label,
+                                        'duration': duration
+                                    })
+                            
+                            if remove_bg_total > 0.0 or remove_bg_steps:
+                                sub_stages.append({
+                                    'name': 'remove_background',
+                                    'label': '去背景',
+                                    'duration': remove_bg_total,
+                                    'sub_stages': remove_bg_steps if remove_bg_steps else None
+                                })
+                                total_duration += remove_bg_total
+                            
+                            # 2. 階段1：平移粗調
+                            stage1_duration = alignment_timing.get('stage1_translation_coarse', 0.0)
+                            if stage1_duration > 0.0:
+                                sub_stages.append({
+                                    'name': 'stage1_translation_coarse',
+                                    'label': '階段1：平移粗調',
+                                    'duration': stage1_duration
+                                })
+                                total_duration += stage1_duration
+                            
+                            # 3. 階段2：旋轉粗調
+                            stage2_duration = alignment_timing.get('stage2_rotation_coarse', 0.0)
+                            if stage2_duration > 0.0:
+                                sub_stages.append({
+                                    'name': 'stage2_rotation_coarse',
+                                    'label': '階段2：旋轉粗調',
+                                    'duration': stage2_duration
+                                })
+                                total_duration += stage2_duration
+                            
+                            # 4. 階段3：平移細調
+                            stage3_duration = alignment_timing.get('stage3_translation_fine', 0.0)
+                            if stage3_duration > 0.0:
+                                sub_stages.append({
+                                    'name': 'stage3_translation_fine',
+                                    'label': '階段3：平移細調',
+                                    'duration': stage3_duration
+                                })
+                                total_duration += stage3_duration
+                            
+                            # 5. 階段4：旋轉細調與平移細調
+                            stage4_total = alignment_timing.get('stage4_total', 0.0)
+                            stage4_rotation = alignment_timing.get('stage4_rotation_fine', 0.0)
+                            stage4_translation = alignment_timing.get('stage4_translation_fine', 0.0)
+                            
+                            if stage4_total > 0.0 or stage4_rotation > 0.0 or stage4_translation > 0.0:
+                                stage4_sub_stages = []
+                                
+                                if stage4_rotation > 0.0:
+                                    stage4_sub_stages.append({
+                                        'name': 'stage4_rotation_fine',
+                                        'label': '旋轉細調',
+                                        'duration': stage4_rotation
+                                    })
+                                
+                                if stage4_translation > 0.0:
+                                    stage4_sub_stages.append({
+                                        'name': 'stage4_translation_fine',
+                                        'label': '平移細調',
+                                        'duration': stage4_translation
+                                    })
+                                
+                                # 使用 stage4_total 如果存在，否則計算總和
+                                stage4_duration = stage4_total if stage4_total > 0.0 else (stage4_rotation + stage4_translation)
+                                
+                                sub_stages.append({
+                                    'name': 'stage4',
+                                    'label': '階段4：旋轉細調與平移細調',
+                                    'duration': stage4_duration,
+                                    'sub_stages': stage4_sub_stages if stage4_sub_stages else None
+                                })
+                                total_duration += stage4_duration
+                            
+                            # 更新 stage 的 duration 和 sub_stages
+                            processing_stages['stages'][idx]['duration'] = total_duration
+                            processing_stages['stages'][idx]['sub_stages'] = sub_stages if sub_stages else None
+                            
+                            # 調試輸出：確認 sub_stages 已構建
+                            print(f"DEBUG: 構建了 {len(sub_stages)} 個子步驟，總時間: {total_duration:.3f}秒")
+                            if sub_stages:
+                                for sub_stage in sub_stages:
+                                    print(f"DEBUG: - {sub_stage['label']}: {sub_stage.get('duration', 0):.3f}秒")
+                        
                         break
             
             db_comparison.details['processing_stages'] = processing_stages
@@ -345,6 +464,13 @@ class ComparisonService:
                 bbox1=None,  # 已經裁切並對齊好了，不需要再傳入 bbox
                 bbox2=None   # 已經裁切並對齊好了，不需要再傳入 bbox
             )
+            
+            # 刷新資料庫對象以獲取最新的 processing_stages（包含 sub_stages）
+            self.db.refresh(db_comparison)
+            if db_comparison.details and isinstance(db_comparison.details, dict):
+                latest_processing_stages = db_comparison.details.get('processing_stages')
+                if latest_processing_stages:
+                    processing_stages = latest_processing_stages
             
             # 階段: 計算相似度
             processing_stages['current_stage'] = 'similarity_calculation'
@@ -362,6 +488,13 @@ class ComparisonService:
                     processing_stages['stages'][idx]['status'] = 'completed'
                     processing_stages['stages'][idx]['progress'] = 100
                     break
+            
+            # 刷新資料庫對象以獲取最新的 processing_stages（包含 sub_stages）
+            self.db.refresh(db_comparison)
+            if db_comparison.details and isinstance(db_comparison.details, dict):
+                latest_processing_stages = db_comparison.details.get('processing_stages')
+                if latest_processing_stages:
+                    processing_stages = latest_processing_stages
             
             # 保存校正後的圖像1和圖像2（裁切後的圖像已經在載入階段保存了）
             processing_stages['current_stage'] = 'saving_corrected'
@@ -401,6 +534,9 @@ class ComparisonService:
             db_comparison.similarity = similarity
             db_comparison.rotation_angle = details.get('rotation_angle')
             
+            # 刷新資料庫對象以獲取最新的 details（包含 sub_stages）
+            self.db.refresh(db_comparison)
+            
             # 從 alignment_optimization 中提取 translation_offset 和 rotation_angle
             # 確保保留 alignment_optimization（如果存在）
             if db_comparison.details and isinstance(db_comparison.details, dict):
@@ -414,10 +550,22 @@ class ComparisonService:
                         db_comparison.rotation_angle = alignment_opt['rotation_angle']
                     # 確保 alignment_optimization 被保留在 details 中
                     details['alignment_optimization'] = alignment_opt
+                
+                # 確保保留最新的 processing_stages（包含 sub_stages）
+                # 從 db_comparison.details 中獲取最新的 processing_stages，因為它已經在第447行更新並包含了 sub_stages
+                latest_processing_stages = db_comparison.details.get('processing_stages')
+                if latest_processing_stages:
+                    # 使用最新的 processing_stages（包含 sub_stages）
+                    details['processing_stages'] = latest_processing_stages
+                else:
+                    # 如果沒有，使用當前的 processing_stages
+                    details['processing_stages'] = processing_stages
+            else:
+                # 如果 db_comparison.details 不存在，使用當前的 processing_stages
+                details['processing_stages'] = processing_stages
             
             db_comparison.similarity_before_correction = details.get('similarity_before_correction')
             db_comparison.improvement = details.get('improvement')
-            details['processing_stages'] = processing_stages
             db_comparison.details = details
             
             # 階段: 生成視覺化
@@ -496,7 +644,16 @@ class ComparisonService:
             db_comparison.details['error_trace'] = error_trace
             
             db_comparison.status = ComparisonStatus.FAILED
-            self.db.commit()
+            try:
+                self.db.commit()
+            except Exception as commit_error:
+                # 如果 commit 失敗，嘗試 rollback
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+                # 記錄 commit 錯誤
+                print(f"提交失敗狀態時出錯: {str(commit_error)}")
             raise e
     
     def _remove_background_and_align(
@@ -524,15 +681,14 @@ class ComparisonService:
         import time
         comparator = SealComparator()
         
-        # 去背景
-        remove_bg_start = time.time()
+        # 去背景（帶時間詳情）
+        remove_bg_timing = {}
         try:
-            image = comparator._auto_detect_bounds_and_remove_background(image)
+            image, remove_bg_timing = comparator._auto_detect_bounds_and_remove_background(image, return_timing=True)
         except Exception as e:
             print(f"警告：自動外框偵測失敗，使用原圖: {str(e)}")
             # 如果處理失敗，使用原圖繼續處理
-            pass
-        remove_bg_time = time.time() - remove_bg_start
+            remove_bg_timing = {}
         
         # 對齊處理
         if is_image2 and reference_image is not None:
@@ -542,15 +698,21 @@ class ComparisonService:
                 image_aligned, angle, offset, similarity, metrics, alignment_timing = comparator._align_image2_to_image1(
                     reference_image, image, rotation_range=rotation_range, translation_range=translation_range
                 )
-                # 將去背景時間添加到對齊時間字典中
+                # 合併去背景時間詳情到對齊時間字典中
                 if alignment_timing is None:
                     alignment_timing = {}
-                alignment_timing['remove_background'] = remove_bg_time
+                # 將去背景的詳細時間步驟添加到對齊時間字典中
+                alignment_timing.update(remove_bg_timing)
+                # 保留總時間作為 remove_background（向後兼容）
+                if 'remove_background_total' in remove_bg_timing:
+                    alignment_timing['remove_background'] = remove_bg_timing['remove_background_total']
                 return image_aligned, angle, offset, similarity, metrics, alignment_timing
             except Exception as e:
                 print(f"警告：圖像2對齊優化失敗，使用原圖: {str(e)}")
                 # 如果對齊失敗，直接返回原圖
-                alignment_timing = {'remove_background': remove_bg_time}
+                alignment_timing = remove_bg_timing.copy()
+                if 'remove_background_total' in remove_bg_timing:
+                    alignment_timing['remove_background'] = remove_bg_timing['remove_background_total']
                 return image, None, None, None, None, alignment_timing
         else:
             # 圖像1：只去背景，不對齊

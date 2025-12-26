@@ -45,5 +45,3 @@ echo 停止服務：
 echo   docker-compose down
 echo.
 
-pause
-

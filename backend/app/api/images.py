@@ -521,7 +521,12 @@ def compare_image1_with_seals(
                                     similarity_ssim_weight=task_record.similarity_ssim_weight,
                                     similarity_template_weight=task_record.similarity_template_weight,
                                     pixel_similarity_weight=task_record.pixel_similarity_weight,
-                                    histogram_similarity_weight=task_record.histogram_similarity_weight
+                                    histogram_similarity_weight=task_record.histogram_similarity_weight,
+                                    overlap_weight=overlap_w,
+                                    pixel_diff_penalty_weight=pixel_diff_penalty_w,
+                                    unique_region_penalty_weight=unique_region_penalty_w,
+                                    rotation_range=rotation_r,
+                                    translation_range=translation_r
                                 )
                                 
                                 # 將重新比對的結果合併到現有結果中

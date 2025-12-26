@@ -391,7 +391,7 @@ class ImageService:
         # 去背景
         remove_bg_start = time.time()
         try:
-            image = comparator._auto_detect_bounds_and_remove_background(image)
+            image, _ = comparator._auto_detect_bounds_and_remove_background(image)
         except Exception as e:
             print(f"警告：自動外框偵測失敗，使用原圖: {str(e)}")
             # 如果處理失敗，使用原圖繼續處理
@@ -766,7 +766,12 @@ class ImageService:
         similarity_ssim_weight: float,
         similarity_template_weight: float,
         pixel_similarity_weight: float,
-        histogram_similarity_weight: float
+        histogram_similarity_weight: float,
+        overlap_weight: float = 0.5,
+        pixel_diff_penalty_weight: float = 0.3,
+        unique_region_penalty_weight: float = 0.2,
+        rotation_range: float = 15.0,
+        translation_range: int = 100
     ) -> List[Dict]:
         """
         重新比對缺失的印鑑（單線程執行，避免數據庫會話衝突）

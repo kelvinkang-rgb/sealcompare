@@ -866,7 +866,7 @@ def detect_seals_with_rotation_matching(
         from seal_compare import SealComparator
         
         comparator = SealComparator()
-        image1_processed = comparator._auto_detect_bounds_and_remove_background(image1)
+        image1_processed, _ = comparator._auto_detect_bounds_and_remove_background(image1)
         
         # 在圖像2中檢測所有可能的印鑑區域
         detection_result = detect_multiple_seals(image2_path, timeout=timeout - (time.time() - start_time), max_seals=50)
@@ -904,7 +904,7 @@ def detect_seals_with_rotation_matching(
                 cropped_seal, updated_bbox = _crop_seal_with_margin(image2, bbox, circularity)
                 
                 # 去背景處理
-                cropped_seal_processed = comparator._auto_detect_bounds_and_remove_background(cropped_seal)
+                cropped_seal_processed, _ = comparator._auto_detect_bounds_and_remove_background(cropped_seal)
                 
                 # 旋轉匹配
                 best_angle, best_similarity = _rotate_and_match(

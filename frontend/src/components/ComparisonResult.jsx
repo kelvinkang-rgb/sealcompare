@@ -131,6 +131,123 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
                   改善幅度: <strong>{(comparison.improvement * 100).toFixed(2)}%</strong>
                 </Typography>
               )}
+              {/* 顯示對齊時間詳情 */}
+              {comparison.details?.alignment_optimization?.timing && (
+                <Box sx={{ mt: 1, p: 1, bgcolor: 'background.default', borderRadius: 1 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                    圖像2處理時間詳情:
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, pl: 1 }}>
+                    {/* 去背景詳細步驟 */}
+                    {comparison.details.alignment_optimization.timing.step1_convert_to_gray !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟1（轉換灰度）: {(comparison.details.alignment_optimization.timing.step1_convert_to_gray * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step2_detect_bg_color !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟2（偵測背景色）: {(comparison.details.alignment_optimization.timing.step2_detect_bg_color * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step3_otsu_threshold !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟3（OTSU二值化）: {(comparison.details.alignment_optimization.timing.step3_otsu_threshold * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step4_combine_masks !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟4（結合遮罩）: {(comparison.details.alignment_optimization.timing.step4_combine_masks * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step5_morphology_bg !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟5（形態學處理背景）: {(comparison.details.alignment_optimization.timing.step5_morphology_bg * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step6_contour_detection !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟6（輪廓偵測）: {(comparison.details.alignment_optimization.timing.step6_contour_detection * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step7_calculate_bbox !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟7（計算邊界框）: {(comparison.details.alignment_optimization.timing.step7_calculate_bbox * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step8_crop_image !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟8（裁切圖像）: {(comparison.details.alignment_optimization.timing.step8_crop_image * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.step9_remove_bg_final !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ pl: 1, fontStyle: 'italic' }}>
+                        去背景-步驟9（最終移除背景）: {(comparison.details.alignment_optimization.timing.step9_remove_bg_final * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.remove_background_total !== undefined && (
+                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 'bold', mt: 0.5 }}>
+                        去背景總時間: {(comparison.details.alignment_optimization.timing.remove_background_total * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {/* 對齊詳細步驟 */}
+                    {comparison.details.alignment_optimization.timing.stage1_translation_coarse !== undefined && (
+                      <Typography variant="caption" color="text.secondary">
+                        對齊-階段1（平移粗調）: {(comparison.details.alignment_optimization.timing.stage1_translation_coarse * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.stage2_rotation_coarse !== undefined && (
+                      <Typography variant="caption" color="text.secondary">
+                        對齊-階段2（旋轉粗調）: {(comparison.details.alignment_optimization.timing.stage2_rotation_coarse * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.stage3_translation_fine !== undefined && (
+                      <Typography variant="caption" color="text.secondary">
+                        對齊-階段3（平移細調）: {(comparison.details.alignment_optimization.timing.stage3_translation_fine * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.stage4_rotation_fine !== undefined && (
+                      <Typography variant="caption" color="text.secondary">
+                        對齊-階段4a（旋轉細調）: {(comparison.details.alignment_optimization.timing.stage4_rotation_fine * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.stage4_translation_fine !== undefined && (
+                      <Typography variant="caption" color="text.secondary">
+                        對齊-階段4b（平移細調）: {(comparison.details.alignment_optimization.timing.stage4_translation_fine * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {comparison.details.alignment_optimization.timing.stage4_total !== undefined && comparison.details.alignment_optimization.timing.stage4_total > 0 && (
+                      <Typography variant="caption" color="text.secondary">
+                        對齊-階段4（總計）: {(comparison.details.alignment_optimization.timing.stage4_total * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {/* 向後兼容：顯示舊的 remove_background 字段 */}
+                    {comparison.details.alignment_optimization.timing.remove_background !== undefined && 
+                     !comparison.details.alignment_optimization.timing.remove_background_total && (
+                      <Typography variant="caption" color="text.secondary">
+                        去背景: {(comparison.details.alignment_optimization.timing.remove_background * 1000).toFixed(2)}ms
+                      </Typography>
+                    )}
+                    {(() => {
+                      const timing = comparison.details.alignment_optimization.timing
+                      // 排除詳細步驟，只計算主要階段和總時間
+                      const mainTimingKeys = [
+                        'remove_background_total', 'remove_background',
+                        'stage1_translation_coarse', 'stage2_rotation_coarse', 
+                        'stage3_translation_fine', 'stage4_rotation_fine', 
+                        'stage4_translation_fine', 'stage4_total'
+                      ]
+                      const totalTime = Object.entries(timing)
+                        .filter(([key]) => mainTimingKeys.includes(key))
+                        .reduce((sum, [, val]) => sum + (val || 0), 0)
+                      return totalTime > 0 && (
+                        <Typography variant="caption" color="primary" sx={{ fontWeight: 'bold', mt: 0.5 }}>
+                          總時間: {(totalTime * 1000).toFixed(2)}ms
+                        </Typography>
+                      )
+                    })()}
+                  </Box>
+                </Box>
+              )}
             </Box>
           </Box>
 
