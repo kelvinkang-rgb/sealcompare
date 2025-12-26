@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # 文件存儲設置
     UPLOAD_DIR: str = "/app/uploads"
     LOGS_DIR: str = "/app/logs"
-    MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100MB（允許上傳接近原始文件大小的高解析度圖像）
+    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 100MB（允許上傳接近原始文件大小的高解析度圖像）
     
     # CORS 設置
     CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     
     # 多執行緒設置
-    MAX_COMPARISON_THREADS: int = 16  # 多印鑑比對的最大線程數
+    MAX_COMPARISON_THREADS: int = 48  # 多印鑑比對的最大線程數
     
     class Config:
         env_file = ".env"

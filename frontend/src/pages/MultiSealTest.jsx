@@ -37,44 +37,48 @@ import SimilarityHistogram from '../components/SimilarityHistogram'
 function MultiSealTest() {
   const navigate = useNavigate()
   
-  // 圖像1相關狀態
+  // ==================== 圖像1相關狀態 ====================
+  // 圖像1數據和檢測狀態
   const [image1, setImage1] = useState(null)
   const [showSealDialog1, setShowSealDialog1] = useState(false)
   const [sealDetectionResult1, setSealDetectionResult1] = useState(null)
   const [isDetecting1, setIsDetecting1] = useState(false)
   
-  // 圖像2相關狀態
+  // ==================== 圖像2相關狀態 ====================
+  // 圖像2數據和多印鑑檢測狀態
   const [image2, setImage2] = useState(null)
   const [showSealDialog2, setShowSealDialog2] = useState(false)
   const [multipleSeals, setMultipleSeals] = useState([])
   const [isDetecting2, setIsDetecting2] = useState(false)
-  const image2InputRef = useRef(null) // 引用圖像2的 input 元素
+  const image2InputRef = useRef(null) // 引用圖像2的 input 元素，用於重置文件選擇
   
-  // 操作反饋
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
+  // ==================== 比對流程狀態 ====================
+  // 裁切後的印鑑圖像ID列表
   const [croppedImageIds, setCroppedImageIds] = useState([])
-  
-  // 比對結果
+  // 比對結果數據
   const [comparisonResults, setComparisonResults] = useState(null)
+  // 比對任務狀態
+  const [currentTaskUid, setCurrentTaskUid] = useState(null)
+  const [taskStatus, setTaskStatus] = useState(null)
   
-  // 相似度閾值
-  const [threshold, setThreshold] = useState(0.88) // 默認 88%
-  
-  // 比對印鑑數量上限
-  const [maxSeals, setMaxSeals] = useState(3) // 默認 3
-  const [lastDetectionMaxSeals, setLastDetectionMaxSeals] = useState(null) // 記錄上次檢測使用的 maxSeals
-  
+  // ==================== 比對參數設定 ====================
+  // 相似度閾值（0-1，默認 0.88 即 88%）
+  const [threshold, setThreshold] = useState(0.88)
+  // 比對印鑑數量上限（默認 3）
+  const [maxSeals, setMaxSeals] = useState(3)
+  // 記錄上次檢測使用的 maxSeals，用於判斷是否需要重新檢測
+  const [lastDetectionMaxSeals, setLastDetectionMaxSeals] = useState(null)
   // Mask相似度權重參數
-  const [overlapWeight, setOverlapWeight] = useState(0.5) // 默認 50%
-  const [pixelDiffPenaltyWeight, setPixelDiffPenaltyWeight] = useState(0.3) // 默認 30%
-  const [uniqueRegionPenaltyWeight, setUniqueRegionPenaltyWeight] = useState(0.2) // 默認 20%
+  const [overlapWeight, setOverlapWeight] = useState(0.5) // 重疊區域權重，默認 50%
+  const [pixelDiffPenaltyWeight, setPixelDiffPenaltyWeight] = useState(0.3) // 像素差異懲罰權重，默認 30%
+  const [uniqueRegionPenaltyWeight, setUniqueRegionPenaltyWeight] = useState(0.2) // 獨有區域懲罰權重，默認 20%
   
-  // Mask相似度說明Dialog狀態
+  // ==================== UI狀態 ====================
+  // 操作反饋提示
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
+  // Dialog顯示狀態
   const [maskWeightDialogOpen, setMaskWeightDialogOpen] = useState(false)
-  
-  // 進階設定收折狀態
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
-  
   // 錯誤詳情狀態
   const [lastError, setLastError] = useState(null)
   const [errorStage, setErrorStage] = useState(null) // 'save', 'crop', 'compare'
@@ -230,10 +234,42 @@ function MultiSealTest() {
     },
   })
 
-  // 比對任務狀態
-  const [currentTaskUid, setCurrentTaskUid] = useState(null)
-  const [taskStatus, setTaskStatus] = useState(null)
-  
+  // ==================== Mask相似度計算函數 ====================
+  // 與後端 calculate_mask_based_similarity 邏輯一致
+  const calculateMaskBasedSimilarity = (maskStats, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight) => {
+    if (!maskStats || maskStats.total_seal_pixels === 0) {
+      return 0.0
+    }
+    
+    try {
+      // 1. 重疊區域獎勵
+      const overlapRatio = maskStats.overlap_ratio || 0.0
+      const overlapScore = overlapRatio
+      
+      // 2. 像素差異懲罰
+      const pixelDiffRatio = maskStats.pixel_diff_ratio || 1.0
+      const pixelDiffPenalty = 1.0 - pixelDiffRatio
+      
+      // 3. 獨有區域懲罰
+      const diff1OnlyRatio = maskStats.diff_1_only_ratio || 0.0
+      const diff2OnlyRatio = maskStats.diff_2_only_ratio || 0.0
+      const uniquePenalty = 1.0 - (diff1OnlyRatio + diff2OnlyRatio)
+      
+      // 最終相似度計算
+      const similarity = (
+        overlapScore * overlapWeight +
+        pixelDiffPenalty * pixelDiffPenaltyWeight +
+        uniquePenalty * uniqueRegionPenaltyWeight
+      )
+      
+      // 確保返回值在 [0.0, 1.0] 範圍內
+      return Math.max(0.0, Math.min(1.0, similarity))
+    } catch (error) {
+      console.error('計算mask相似度失敗:', error)
+      return 0.0
+    }
+  }
+
   // 輪詢任務結果（包括狀態和部分結果）- 合併為單一輪詢
   const { data: polledTaskResult } = useQuery({
     queryKey: ['task-result', currentTaskUid],
@@ -294,8 +330,38 @@ function MultiSealTest() {
         })
         
         if (completedResults.length > 0) {
+          // 對每個結果使用當前設定的參數動態計算 mask_based_similarity 和 is_match
+          const processedResults = completedResults.map(result => {
+            // 如果結果有錯誤，直接返回
+            if (result.error) {
+              return result
+            }
+            
+            // 如果有 mask_statistics，使用當前設定的權重參數重新計算
+            if (result.mask_statistics) {
+              const dynamicMaskSimilarity = calculateMaskBasedSimilarity(
+                result.mask_statistics,
+                overlapWeight,
+                pixelDiffPenaltyWeight,
+                uniqueRegionPenaltyWeight
+              )
+              
+              // 使用當前設定的閾值重新判斷匹配狀態
+              const dynamicIsMatch = dynamicMaskSimilarity >= threshold
+              
+              return {
+                ...result,
+                mask_based_similarity: dynamicMaskSimilarity,
+                is_match: dynamicIsMatch
+              }
+            }
+            
+            // 如果沒有 mask_statistics，使用後端返回的值作為備用
+            return result
+          })
+          
           // 確保結果按 seal_index 排序
-          const sortedResults = [...completedResults].sort((a, b) => {
+          const sortedResults = [...processedResults].sort((a, b) => {
             const indexA = a.seal_index || 0
             const indexB = b.seal_index || 0
             return indexA - indexB
@@ -307,7 +373,7 @@ function MultiSealTest() {
         }
       }
     }
-  }, [polledTaskResult, currentTaskUid])
+  }, [polledTaskResult, currentTaskUid, threshold, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight])
   
   // 比對圖像1與多個印鑑（創建任務）
   const compareMutation = useMutation({
@@ -433,24 +499,6 @@ function MultiSealTest() {
     }
   }
 
-  // 處理裁切
-  const handleCropSeals = () => {
-    if (!uploadImage2Mutation.data?.id || multipleSeals.length === 0) {
-      setSnackbar({
-        open: true,
-        message: '請先完成多印鑑檢測',
-        severity: 'warning'
-      })
-      return
-    }
-
-    cropSealsMutation.mutate({
-      imageId: uploadImage2Mutation.data.id,
-      seals: multipleSeals,
-      margin: 10
-    })
-  }
-
   // 處理清除
   const handleClearImage1 = () => {
     setImage1(null)
@@ -524,55 +572,6 @@ function MultiSealTest() {
       }
       setShowSealDialog2(true)
     }
-  }
-
-  // 處理點擊印鑑
-  const handleSealClick = (index, seal) => {
-    setShowSealDialog2(true)
-  }
-
-
-  // 處理開始比對
-  const handleStartComparison = () => {
-    if (!uploadImage1Mutation.data?.id) {
-      setSnackbar({
-        open: true,
-        message: '請先上傳並標記圖像1',
-        severity: 'warning'
-      })
-      return
-    }
-
-    if (!image1?.seal_bbox) {
-      setSnackbar({
-        open: true,
-        message: '請先完成圖像1的印鑑位置標記',
-        severity: 'warning'
-      })
-      return
-    }
-
-    if (croppedImageIds.length === 0) {
-      setSnackbar({
-        open: true,
-        message: '請先完成印鑑裁切',
-        severity: 'warning'
-      })
-      return
-    }
-
-    compareMutation.mutate({
-      image1Id: uploadImage1Mutation.data.id,
-      sealImageIds: croppedImageIds,
-      threshold: threshold,
-      similaritySsimWeight: 0.5, // 保留以向後兼容，但不再使用
-      similarityTemplateWeight: 0.35,
-      pixelSimilarityWeight: 0.1,
-      histogramSimilarityWeight: 0.05,
-      overlapWeight: overlapWeight,
-      pixelDiffPenaltyWeight: pixelDiffPenaltyWeight,
-      uniqueRegionPenaltyWeight: uniqueRegionPenaltyWeight
-    })
   }
 
   // 合併處理：保存、裁切、比對
@@ -1123,7 +1122,7 @@ function MultiSealTest() {
               image={image2}
               seals={image2?.multiple_seals || multipleSeals || []}
               label="圖像2預覽"
-              onSealClick={handleSealClick}
+              onSealClick={() => setShowSealDialog2(true)}
             />
 
             {/* 操作按鈕 */}
@@ -1285,6 +1284,11 @@ function MultiSealTest() {
             results={comparisonResults}
             image1Id={uploadImage1Mutation.data?.id}
             similarityRange={null}
+            threshold={threshold}
+            overlapWeight={overlapWeight}
+            pixelDiffPenaltyWeight={pixelDiffPenaltyWeight}
+            uniqueRegionPenaltyWeight={uniqueRegionPenaltyWeight}
+            calculateMaskBasedSimilarity={calculateMaskBasedSimilarity}
           />
         </Box>
       )}

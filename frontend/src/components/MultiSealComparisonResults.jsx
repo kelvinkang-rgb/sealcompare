@@ -27,7 +27,16 @@ import {
 import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, ExpandMore as ExpandMoreIcon, Search as SearchIcon } from '@mui/icons-material'
 import ImagePreviewDialog from './ImagePreviewDialog'
 
-function MultiSealComparisonResults({ results, image1Id, similarityRange }) {
+function MultiSealComparisonResults({ 
+  results, 
+  image1Id, 
+  similarityRange,
+  threshold = 0.88,
+  overlapWeight = 0.5,
+  pixelDiffPenaltyWeight = 0.3,
+  uniqueRegionPenaltyWeight = 0.2,
+  calculateMaskBasedSimilarity
+}) {
   const [modalOpen, setModalOpen] = useState(false)
   const [modalImageUrl, setModalImageUrl] = useState('')
   const [modalImage, setModalImage] = useState(null)
@@ -38,6 +47,40 @@ function MultiSealComparisonResults({ results, image1Id, similarityRange }) {
   const [sortBy, setSortBy] = useState('index-asc') // 'index-asc', 'index-desc', 'similarity-asc', 'similarity-desc'
   const [minSimilarity, setMinSimilarity] = useState('') // mask相似度最小值（0-100）
   const [maxSimilarity, setMaxSimilarity] = useState('') // mask相似度最大值（0-100）
+  
+  // 動態計算每個結果的 mask_based_similarity 和 is_match
+  const processedResults = React.useMemo(() => {
+    if (!results || results.length === 0) return []
+    
+    return results.map(result => {
+      // 如果結果有錯誤，直接返回
+      if (result.error) {
+        return result
+      }
+      
+      // 如果有 mask_statistics 和計算函數，使用當前設定的權重參數重新計算
+      if (result.mask_statistics && calculateMaskBasedSimilarity) {
+        const dynamicMaskSimilarity = calculateMaskBasedSimilarity(
+          result.mask_statistics,
+          overlapWeight,
+          pixelDiffPenaltyWeight,
+          uniqueRegionPenaltyWeight
+        )
+        
+        // 使用當前設定的閾值重新判斷匹配狀態
+        const dynamicIsMatch = dynamicMaskSimilarity >= threshold
+        
+        return {
+          ...result,
+          mask_based_similarity: dynamicMaskSimilarity,
+          is_match: dynamicIsMatch
+        }
+      }
+      
+      // 如果沒有 mask_statistics，使用結果中已有的值（向後兼容）
+      return result
+    })
+  }, [results, threshold, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight, calculateMaskBasedSimilarity])
 
   const handleImageClick = (imagePath, title) => {
     if (!imagePath) return
@@ -79,9 +122,9 @@ function MultiSealComparisonResults({ results, image1Id, similarityRange }) {
 
   // 篩選、排序、搜尋邏輯
   const filteredAndSortedResults = useMemo(() => {
-    if (!results || results.length === 0) return []
+    if (!processedResults || processedResults.length === 0) return []
 
-    let filtered = [...results]
+    let filtered = [...processedResults]
 
     // 1. 相似度範圍篩選（來自 histogram）
     if (similarityRange) {
@@ -144,9 +187,9 @@ function MultiSealComparisonResults({ results, image1Id, similarityRange }) {
     })
 
     return filtered
-  }, [results, similarityRange, matchFilter, searchText, sortBy, minSimilarity, maxSimilarity])
+  }, [processedResults, similarityRange, matchFilter, searchText, sortBy, minSimilarity, maxSimilarity])
 
-  if (!results || results.length === 0) {
+  if (!processedResults || processedResults.length === 0) {
     return (
       <Alert severity="info" sx={{ mt: 2 }}>
         暫無比對結果
@@ -158,7 +201,7 @@ function MultiSealComparisonResults({ results, image1Id, similarityRange }) {
     <Box sx={{ mt: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6">
-          比對結果 ({filteredAndSortedResults.length} / {results.length} 個印鑑)
+          比對結果 ({filteredAndSortedResults.length} / {processedResults.length} 個印鑑)
         </Typography>
       </Box>
 
