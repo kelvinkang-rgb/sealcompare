@@ -337,6 +337,18 @@ function MultiSealTest() {
             if (result.error) {
               return result
             }
+
+            // 新主指標：structure_similarity（由後端計算，對印泥深淺較不敏感）
+            if (result.structure_similarity !== null && result.structure_similarity !== undefined) {
+              const primary = result.structure_similarity
+              const dynamicIsMatch = primary >= threshold
+              return {
+                ...result,
+                mask_based_similarity: primary, // 前端沿用同一欄位顯示主分數
+                is_match: dynamicIsMatch,
+                _primary_metric: 'structure_similarity'
+              }
+            }
             
             // 如果有 mask_statistics，使用當前設定的權重參數重新計算
             if (result.mask_statistics) {
@@ -353,12 +365,18 @@ function MultiSealTest() {
               return {
                 ...result,
                 mask_based_similarity: dynamicMaskSimilarity,
-                is_match: dynamicIsMatch
+                is_match: dynamicIsMatch,
+                _primary_metric: 'mask_based_similarity'
               }
             }
             
             // 如果沒有 mask_statistics，使用後端返回的值作為備用
-            return result
+            const fallback = result.mask_based_similarity
+            return {
+              ...result,
+              is_match: fallback !== null && fallback !== undefined ? fallback >= threshold : result.is_match,
+              _primary_metric: 'mask_based_similarity'
+            }
           })
           
           // 增量合併：避免每次輪詢都重建整個結果陣列導致 UI 抖動/變慢

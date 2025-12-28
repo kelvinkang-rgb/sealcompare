@@ -120,6 +120,7 @@ class SealComparisonResult(BaseModel):
     gray_diff_path: Optional[str] = Field(None, description="灰度差異圖路徑（熱力圖視覺化）")
     mask_statistics: Optional[Dict[str, Any]] = Field(None, description="Mask統計資訊")
     mask_based_similarity: Optional[float] = Field(None, description="基於mask的相似度")
+    structure_similarity: Optional[float] = Field(None, description="結構相似度（對印泥深淺較不敏感，0-1）")
     input_image1_path: Optional[str] = Field(None, description="疊圖前的圖像1路徑（去背景後的裁切圖像）")
     input_image2_path: Optional[str] = Field(None, description="疊圖前的圖像2路徑（對齊後的印鑑圖像）")
     error: Optional[str] = Field(None, description="錯誤訊息（如果比對失敗）")

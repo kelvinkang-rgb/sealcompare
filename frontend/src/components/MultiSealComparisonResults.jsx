@@ -48,7 +48,9 @@ function MultiSealComparisonResults({
   const [minSimilarity, setMinSimilarity] = useState('') // mask相似度最小值（0-100）
   const [maxSimilarity, setMaxSimilarity] = useState('') // mask相似度最大值（0-100）
   
-  // 動態計算每個結果的 mask_based_similarity 和 is_match
+  // 動態計算每個結果的「主分數」與 is_match
+  // - 優先使用後端回傳的 structure_similarity（對印泥深淺較不敏感，0-1）
+  // - 若缺欄位（向後相容），才用 mask_based_similarity（可依權重重算）
   const processedResults = React.useMemo(() => {
     if (!results || results.length === 0) return []
     
@@ -56,6 +58,19 @@ function MultiSealComparisonResults({
       // 如果結果有錯誤，直接返回
       if (result.error) {
         return result
+      }
+
+      // 新主指標：structure_similarity
+      if (result.structure_similarity !== null && result.structure_similarity !== undefined) {
+        const primary = result.structure_similarity
+        const dynamicIsMatch = primary >= threshold
+        return {
+          ...result,
+          // 將 UI 既有使用的欄位覆寫成主分數，避免改動太大
+          mask_based_similarity: primary,
+          is_match: dynamicIsMatch,
+          _primary_metric: 'structure_similarity'
+        }
       }
       
       // 如果有 mask_statistics 和計算函數，使用當前設定的權重參數重新計算
@@ -73,12 +88,18 @@ function MultiSealComparisonResults({
         return {
           ...result,
           mask_based_similarity: dynamicMaskSimilarity,
-          is_match: dynamicIsMatch
+          is_match: dynamicIsMatch,
+          _primary_metric: 'mask_based_similarity'
         }
       }
       
       // 如果沒有 mask_statistics，使用結果中已有的值（向後兼容）
-      return result
+      const fallback = result.mask_based_similarity
+      return {
+        ...result,
+        is_match: fallback !== null && fallback !== undefined ? fallback >= threshold : result.is_match,
+        _primary_metric: 'mask_based_similarity'
+      }
     })
   }, [results, threshold, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight, calculateMaskBasedSimilarity])
 
@@ -315,7 +336,7 @@ function MultiSealComparisonResults({
                         size="small"
                       />
                       <Chip
-                        label={`Mask相似度: ${(result.mask_based_similarity * 100).toFixed(2)}%`}
+                        label={`${result._primary_metric === 'structure_similarity' ? '結構相似度' : 'Mask相似度'}: ${(result.mask_based_similarity * 100).toFixed(2)}%`}
                         color={result.is_match ? 'success' : 'info'}
                         size="small"
                         variant="outlined"

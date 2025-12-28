@@ -22,7 +22,12 @@ from pathlib import Path as PathLib
 core_path = PathLib(__file__).parent.parent.parent / "core"
 sys.path.insert(0, str(core_path))
 from seal_compare import SealComparator
-from overlay import create_overlay_image, calculate_mask_statistics, calculate_mask_based_similarity
+from overlay import (
+    create_overlay_image,
+    calculate_mask_statistics,
+    calculate_mask_based_similarity,
+    calculate_structure_similarity,
+)
 from verification import create_difference_heatmap
 from fastapi import UploadFile
 from app.config import settings
@@ -1368,6 +1373,13 @@ class ImageService:
                             result['is_match'] = None
                             print(f"警告：印鑑 {seal_index} 沒有有效的mask數據（total_seal_pixels=0），無法判定匹配狀態")
                         else:
+                            # 新主指標：structure_similarity（偏結構、對印泥深淺較不敏感）
+                            structure_similarity = calculate_structure_similarity(
+                                image1_for_overlay,
+                                image2_for_overlay,
+                            )
+                            result['structure_similarity'] = float(structure_similarity)
+
                             mask_based_similarity = calculate_mask_based_similarity(
                                 mask_stats,
                                 overlap_weight=overlap_weight,
@@ -1377,13 +1389,18 @@ class ImageService:
                             result['mask_statistics'] = mask_stats
                             result['mask_based_similarity'] = float(mask_based_similarity)
                             
-                            # 使用mask相似度與threshold比較來判定is_match
-                            if mask_based_similarity is not None:
-                                result['is_match'] = mask_based_similarity >= threshold
-                                print(f"印鑑 {seal_index} mask-based相似度: {mask_based_similarity:.4f}, 判定結果: {'匹配' if result['is_match'] else '不匹配'} (threshold={threshold})")
+                            # 主判定改用 structure_similarity（缺值才 fallback 舊指標）
+                            primary = structure_similarity if structure_similarity is not None else mask_based_similarity
+                            if primary is not None:
+                                result['is_match'] = primary >= threshold
+                                print(
+                                    f"印鑑 {seal_index} structure_similarity: {structure_similarity:.4f}, "
+                                    f"mask_based_similarity: {mask_based_similarity:.4f}, "
+                                    f"主判定: {'匹配' if result['is_match'] else '不匹配'} (threshold={threshold})"
+                                )
                             else:
                                 result['is_match'] = None
-                                print(f"警告：印鑑 {seal_index} mask相似度為None，無法判定匹配狀態")
+                                print(f"警告：印鑑 {seal_index} 主相似度為None，無法判定匹配狀態")
                     except Exception as e:
                         timing['calculate_mask_stats'] = time.time() - step_start
                         print(f"警告：計算mask統計資訊失敗 (印鑑 {seal_index}): {e}")
