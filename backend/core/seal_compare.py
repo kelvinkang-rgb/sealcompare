@@ -6,7 +6,7 @@
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
 import hashlib
 
 
@@ -296,35 +296,144 @@ class SealComparator:
         max_dimension = max(w1, h1, w2, h2)
         dynamic_translation_range = max_dimension  # 使用整個圖像範圍
         
-        # 階段1：平移粗調
-        stage1_start = time.time()
+        # 階段1+2（合併）：joint-grid 粗搜尋（角度×平移），並以多尺度模板匹配強化平移
+        stage12_start = time.time()
         print(f"對齊開始：圖像尺寸 img1=({h1}, {w1}), img2=({h2}, {w2}), 平移範圍={dynamic_translation_range}")
         try:
-            best_offset_x, best_offset_y, translation_confidence = self._coarse_translation_search(
-                img1_gray, img2_gray, dynamic_translation_range
+            best_angle, best_offset_x, best_offset_y, coarse_similarity, stage12_timing = self._joint_coarse_search_multiscale(
+                img1_gray,
+                img2_gray,
+                rotation_range=rotation_range,
+                translation_range=dynamic_translation_range
             )
-            print(f"階段1平移粗調完成：偏移=({best_offset_x}, {best_offset_y}), 置信度={translation_confidence:.4f}")
+            # 記錄 coarse 模式，方便除錯
+            best_metrics['coarse_search_mode'] = "joint_grid"
+            best_metrics['coarse_similarity'] = float(coarse_similarity)
+            # 合併細節時間
+            if stage12_timing:
+                alignment_timing.update(stage12_timing)
+            print(
+                f"階段1+2(joint)完成：角度={best_angle:.2f}度, 偏移=({best_offset_x}, {best_offset_y}), "
+                f"相似度={coarse_similarity:.4f}"
+            )
         except Exception as e:
-            print(f"警告：平移粗調失敗，使用默認值: {str(e)}")
+            print(f"警告：joint粗搜尋失敗，使用默認值: {str(e)}")
+            best_angle = 0.0
             best_offset_x = 0
             best_offset_y = 0
-            translation_confidence = 0.0
-        
-        alignment_timing['stage1_translation_coarse'] = time.time() - stage1_start
-        
-        # 階段2：旋轉粗調（固定平移值，只搜索旋轉角度）
-        stage2_start = time.time()
+            coarse_similarity = 0.0
+            best_metrics['coarse_search_mode'] = "joint_grid_failed"
+            best_metrics['coarse_error'] = str(e)
+
+        stage12_total = time.time() - stage12_start
+        # timing 相容：保留 stage1/stage2 key，並新增 stage12_joint_coarse_total
+        alignment_timing['stage12_joint_coarse_total'] = alignment_timing.get('stage12_joint_coarse_total', stage12_total)
+        alignment_timing['stage1_translation_coarse'] = stage12_total
+        alignment_timing['stage2_rotation_coarse'] = 0.0
+
+        # === 可觀測性：記錄 stage12 後的 overlap 與 offset（用縮小圖快速估計）===
         try:
-            best_angle, rotation_similarity = self._coarse_rotation_search(
-                img1_gray, img2_gray, best_offset_x, best_offset_y, rotation_range
+            best_metrics['offset_after_stage12'] = {'x': int(best_offset_x), 'y': int(best_offset_y), 'angle': float(best_angle)}
+            best_metrics['overlap_after_stage12'] = float(
+                self._fast_overlap_ratio(img1_gray, img2_gray, best_angle, best_offset_x, best_offset_y, scale=0.3)
             )
-            print(f"階段2旋轉粗調完成：角度={best_angle:.2f}度, 相似度={rotation_similarity:.4f}")
         except Exception as e:
-            print(f"警告：旋轉粗調失敗，使用默認值: {str(e)}")
-            best_angle = 0.0
-            rotation_similarity = 0.0
-        
-        alignment_timing['stage2_rotation_coarse'] = time.time() - stage2_start
+            best_metrics['overlap_after_stage12_error'] = str(e)
+
+        # === 低 overlap multi-start：用 stage12 的 top-K 候選重新以 overlap 評估，避免落錯峰 ===
+        try:
+            best_metrics['multistart_triggered'] = False
+            overlap_stage12 = best_metrics.get('overlap_after_stage12')
+            candidates = alignment_timing.get('stage12_candidates') if isinstance(alignment_timing, dict) else None
+            if overlap_stage12 is not None and overlap_stage12 < 0.6 and isinstance(candidates, list) and len(candidates) > 1:
+                best_metrics['multistart_triggered'] = True
+                scored = []
+                for c in candidates:
+                    try:
+                        a = float(c.get('angle'))
+                        dx = int(c.get('dx'))
+                        dy = int(c.get('dy'))
+                        ov = float(self._fast_overlap_ratio(img1_gray, img2_gray, a, dx, dy, scale=0.3))
+                        scored.append((ov, a, dx, dy))
+                    except Exception:
+                        continue
+                if scored:
+                    scored.sort(key=lambda x: x[0], reverse=True)
+                    best_ov, best_a, best_dx, best_dy = scored[0]
+                    best_metrics['multistart_best_overlap'] = float(best_ov)
+                    best_metrics['multistart_best_candidate'] = {'angle': float(best_a), 'dx': int(best_dx), 'dy': int(best_dy)}
+                    # 若候選 overlap 明顯優於原本結果，採用它作為後續精修起點
+                    if best_ov > float(overlap_stage12) + 0.05:
+                        best_angle = best_a
+                        best_offset_x = best_dx
+                        best_offset_y = best_dy
+                        best_metrics['multistart_adopted'] = True
+                    else:
+                        best_metrics['multistart_adopted'] = False
+        except Exception as e:
+            best_metrics['multistart_error'] = str(e)
+
+        # ===== 平移救援（優先救大錯峰）=====
+        # 用縮小圖 overlap_ratio 判斷是否落錯峰；若低於門檻，固定角度做更大半徑平移搜尋（±120，8→3→1）
+        rescue_start = time.time()
+        try:
+            overlap_before = self._fast_overlap_ratio(img1_gray, img2_gray, best_angle, best_offset_x, best_offset_y, scale=0.3)
+            best_metrics['rescue_triggered'] = False
+            best_metrics['rescue_overlap_before'] = float(overlap_before)
+
+            if overlap_before < 0.6:
+                best_metrics['rescue_triggered'] = True
+                rx, ry, ob, oa, rescue_timing = self._translation_rescue_search(
+                    img1_gray,
+                    img2_gray,
+                    angle=best_angle,
+                    initial_offset_x=best_offset_x,
+                    initial_offset_y=best_offset_y,
+                    overlap_threshold=0.6,
+                    radius=120,
+                    steps=(8, 3, 1),
+                    scale=0.3
+                )
+                best_offset_x = rx
+                best_offset_y = ry
+                best_metrics['rescue_overlap_before'] = float(ob)
+                best_metrics['rescue_overlap_after'] = float(oa)
+                if rescue_timing:
+                    alignment_timing.update(rescue_timing)
+        except Exception as e:
+            best_metrics['rescue_triggered'] = None
+            best_metrics['rescue_error'] = str(e)
+
+        alignment_timing['stage3_translation_rescue_total'] = alignment_timing.get(
+            'stage3_translation_rescue_total',
+            time.time() - rescue_start
+        )
+        # ===== 平移救援結束 =====
+
+        # ===== 角度正負判別（sign-disambiguation）：避免 +θ/-θ 選錯 =====
+        try:
+            ov_now = float(self._fast_overlap_ratio(img1_gray, img2_gray, best_angle, best_offset_x, best_offset_y, scale=0.3))
+            # 只在低 overlap 時啟動（避免不必要計算）
+            if ov_now < 0.6 and abs(float(best_angle)) >= 0.5:
+                a2, dx2, dy2, sign_metrics = self._angle_sign_disambiguation(
+                    img1_gray,
+                    img2_gray,
+                    angle=float(best_angle),
+                    offset_x=int(best_offset_x),
+                    offset_y=int(best_offset_y),
+                    scale=0.3,
+                    improve_threshold=0.05,
+                    rescue_radius=60,
+                    rescue_steps=(6, 2, 1)
+                )
+                best_metrics.update(sign_metrics)
+                if sign_metrics.get('angle_sign_flipped'):
+                    best_angle = float(a2)
+                    best_offset_x = int(dx2)
+                    best_offset_y = int(dy2)
+        except Exception as e:
+            best_metrics['angle_sign_check_error_outer'] = str(e)
+        # ===== 角度正負判別結束 =====
         
         # 階段3：平移細調（在最佳旋轉角度下精細調整平移，1像素精度）
         stage3_start = time.time()
@@ -351,6 +460,15 @@ class SealComparator:
             best_similarity = self._fast_rotation_match(img1_gray, img2_transformed)
         
         alignment_timing['stage3_translation_fine'] = time.time() - stage3_start
+
+        # === 可觀測性：記錄 stage3 後的 overlap 與 offset ===
+        try:
+            best_metrics['offset_after_stage3'] = {'x': int(best_offset_x), 'y': int(best_offset_y), 'angle': float(best_angle)}
+            best_metrics['overlap_after_stage3'] = float(
+                self._fast_overlap_ratio(img1_gray, img2_gray, best_angle, best_offset_x, best_offset_y, scale=0.3)
+            )
+        except Exception as e:
+            best_metrics['overlap_after_stage3_error'] = str(e)
         
         # 階段4：旋轉細調與平移細調（交替優化，0.2度旋轉精度，1像素平移精度）
         # 優化：根據階段3的相似度動態調整迭代次數
@@ -390,6 +508,92 @@ class SealComparator:
             alignment_timing['stage4_total'] = 0.0
         
         alignment_timing['stage4_total'] = alignment_timing.get('stage4_total', time.time() - stage4_start)
+
+        # === 可觀測性：記錄 stage4 後的 overlap 與 offset ===
+        try:
+            best_metrics['offset_after_stage4'] = {'x': int(best_offset_x), 'y': int(best_offset_y), 'angle': float(best_angle)}
+            best_metrics['overlap_after_stage4'] = float(
+                self._fast_overlap_ratio(img1_gray, img2_gray, best_angle, best_offset_x, best_offset_y, scale=0.3)
+            )
+        except Exception as e:
+            best_metrics['overlap_after_stage4_error'] = str(e)
+
+        # === 二次救援（post-fine guardrail）：防止精修後仍落錯峰/漂走 ===
+        post_rescue_start = time.time()
+        try:
+            best_metrics['post_fine_rescue_triggered'] = False
+            overlap12 = best_metrics.get('overlap_after_stage12')
+            overlap4 = best_metrics.get('overlap_after_stage4')
+            # 觸發條件：overlap 太低，或相比 stage12 明顯下降
+            trigger = False
+            if overlap4 is not None and overlap4 < 0.6:
+                trigger = True
+            if overlap12 is not None and overlap4 is not None and overlap4 < float(overlap12) - 0.15:
+                trigger = True
+
+            if trigger:
+                best_metrics['post_fine_rescue_triggered'] = True
+
+                # 先嘗試角度正負判別，避免「角度錯了卻一直只救平移」
+                try:
+                    a2, dx2, dy2, sign2 = self._angle_sign_disambiguation(
+                        img1_gray,
+                        img2_gray,
+                        angle=float(best_angle),
+                        offset_x=int(best_offset_x),
+                        offset_y=int(best_offset_y),
+                        scale=0.3,
+                        improve_threshold=0.05,
+                        rescue_radius=60,
+                        rescue_steps=(6, 2, 1)
+                    )
+                    # 只要這裡 flip，後面的平移救援就以新角度為準（或甚至不需要）
+                    best_metrics['post_fine_angle_sign_metrics'] = sign2
+                    if sign2.get('angle_sign_flipped'):
+                        best_angle = float(a2)
+                        best_offset_x = int(dx2)
+                        best_offset_y = int(dy2)
+                except Exception as e_sign:
+                    best_metrics['post_fine_angle_sign_error'] = str(e_sign)
+
+                rx, ry, ob, oa, rescue_timing = self._translation_rescue_search(
+                    img1_gray,
+                    img2_gray,
+                    angle=best_angle,
+                    initial_offset_x=best_offset_x,
+                    initial_offset_y=best_offset_y,
+                    overlap_threshold=0.65,
+                    radius=80,
+                    steps=(6, 2, 1),
+                    scale=0.3
+                )
+                best_metrics['post_fine_rescue_overlap_before'] = float(ob)
+                best_metrics['post_fine_rescue_overlap_after'] = float(oa)
+                if rescue_timing:
+                    # 避免覆蓋 stage3 的 key，這裡用獨立命名
+                    alignment_timing['post_fine_rescue_total'] = rescue_timing.get('stage3_translation_rescue_total', 0.0)
+                    alignment_timing['post_fine_rescue_evals'] = rescue_timing.get('stage3_translation_rescue_evals', 0.0)
+
+                best_offset_x = rx
+                best_offset_y = ry
+
+                # 再跑一次小範圍 stage3 fine，確保收斂
+                try:
+                    refined_x2, refined_y2, sim2 = self._fine_translation_search(
+                        img1_gray, img2_gray, best_angle, best_offset_x, best_offset_y, search_range=10
+                    )
+                    best_offset_x = refined_x2
+                    best_offset_y = refined_y2
+                    best_similarity = max(best_similarity, sim2)
+                    best_metrics['post_fine_rescue_offset'] = {'x': int(best_offset_x), 'y': int(best_offset_y)}
+                    best_metrics['post_fine_rescue_overlap_final'] = float(
+                        self._fast_overlap_ratio(img1_gray, img2_gray, best_angle, best_offset_x, best_offset_y, scale=0.3)
+                    )
+                except Exception as e2:
+                    best_metrics['post_fine_rescue_fine_error'] = str(e2)
+        except Exception as e:
+            best_metrics['post_fine_rescue_error'] = str(e)
+        alignment_timing['post_fine_rescue_guardrail_total'] = time.time() - post_rescue_start
         
         # 階段5：全局驗證（確保找到全局最優解）
         # 優化：根據當前相似度自適應調整搜索範圍
@@ -475,22 +679,24 @@ class SealComparator:
             img2_final = image2.copy()
         else:
             img2_final = cv2.cvtColor(image2, cv2.COLOR_GRAY2BGR)
-        
+
+        # ===== 修正裁切：使用 auto-canvas warpAffine，避免負平移/旋轉把內容丟掉 =====
+        h1, w1 = image1.shape[:2]
         center = (w2 // 2, h2 // 2)
-        M_rot = cv2.getRotationMatrix2D(center, best_angle, 1.0)
-        # 使用 INTER_LINEAR 插值以獲得更好的質量（默認是 INTER_LINEAR，但明確指定確保一致性）
-        img2_rotated = cv2.warpAffine(img2_final, M_rot, (w2, h2),
-                                     flags=cv2.INTER_LINEAR,
-                                     borderMode=cv2.BORDER_CONSTANT,
-                                     borderValue=(255, 255, 255))
-        
-        # 確保使用浮點數精度
-        M_trans = np.float32([[1, 0, float(best_offset_x)], [0, 1, float(best_offset_y)]])
-        img2_aligned = cv2.warpAffine(img2_rotated, M_trans, (w2, h2),
-                                     flags=cv2.INTER_LINEAR,
-                                     borderMode=cv2.BORDER_CONSTANT,
-                                     borderValue=(255, 255, 255))
-        
+        M = cv2.getRotationMatrix2D(center, best_angle, 1.0).astype(np.float32)
+        M[0, 2] += float(best_offset_x)
+        M[1, 2] += float(best_offset_y)
+
+        img2_aligned, canvas_info = self._warp_affine_auto_canvas(
+            img2_final,
+            M,
+            include_sizes=[(w1, h1)],
+            border_value=(255, 255, 255)
+        )
+        best_metrics['alignment_canvas'] = canvas_info
+        best_metrics['alignment_canvas_mode'] = 'auto_canvas'
+        # ===== 修正裁切結束 =====
+
         return img2_aligned, best_angle, (best_offset_x, best_offset_y), best_similarity, best_metrics, alignment_timing
     
     def _estimate_translation_template_match(
@@ -766,6 +972,468 @@ class SealComparator:
                 best_angle = angle
         
         return best_angle, best_similarity
+
+    def _joint_coarse_search_multiscale(
+        self,
+        img1_gray: np.ndarray,
+        img2_gray: np.ndarray,
+        rotation_range: float,
+        translation_range: int,
+        pyramid_scales: Tuple[float, ...] = (0.25, 0.5),
+        top_k: int = 5
+    ) -> Tuple[float, int, int, float, Dict[str, float]]:
+        """
+        joint-grid 粗搜尋（角度×平移），並使用多尺度(template matching)金字塔強化平移穩定性。
+
+        目的：取代原本「階段1平移粗調 + 階段2旋轉粗調」分離流程，於一次 multi-scale iteration 中
+        同時找到合理的 (angle, dx, dy) 初始值，供後續階段3/4/5精細化。
+
+        Args:
+            img1_gray: 參考圖像（灰度，完整尺寸）
+            img2_gray: 待對齊圖像（灰度，完整尺寸）
+            rotation_range: 旋轉角度搜索範圍（度）
+            translation_range: 平移搜索範圍（像素，原始尺寸）
+            pyramid_scales: 多尺度縮放比例（由粗到細）
+            top_k: 每個尺度保留的候選解數量
+
+        Returns:
+            (best_angle, best_offset_x, best_offset_y, best_similarity, timing_dict)
+        """
+        import time
+
+        def _resize_gray(img: np.ndarray, scale: float) -> np.ndarray:
+            if scale >= 0.999:
+                return img
+            h, w = img.shape[:2]
+            nh = max(32, int(round(h * scale)))
+            nw = max(32, int(round(w * scale)))
+            return cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+
+        def _bbox_of_ink(img: np.ndarray, thr: int = 245) -> Optional[Tuple[int, int, int, int]]:
+            # 以「非白色」視為印面內容，取得 bounding box
+            if img is None or img.size == 0:
+                return None
+            mask = (img < thr).astype(np.uint8)
+            if mask.sum() < 10:
+                return None
+            ys, xs = np.where(mask > 0)
+            x0, x1 = int(xs.min()), int(xs.max())
+            y0, y1 = int(ys.min()), int(ys.max())
+            if x1 - x0 < 5 or y1 - y0 < 5:
+                return None
+            return x0, y0, x1 + 1, y1 + 1
+
+        timing: Dict[str, float] = {}
+        overall_start = time.time()
+
+        # 候選格式: (angle, dx, dy, similarity)
+        candidates: list[Tuple[float, int, int, float]] = [(0.0, 0, 0, -1.0)]
+
+        prev_angle_step: Optional[float] = None
+
+        for scale_idx, scale in enumerate(pyramid_scales):
+            scale_start = time.time()
+
+            img1_s = _resize_gray(img1_gray, scale)
+            img2_s = _resize_gray(img2_gray, scale)
+            h1s, w1s = img1_s.shape[:2]
+            h2s, w2s = img2_s.shape[:2]
+            center_s = (w2s // 2, h2s // 2)
+
+            # 自適應角度步長：粗尺度用較大步長，細尺度減半
+            if prev_angle_step is None:
+                # 以 rotation_range 推估合理粗步長，避免過多角度
+                prev_angle_step = 3.0 if rotation_range >= 12.0 else 2.0
+            else:
+                prev_angle_step = max(1.0, prev_angle_step / 2.0)
+            angle_step = prev_angle_step
+
+            # 限制平移範圍於縮放後的像素
+            tr_s = max(2, int(round(translation_range * scale)))
+
+            # 準備角度候選集合（第一層全掃，後續只在前一層 top_k 附近掃）
+            angle_set = set()
+            if scale_idx == 0:
+                for a in np.arange(-rotation_range, rotation_range + angle_step, angle_step):
+                    if -80.0 <= float(a) <= 80.0:
+                        angle_set.add(float(round(float(a), 3)))
+            else:
+                # 局部窗：依照前一層候選的角度，做小範圍掃描
+                local_window = max(angle_step * 2.0, min(6.0, rotation_range * 0.25))
+                for (a0, _, _, _) in candidates[:top_k]:
+                    for a in np.arange(a0 - local_window, a0 + local_window + angle_step, angle_step):
+                        if -80.0 <= float(a) <= 80.0:
+                            angle_set.add(float(round(float(a), 3)))
+
+            angle_list = sorted(angle_set)
+
+            # 旋轉緩存（每個尺度一份）
+            rotation_cache: Dict[float, np.ndarray] = {}
+
+            found: list[Tuple[float, int, int, float]] = []
+
+            for angle in angle_list:
+                if angle in rotation_cache:
+                    img2_rot = rotation_cache[angle]
+                else:
+                    M_rot = cv2.getRotationMatrix2D(center_s, angle, 1.0)
+                    img2_rot = cv2.warpAffine(
+                        img2_s, M_rot, (w2s, h2s),
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=255
+                    )
+                    rotation_cache[angle] = img2_rot
+
+                # 從旋轉後的 img2 中擷取印面 bbox 作為 template（確保 template 小於 search image）
+                bbox = _bbox_of_ink(img2_rot)
+                if bbox is None:
+                    continue
+                x0, y0, x1, y1 = bbox
+                pad = 4
+                x0p = max(0, x0 - pad)
+                y0p = max(0, y0 - pad)
+                x1p = min(w2s, x1 + pad)
+                y1p = min(h2s, y1 + pad)
+                template = img2_rot[y0p:y1p, x0p:x1p]
+
+                # 如果 template 太大（等於或大於 img1），縮小到中心區域避免 matchTemplate 退化成 1x1
+                th, tw = template.shape[:2]
+                if tw >= w1s or th >= h1s:
+                    cx0 = int(round(w2s * 0.15))
+                    cy0 = int(round(h2s * 0.15))
+                    cx1 = int(round(w2s * 0.85))
+                    cy1 = int(round(h2s * 0.85))
+                    template = img2_rot[cy0:cy1, cx0:cx1]
+                    x0p, y0p = cx0, cy0
+                    th, tw = template.shape[:2]
+                    if tw >= w1s or th >= h1s:
+                        continue
+
+                # 在 img1 上做 template matching 找出 img2 的最佳平移（top-left 對齊）
+                try:
+                    res = cv2.matchTemplate(img1_s, template, cv2.TM_CCOEFF_NORMED)
+                    _, _, _, max_loc = cv2.minMaxLoc(res)
+                except Exception:
+                    continue
+
+                dx_s = int(max_loc[0] - x0p)
+                dy_s = int(max_loc[1] - y0p)
+
+                # 將縮放座標轉回原始座標，並限制範圍
+                dx = int(round(dx_s / scale))
+                dy = int(round(dy_s / scale))
+                dx = max(-translation_range, min(translation_range, dx))
+                dy = max(-translation_range, min(translation_range, dy))
+
+                # 為了粗搜尋成本，先做縮放後的快速相似度評估
+                dx_s_clamped = max(-tr_s, min(tr_s, int(round(dx * scale))))
+                dy_s_clamped = max(-tr_s, min(tr_s, int(round(dy * scale))))
+                M_trans = np.float32([[1, 0, float(dx_s_clamped)], [0, 1, float(dy_s_clamped)]])
+                img2_trans = cv2.warpAffine(
+                    img2_rot, M_trans, (w2s, h2s),
+                    borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=255
+                )
+
+                sim = self._fast_rotation_match(img1_s, img2_trans)
+                found.append((float(angle), int(dx), int(dy), float(sim)))
+
+            # 選出本尺度 top_k
+            if found:
+                found.sort(key=lambda x: x[3], reverse=True)
+                candidates = found[:max(1, top_k)]
+            else:
+                # 如果完全找不到候選，保留上一輪結果
+                candidates = candidates[:1]
+
+            timing[f'stage12_scale_{scale}'] = time.time() - scale_start
+
+        # 最終選擇最佳候選
+        best_angle, best_dx, best_dy, best_sim = candidates[0]
+        timing['stage12_joint_coarse_total'] = time.time() - overall_start
+        # 供上層做 low-overlap multi-start（僅保留少量候選，避免 payload 過大）
+        try:
+            timing['stage12_candidates'] = [
+                {'angle': float(a), 'dx': int(dx), 'dy': int(dy), 'sim': float(s)}
+                for (a, dx, dy, s) in candidates[:max(1, min(top_k, len(candidates)))]
+            ]
+        except Exception:
+            timing['stage12_candidates'] = []
+        return best_angle, best_dx, best_dy, best_sim, timing
+
+    def _fast_overlap_ratio(
+        self,
+        img1_gray: np.ndarray,
+        img2_gray: np.ndarray,
+        angle: float,
+        offset_x: int,
+        offset_y: int,
+        scale: float = 0.3,
+        white_threshold: int = 245
+    ) -> float:
+        """
+        以縮小圖快速估計 overlap_ratio（印面重疊率），用於偵測「平移落錯峰」。
+
+        定義：
+        - mask = (gray < white_threshold) 視為印面內容
+        - overlap_ratio = overlap_pixels / union_pixels
+
+        注意：此指標目的是「快速方向性判斷」，不是最終精度指標。
+        """
+        if img1_gray is None or img2_gray is None or img1_gray.size == 0 or img2_gray.size == 0:
+            return 0.0
+
+        # resize（統一以 img1 的座標系計算 overlap，避免因尺寸差/畫布差導致誤判）
+        h1, w1 = img1_gray.shape[:2]
+        h2, w2 = img2_gray.shape[:2]
+        nh1 = max(32, int(round(h1 * scale)))
+        nw1 = max(32, int(round(w1 * scale)))
+        nh2 = max(32, int(round(h2 * scale)))
+        nw2 = max(32, int(round(w2 * scale)))
+        img1_s = cv2.resize(img1_gray, (nw1, nh1), interpolation=cv2.INTER_AREA)
+        img2_s = cv2.resize(img2_gray, (nw2, nh2), interpolation=cv2.INTER_AREA)
+
+        # rotate + translate img2_s（先在 img2 自己的座標系旋轉，再以 img1 尺寸作為輸出畫布）
+        center = (nw2 // 2, nh2 // 2)
+        M_rot = cv2.getRotationMatrix2D(center, float(angle), 1.0)
+        img2_rot = cv2.warpAffine(
+            img2_s, M_rot, (nw2, nh2),
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255
+        )
+
+        dx_s = int(round(offset_x * scale))
+        dy_s = int(round(offset_y * scale))
+        M_trans = np.float32([[1, 0, float(dx_s)], [0, 1, float(dy_s)]])
+        img2_t = cv2.warpAffine(
+            img2_rot, M_trans, (nw2, nh2),
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255
+        )
+
+        # 將 img2_t 放到 img1 的畫布尺寸（左上角對齊，與 overlay.py 的 padding 規則一致）
+        if img2_t.shape[0] != nh1 or img2_t.shape[1] != nw1:
+            canvas = np.full((nh1, nw1), 255, dtype=img2_t.dtype)
+            hh = min(nh1, img2_t.shape[0])
+            ww = min(nw1, img2_t.shape[1])
+            canvas[:hh, :ww] = img2_t[:hh, :ww]
+            img2_t = canvas
+
+        # build masks（同尺寸）
+        mask1 = img1_s < white_threshold
+        mask2 = img2_t < white_threshold
+        union = mask1 | mask2
+        union_pixels = int(np.sum(union))
+        if union_pixels <= 0:
+            return 0.0
+        overlap = mask1 & mask2
+        overlap_pixels = int(np.sum(overlap))
+        return float(overlap_pixels / union_pixels)
+
+    def _translation_rescue_search(
+        self,
+        img1_gray: np.ndarray,
+        img2_gray: np.ndarray,
+        angle: float,
+        initial_offset_x: int,
+        initial_offset_y: int,
+        overlap_threshold: float = 0.6,
+        radius: int = 120,
+        steps: Tuple[int, ...] = (8, 3, 1),
+        scale: float = 0.3
+    ) -> Tuple[int, int, float, float, Dict[str, float]]:
+        """
+        平移救援搜尋（固定 angle），用 overlap_ratio 作為評分，專治「大錯峰」。
+
+        策略（多段步長）：radius=±120，step=8→3→1，每段以上一段最佳點為中心縮小窗口。
+
+        Returns:
+            (best_offset_x, best_offset_y, overlap_before, overlap_after, timing)
+        """
+        import time
+        timing: Dict[str, float] = {}
+        start = time.time()
+
+        overlap_before = self._fast_overlap_ratio(
+            img1_gray, img2_gray, angle, initial_offset_x, initial_offset_y, scale=scale
+        )
+        timing['stage3_translation_rescue_evals'] = 0.0
+        best_x = int(initial_offset_x)
+        best_y = int(initial_offset_y)
+        best_overlap = float(overlap_before)
+
+        if best_overlap >= overlap_threshold:
+            timing['stage3_translation_rescue_total'] = time.time() - start
+            return best_x, best_y, overlap_before, best_overlap, timing
+
+        # 每段縮小窗口：第一段 full radius，之後縮到 radius/3、radius/12（與步長對應）
+        window_by_step = {
+            8: radius,
+            3: max(40, radius // 3),
+            1: 10
+        }
+
+        evals = 0
+        for step in steps:
+            seg_start = time.time()
+            win = window_by_step.get(step, max(10, radius // 3))
+
+            # grid search around current best
+            for dx in range(-win, win + 1, step):
+                ox = best_x + dx
+                for dy in range(-win, win + 1, step):
+                    oy = best_y + dy
+                    evals += 1
+                    ov = self._fast_overlap_ratio(img1_gray, img2_gray, angle, ox, oy, scale=scale)
+                    if ov > best_overlap:
+                        best_overlap = ov
+                        best_x = ox
+                        best_y = oy
+
+            timing[f'stage3_translation_rescue_step_{step}'] = time.time() - seg_start
+
+        timing['stage3_translation_rescue_evals'] = float(evals)
+        timing['stage3_translation_rescue_total'] = time.time() - start
+        return best_x, best_y, overlap_before, best_overlap, timing
+
+    def _angle_sign_disambiguation(
+        self,
+        img1_gray: np.ndarray,
+        img2_gray: np.ndarray,
+        angle: float,
+        offset_x: int,
+        offset_y: int,
+        scale: float = 0.3,
+        improve_threshold: float = 0.05,
+        rescue_radius: int = 60,
+        rescue_steps: Tuple[int, ...] = (6, 2, 1)
+    ) -> Tuple[float, int, int, Dict[str, Any]]:
+        """
+        解決 +θ/-θ 二義性：用 overlap_ratio 快速判斷角度正負，必要時在 flip 後做小預算平移救援。
+
+        Returns:
+            (best_angle, best_dx, best_dy, metrics)
+        """
+        metrics: Dict[str, Any] = {
+            'angle_sign_check_triggered': False,
+            'angle_sign_flipped': False
+        }
+        try:
+            ov = float(self._fast_overlap_ratio(img1_gray, img2_gray, angle, offset_x, offset_y, scale=scale))
+        except Exception as e:
+            metrics['angle_sign_check_error'] = str(e)
+            return angle, int(offset_x), int(offset_y), metrics
+
+        angle_flip = -float(angle)
+        try:
+            ov_flip_raw = float(self._fast_overlap_ratio(img1_gray, img2_gray, angle_flip, offset_x, offset_y, scale=scale))
+        except Exception as e:
+            metrics['angle_sign_check_error_flip'] = str(e)
+            return angle, int(offset_x), int(offset_y), metrics
+
+        metrics['angle_sign_check_triggered'] = True
+        metrics['overlap_before_sign_check'] = ov
+        metrics['overlap_flip_raw'] = ov_flip_raw
+
+        # 只有當 flip 明顯更好，才進一步花 budget 做平移微救援
+        if ov_flip_raw <= ov + improve_threshold:
+            metrics['overlap_after_sign_check'] = ov
+            return angle, int(offset_x), int(offset_y), metrics
+
+        rx, ry, ob, oa, rescue_timing = self._translation_rescue_search(
+            img1_gray,
+            img2_gray,
+            angle=angle_flip,
+            initial_offset_x=int(offset_x),
+            initial_offset_y=int(offset_y),
+            overlap_threshold=1.0,  # 幾乎不會早退，確保有機會找到更佳 dx/dy
+            radius=int(rescue_radius),
+            steps=tuple(rescue_steps),
+            scale=scale
+        )
+        metrics['angle_sign_flip_rescue_overlap_before'] = float(ob)
+        metrics['angle_sign_flip_rescue_overlap_after'] = float(oa)
+        metrics['angle_sign_flip_rescue_evals'] = rescue_timing.get('stage3_translation_rescue_evals', 0.0) if rescue_timing else 0.0
+
+        if oa > ov + improve_threshold:
+            metrics['angle_sign_flipped'] = True
+            metrics['overlap_after_sign_check'] = float(oa)
+            return float(angle_flip), int(rx), int(ry), metrics
+
+        metrics['overlap_after_sign_check'] = ov
+        return angle, int(offset_x), int(offset_y), metrics
+
+    def _warp_affine_auto_canvas(
+        self,
+        img: np.ndarray,
+        M: np.ndarray,
+        include_sizes: Optional[List[Tuple[int, int]]] = None,
+        border_value: Optional[Tuple[int, int, int]] = None
+    ) -> Tuple[np.ndarray, Dict[str, int]]:
+        """
+        針對 warpAffine 的裁切問題：自動擴張輸出畫布，確保變換後內容不會被丟掉。
+
+        - 以變換後的四角點 bounding box 計算輸出大小
+        - 額外把 include_sizes（例如 reference image 的 (w,h)）也納入 bounding box，
+          讓兩張圖可以被放進同一畫布（同一座標系）
+
+        Returns:
+            warped_img, canvas_info = {'shift_x','shift_y','w','h'}
+        """
+        if include_sizes is None:
+            include_sizes = []
+
+        if img is None or img.size == 0:
+            return img, {'shift_x': 0, 'shift_y': 0, 'w': 0, 'h': 0}
+
+        h, w = img.shape[:2]
+        M = np.asarray(M, dtype=np.float32)
+
+        # 原圖四角（img 的座標系）
+        src_pts = np.array([[0, 0], [w, 0], [0, h], [w, h]], dtype=np.float32).reshape(1, -1, 2)
+        warped_pts = cv2.transform(src_pts, M).reshape(-1, 2)
+
+        all_pts = [warped_pts]
+        # 參考圖四角（目標座標系，identity）
+        for (iw, ih) in include_sizes:
+            iw = int(iw)
+            ih = int(ih)
+            if iw <= 0 or ih <= 0:
+                continue
+            ref_pts = np.array([[0, 0], [iw, 0], [0, ih], [iw, ih]], dtype=np.float32)
+            all_pts.append(ref_pts)
+
+        all_pts = np.vstack(all_pts)
+        min_x = float(np.floor(np.min(all_pts[:, 0])))
+        min_y = float(np.floor(np.min(all_pts[:, 1])))
+        max_x = float(np.ceil(np.max(all_pts[:, 0])))
+        max_y = float(np.ceil(np.max(all_pts[:, 1])))
+
+        # 因為 include_sizes 會包含 (0,0)，所以 min_x/min_y 應 <= 0，shift 會 >= 0
+        shift_x = int(-min_x) if min_x < 0 else 0
+        shift_y = int(-min_y) if min_y < 0 else 0
+
+        out_w = int(max(1, max_x - min_x))
+        out_h = int(max(1, max_y - min_y))
+
+        M_adj = M.copy()
+        M_adj[0, 2] += float(shift_x)
+        M_adj[1, 2] += float(shift_y)
+
+        if border_value is None:
+            # 如果是灰階圖，OpenCV 也接受單一 int；這裡統一用白色
+            border_value = (255, 255, 255) if (img.ndim == 3 and img.shape[2] == 3) else (255, 255, 255)
+
+        warped = cv2.warpAffine(
+            img,
+            M_adj,
+            (out_w, out_h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=border_value
+        )
+
+        return warped, {'shift_x': int(shift_x), 'shift_y': int(shift_y), 'w': int(out_w), 'h': int(out_h)}
     
     def _fine_translation_search(
         self,

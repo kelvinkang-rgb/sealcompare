@@ -286,6 +286,37 @@ class ComparisonService:
                 reference_image=img1_no_bg,  # 傳入去背景後的圖像1作為參考
                 is_image2=True
             )
+
+            # 若對齊使用 auto-canvas（避免裁切），需要把 image1 也補到同一畫布與同一 shift
+            try:
+                if alignment_metrics and isinstance(alignment_metrics, dict):
+                    canvas = alignment_metrics.get('alignment_canvas')
+                    if canvas and isinstance(canvas, dict):
+                        shift_x = int(canvas.get('shift_x', 0))
+                        shift_y = int(canvas.get('shift_y', 0))
+                        canvas_w = int(canvas.get('w', img1_no_bg.shape[1]))
+                        canvas_h = int(canvas.get('h', img1_no_bg.shape[0]))
+
+                        if canvas_w > 0 and canvas_h > 0 and (shift_x != 0 or shift_y != 0):
+                            if img1_no_bg.ndim == 2:
+                                padded = np.full((canvas_h, canvas_w), 255, dtype=img1_no_bg.dtype)
+                            else:
+                                padded = np.full((canvas_h, canvas_w, img1_no_bg.shape[2]), 255, dtype=img1_no_bg.dtype)
+
+                            src_h, src_w = img1_no_bg.shape[:2]
+                            x_end = min(canvas_w, shift_x + src_w)
+                            y_end = min(canvas_h, shift_y + src_h)
+                            if x_end > shift_x and y_end > shift_y:
+                                padded[shift_y:y_end, shift_x:x_end] = img1_no_bg[0:(y_end - shift_y), 0:(x_end - shift_x)]
+                                img1_no_bg = padded
+            except Exception:
+                pass
+
+            # 覆寫保存去背景後的圖像1，確保後續疊圖/熱力圖使用同一畫布
+            try:
+                cv2.imwrite(str(image1_cropped_path), img1_no_bg)
+            except Exception:
+                pass
             
             # 保存對齊優化結果到 details
             if alignment_angle is not None and alignment_offset is not None:

@@ -1129,6 +1129,41 @@ class ImageService:
                 }
                 if alignment_similarity is not None:
                     result['alignment_similarity'] = float(alignment_similarity)
+                # 回傳精簡的 alignment_metrics（避免 payload 過大，但保留 debug 關鍵資訊）
+                if alignment_metrics and isinstance(alignment_metrics, dict):
+                    allow_keys = {
+                        'coarse_search_mode',
+                        'coarse_similarity',
+                        'multistart_triggered',
+                        'multistart_best_overlap',
+                        'multistart_best_candidate',
+                        'multistart_adopted',
+                        'rescue_triggered',
+                        'rescue_overlap_before',
+                        'rescue_overlap_after',
+                        'overlap_after_stage12',
+                        'overlap_after_stage3',
+                        'overlap_after_stage4',
+                        'offset_after_stage12',
+                        'offset_after_stage3',
+                        'offset_after_stage4',
+                        'post_fine_rescue_triggered',
+                        'post_fine_rescue_overlap_before',
+                        'post_fine_rescue_overlap_after',
+                        'post_fine_rescue_offset',
+                        'post_fine_rescue_overlap_final',
+                        'angle_sign_check_triggered',
+                        'angle_sign_flipped',
+                        'overlap_before_sign_check',
+                        'overlap_after_sign_check',
+                        'final_angle',
+                        'final_offset_x',
+                        'final_offset_y',
+                        'final_similarity',
+                        'alignment_canvas',
+                        'alignment_canvas_mode'
+                    }
+                    result['alignment_metrics'] = {k: alignment_metrics.get(k) for k in allow_keys if k in alignment_metrics}
                 similarity_str = f"{alignment_similarity:.4f}" if alignment_similarity is not None else 'N/A'
                 print(f"印鑑 {seal_index} 對齊成功: 角度={alignment_angle:.2f}度, 偏移=({alignment_offset[0]}, {alignment_offset[1]}), 相似度={similarity_str}")
             else:
@@ -1139,7 +1174,34 @@ class ImageService:
             step_start = time.time()
             try:
                 image1_for_comparison = comparison_dir / f"image1_cropped_{record_id}.jpg"
-                if not cv2.imwrite(str(image1_for_comparison), img1_no_bg):
+                # 若對齊使用 auto-canvas（避免裁切），需要把 image1 也補到同一畫布與同一 shift
+                img1_to_save = img1_no_bg
+                try:
+                    if alignment_metrics and isinstance(alignment_metrics, dict):
+                        canvas = alignment_metrics.get('alignment_canvas')
+                        if canvas and isinstance(canvas, dict):
+                            shift_x = int(canvas.get('shift_x', 0))
+                            shift_y = int(canvas.get('shift_y', 0))
+                            canvas_w = int(canvas.get('w', img1_no_bg.shape[1]))
+                            canvas_h = int(canvas.get('h', img1_no_bg.shape[0]))
+
+                            if canvas_w > 0 and canvas_h > 0 and (shift_x != 0 or shift_y != 0):
+                                if img1_no_bg.ndim == 2:
+                                    padded = np.full((canvas_h, canvas_w), 255, dtype=img1_no_bg.dtype)
+                                else:
+                                    padded = np.full((canvas_h, canvas_w, img1_no_bg.shape[2]), 255, dtype=img1_no_bg.dtype)
+
+                                src_h, src_w = img1_no_bg.shape[:2]
+                                x_end = min(canvas_w, shift_x + src_w)
+                                y_end = min(canvas_h, shift_y + src_h)
+                                if x_end > shift_x and y_end > shift_y:
+                                    padded[shift_y:y_end, shift_x:x_end] = img1_no_bg[0:(y_end - shift_y), 0:(x_end - shift_x)]
+                                    img1_to_save = padded
+                except Exception as _pad_e:
+                    # padding 失敗不應阻斷流程（仍可用原圖繼續）
+                    img1_to_save = img1_no_bg
+
+                if not cv2.imwrite(str(image1_for_comparison), img1_to_save):
                     raise IOError(f"無法保存圖像1到 {image1_for_comparison}")
                 
                 image2_for_comparison = comparison_dir / f"image2_cropped_{record_id}.jpg"
