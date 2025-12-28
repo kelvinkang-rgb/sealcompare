@@ -13,7 +13,7 @@ import time
 import logging
 import traceback
 
-from app.models import Image
+from app.models import Image, MultiSealComparisonTask, ComparisonStatus
 from app.schemas import ImageCreate, ImageResponse
 from app.utils.image_utils import save_uploaded_file, get_file_size, delete_file
 from app.utils.seal_detector import detect_seal_location, detect_multiple_seals, detect_seals_with_rotation_matching
@@ -24,9 +24,20 @@ sys.path.insert(0, str(core_path))
 from seal_compare import SealComparator
 from overlay import create_overlay_image, calculate_mask_statistics, calculate_mask_based_similarity
 from verification import create_difference_heatmap
-from fastapi import UploadFile, HTTPException
+from fastapi import UploadFile
 from app.config import settings
-from typing import Dict, Optional, List, Tuple
+from app.exceptions import (
+    ImageNotFoundError,
+    ImageFileNotFoundError,
+    InvalidBboxError,
+    InvalidBboxSizeError,
+    InvalidCenterError,
+    InvalidSealDataError,
+    ImageNotMarkedError,
+    ImageReadError,
+    CropAreaTooSmallError,
+    MultiSealComparisonTaskNotFoundError
+)
 import numpy as np
 
 # 配置日誌記錄器
@@ -138,11 +149,11 @@ class ImageService:
         """
         db_image = self.get_image(image_id)
         if not db_image:
-            raise HTTPException(status_code=404, detail="圖像不存在")
+            raise ImageNotFoundError("圖像不存在")
         
         file_path = Path(db_image.file_path)
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="圖像文件不存在")
+            raise ImageFileNotFoundError("圖像文件不存在")
         
         # 執行檢測（帶超時保護）
         detection_result = detect_seal_location(str(file_path), timeout=3.0)
@@ -179,18 +190,18 @@ class ImageService:
         """
         db_image = self.get_image(image_id)
         if not db_image:
-            raise HTTPException(status_code=404, detail="圖像不存在")
+            raise ImageNotFoundError("圖像不存在")
         
         # 驗證數據
         if bbox:
             if not all(k in bbox for k in ['x', 'y', 'width', 'height']):
-                raise HTTPException(status_code=400, detail="邊界框格式錯誤")
+                raise InvalidBboxError("邊界框格式錯誤")
             if bbox['width'] < 10 or bbox['height'] < 10:
-                raise HTTPException(status_code=400, detail="邊界框尺寸太小")
+                raise InvalidBboxSizeError("邊界框尺寸太小")
         
         if center:
             if not all(k in center for k in ['center_x', 'center_y', 'radius']):
-                raise HTTPException(status_code=400, detail="中心點格式錯誤")
+                raise InvalidCenterError("中心點格式錯誤")
         
         # 更新資料
         if bbox:
@@ -219,11 +230,11 @@ class ImageService:
         """
         db_image = self.get_image(image_id)
         if not db_image:
-            raise HTTPException(status_code=404, detail="圖像不存在")
+            raise ImageNotFoundError("圖像不存在")
         
         file_path = Path(db_image.file_path)
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="圖像文件不存在")
+            raise ImageFileNotFoundError("圖像文件不存在")
         
         # 執行多印鑑檢測（帶超時保護）
         detection_result = detect_multiple_seals(str(file_path), timeout=5.0, max_seals=max_seals)
@@ -243,13 +254,13 @@ class ImageService:
         """
         db_image = self.get_image(image_id)
         if not db_image:
-            raise HTTPException(status_code=404, detail="圖像不存在")
+            raise ImageNotFoundError("圖像不存在")
         
         # 驗證數據格式
         normalized_seals = []
         for seal in seals:
             if 'bbox' not in seal or 'center' not in seal:
-                raise HTTPException(status_code=400, detail="印鑑數據格式錯誤")
+                raise InvalidSealDataError("印鑑數據格式錯誤")
             
             bbox = seal['bbox']
             center = seal['center']
@@ -257,13 +268,13 @@ class ImageService:
             
             # 驗證邊界框
             if not all(k in bbox for k in ['x', 'y', 'width', 'height']):
-                raise HTTPException(status_code=400, detail="邊界框格式錯誤")
+                raise InvalidBboxError("邊界框格式錯誤")
             if bbox['width'] < 10 or bbox['height'] < 10:
                 continue  # 跳過太小的框
             
             # 驗證中心點
             if not all(k in center for k in ['center_x', 'center_y', 'radius']):
-                raise HTTPException(status_code=400, detail="中心點格式錯誤")
+                raise InvalidCenterError("中心點格式錯誤")
             
             normalized_seals.append({
                 'bbox': bbox,
@@ -293,16 +304,16 @@ class ImageService:
         """
         db_image = self.get_image(image_id)
         if not db_image:
-            raise HTTPException(status_code=404, detail="圖像不存在")
+            raise ImageNotFoundError("圖像不存在")
         
         file_path = Path(db_image.file_path)
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="圖像文件不存在")
+            raise ImageFileNotFoundError("圖像文件不存在")
         
         # 讀取原圖
         image = cv2.imread(str(file_path))
         if image is None:
-            raise HTTPException(status_code=500, detail="無法讀取圖像文件")
+            raise ImageReadError("無法讀取圖像文件")
         
         h, w = image.shape[:2]
         cropped_image_ids = []
@@ -491,26 +502,26 @@ class ImageService:
             image1 = self.get_image(image1_id)
             if not image1:
                 logger.error(f"[服務層] 圖像1不存在: {image1_id}")
-                raise HTTPException(status_code=404, detail="圖像1不存在")
+                raise ImageNotFoundError("圖像1不存在")
             
             image1_path = Path(image1.file_path)
             if not image1_path.exists():
                 logger.error(f"[服務層] 圖像1文件不存在: {image1_path}")
-                raise HTTPException(status_code=404, detail="圖像1文件不存在")
+                raise ImageFileNotFoundError("圖像1文件不存在")
             
             logger.info(f"[服務層] 圖像1文件路徑: {image1_path}")
             
             # 檢查圖像1是否有標記印鑑位置
             if not image1.seal_bbox:
                 logger.error(f"[服務層] 圖像1未標記印鑑位置: {image1_id}")
-                raise HTTPException(status_code=400, detail="圖像1未標記印鑑位置，無法裁切")
+                raise ImageNotMarkedError("圖像1未標記印鑑位置，無法裁切")
             
             logger.info(f"[服務層] 圖像1印鑑位置: {image1.seal_bbox}")
             
             # 讀取原始圖像1
             image1_original = cv2.imread(str(image1_path))
             if image1_original is None:
-                raise HTTPException(status_code=500, detail="無法讀取圖像1文件")
+                raise ImageReadError("無法讀取圖像1文件")
             
             # 獲取 bbox
             bbox1 = image1.seal_bbox
@@ -529,7 +540,7 @@ class ImageService:
                 crop_height = h - y
             
             if crop_width < 10 or crop_height < 10:
-                raise HTTPException(status_code=400, detail="裁切區域太小")
+                raise CropAreaTooSmallError("裁切區域太小")
             
             # 裁切圖像
             image1_cropped = image1_original[y:y+crop_height, x:x+crop_width]
@@ -814,22 +825,22 @@ class ImageService:
             image1 = self.get_image(image1_id)
             if not image1:
                 logger.error(f"[服務層] 圖像1不存在: {image1_id}")
-                raise HTTPException(status_code=404, detail="圖像1不存在")
+                raise ImageNotFoundError("圖像1不存在")
             
             image1_path = Path(image1.file_path)
             if not image1_path.exists():
                 logger.error(f"[服務層] 圖像1文件不存在: {image1_path}")
-                raise HTTPException(status_code=404, detail="圖像1文件不存在")
+                raise ImageFileNotFoundError("圖像1文件不存在")
             
             # 檢查圖像1是否有標記印鑑位置
             if not image1.seal_bbox:
                 logger.error(f"[服務層] 圖像1未標記印鑑位置: {image1_id}")
-                raise HTTPException(status_code=400, detail="圖像1未標記印鑑位置，無法裁切")
+                raise ImageNotMarkedError("圖像1未標記印鑑位置，無法裁切")
             
             # 讀取原始圖像1
             image1_original = cv2.imread(str(image1_path))
             if image1_original is None:
-                raise HTTPException(status_code=500, detail="無法讀取圖像1文件")
+                raise ImageReadError("無法讀取圖像1文件")
             
             # 獲取 bbox
             bbox1 = image1.seal_bbox
@@ -847,7 +858,7 @@ class ImageService:
                 crop_height = h - y
             
             if crop_width < 10 or crop_height < 10:
-                raise HTTPException(status_code=400, detail="裁切區域太小")
+                raise CropAreaTooSmallError("裁切區域太小")
             
             # 裁切圖像
             image1_cropped = image1_original[y:y+crop_height, x:x+crop_width]
@@ -1423,20 +1434,20 @@ class ImageService:
         # 獲取圖像1
         image1 = self.get_image(image1_id)
         if not image1:
-            raise HTTPException(status_code=404, detail="圖像1不存在")
+            raise ImageNotFoundError("圖像1不存在")
         
         image1_path = Path(image1.file_path)
         if not image1_path.exists():
-            raise HTTPException(status_code=404, detail="圖像1文件不存在")
+            raise ImageFileNotFoundError("圖像1文件不存在")
         
         # 獲取圖像2
         image2 = self.get_image(image2_id)
         if not image2:
-            raise HTTPException(status_code=404, detail="圖像2不存在")
+            raise ImageNotFoundError("圖像2不存在")
         
         image2_path = Path(image2.file_path)
         if not image2_path.exists():
-            raise HTTPException(status_code=404, detail="圖像2文件不存在")
+            raise ImageFileNotFoundError("圖像2文件不存在")
         
         # 執行旋轉匹配檢測
         result = detect_seals_with_rotation_matching(
@@ -1452,4 +1463,83 @@ class ImageService:
             return []
         
         return result.get('matches', [])
+    
+    def create_multi_seal_comparison_task(
+        self,
+        image1_id: UUID,
+        seal_image_ids: List[UUID],
+        threshold: float = 0.95,
+        similarity_ssim_weight: float = 0.5,
+        similarity_template_weight: float = 0.35,
+        pixel_similarity_weight: float = 0.1,
+        histogram_similarity_weight: float = 0.05
+    ) -> MultiSealComparisonTask:
+        """
+        創建多印鑑比對任務
+        
+        Args:
+            image1_id: 圖像1 ID
+            seal_image_ids: 印鑑圖像 ID 列表
+            threshold: 相似度閾值
+            similarity_ssim_weight: SSIM 權重
+            similarity_template_weight: 模板匹配權重
+            pixel_similarity_weight: 像素相似度權重
+            histogram_similarity_weight: 直方圖相似度權重
+            
+        Returns:
+            MultiSealComparisonTask 模型實例
+        """
+        import uuid as uuid_lib
+        
+        task_uid = str(uuid_lib.uuid4())
+        
+        task = MultiSealComparisonTask(
+            task_uid=task_uid,
+            image1_id=image1_id,
+            status=ComparisonStatus.PENDING,
+            seal_image_ids=[str(sid) for sid in seal_image_ids],
+            threshold=threshold,
+            similarity_ssim_weight=similarity_ssim_weight,
+            similarity_template_weight=similarity_template_weight,
+            pixel_similarity_weight=pixel_similarity_weight,
+            histogram_similarity_weight=histogram_similarity_weight
+        )
+        
+        self.db.add(task)
+        self.db.commit()
+        self.db.refresh(task)
+        
+        return task
+    
+    def get_multi_seal_comparison_task(self, task_uid: str) -> Optional[MultiSealComparisonTask]:
+        """
+        獲取多印鑑比對任務
+        
+        Args:
+            task_uid: 任務 UID
+            
+        Returns:
+            MultiSealComparisonTask 模型實例或 None
+        """
+        return self.db.query(MultiSealComparisonTask).filter(
+            MultiSealComparisonTask.task_uid == task_uid
+        ).first()
+    
+    def get_multi_seal_comparison_task_or_raise(self, task_uid: str) -> MultiSealComparisonTask:
+        """
+        獲取多印鑑比對任務，如果不存在則拋出異常
+        
+        Args:
+            task_uid: 任務 UID
+            
+        Returns:
+            MultiSealComparisonTask 模型實例
+            
+        Raises:
+            MultiSealComparisonTaskNotFoundError: 任務不存在
+        """
+        task = self.get_multi_seal_comparison_task(task_uid)
+        if not task:
+            raise MultiSealComparisonTaskNotFoundError("任務不存在")
+        return task
 

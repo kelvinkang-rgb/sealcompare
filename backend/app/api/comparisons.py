@@ -10,7 +10,7 @@ from uuid import UUID
 from app.database import get_db, SessionLocal
 from app.schemas import ComparisonCreate, ComparisonResponse, ComparisonStatusResponse, ComparisonUpdate
 from app.services.comparison_service import ComparisonService
-from app.models import ComparisonStatus, Comparison
+from app.models import ComparisonStatus
 
 router = APIRouter(prefix="/comparisons", tags=["comparisons"])
 
@@ -48,15 +48,16 @@ def create_comparison(
                 print(f"比對處理失敗 {comp_id}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                # 更新狀態為失敗
+                # 更新狀態為失敗（通過 Service 層）
                 try:
-                    db_comparison = db.query(Comparison).filter(Comparison.id == comp_id).first()
-                    if db_comparison:
-                        db_comparison.status = ComparisonStatus.FAILED
-                        if db_comparison.details is None:
-                            db_comparison.details = {}
-                        db_comparison.details['error'] = str(e)
-                        db_comparison.details['error_trace'] = traceback.format_exc()
+                    service = ComparisonService(db)
+                    comparison = service.get_comparison(comp_id)
+                    if comparison:
+                        comparison.status = ComparisonStatus.FAILED
+                        if comparison.details is None:
+                            comparison.details = {}
+                        comparison.details['error'] = str(e)
+                        comparison.details['error_trace'] = traceback.format_exc()
                         db.commit()
                 except Exception as db_error:
                     print(f"更新失敗狀態時出錯: {str(db_error)}")

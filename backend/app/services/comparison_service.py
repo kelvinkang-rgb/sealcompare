@@ -12,6 +12,8 @@ import numpy as np
 from app.models import Comparison, Image, ComparisonVisualization, ComparisonStatus, VisualizationType
 from app.schemas import ComparisonCreate, ComparisonResponse
 from app.config import settings
+from app.exceptions import ComparisonNotFoundError, VisualizationNotFoundError
+from sqlalchemy import func
 import sys
 from pathlib import Path
 # 添加 core 目錄到路徑
@@ -928,4 +930,86 @@ class ComparisonService:
         self.db.commit()
         
         return True
+    
+    def get_statistics(self) -> Dict:
+        """
+        獲取統計資訊
+        
+        Returns:
+            包含統計資訊的字典：
+            - total_comparisons: 總比對次數
+            - match_count: 匹配次數
+            - mismatch_count: 不匹配次數
+            - average_similarity: 平均相似度
+            - recent_comparisons: 最近的比對記錄列表
+        """
+        # 基礎查詢：只包含未刪除的記錄
+        base_query = self.db.query(Comparison).filter(Comparison.deleted_at.is_(None))
+        
+        # 總比對次數
+        total_comparisons = base_query.count()
+        
+        # 匹配次數
+        match_count = base_query.filter(Comparison.is_match == True).count()
+        
+        # 不匹配次數
+        mismatch_count = base_query.filter(Comparison.is_match == False).count()
+        
+        # 平均相似度
+        avg_similarity_result = base_query.filter(
+            Comparison.similarity.isnot(None)
+        ).with_entities(func.avg(Comparison.similarity)).scalar()
+        average_similarity = float(avg_similarity_result) if avg_similarity_result else 0.0
+        
+        # 最近的比對記錄（最近10條）
+        recent_comparisons = base_query.order_by(
+            Comparison.created_at.desc()
+        ).limit(10).all()
+        
+        return {
+            'total_comparisons': total_comparisons,
+            'match_count': match_count,
+            'mismatch_count': mismatch_count,
+            'average_similarity': average_similarity,
+            'recent_comparisons': recent_comparisons
+        }
+    
+    def get_comparison_visualization(
+        self, 
+        comparison_id: UUID, 
+        vis_type: VisualizationType
+    ) -> ComparisonVisualization:
+        """
+        獲取比對視覺化記錄
+        
+        Args:
+            comparison_id: 比對 ID
+            vis_type: 視覺化類型
+            
+        Returns:
+            ComparisonVisualization 模型實例
+            
+        Raises:
+            ComparisonNotFoundError: 比對記錄不存在或已刪除
+            VisualizationNotFoundError: 視覺化記錄不存在
+        """
+        # 檢查比對記錄是否存在且未刪除
+        comparison = self.db.query(Comparison).filter(
+            Comparison.id == comparison_id,
+            Comparison.deleted_at.is_(None)
+        ).first()
+        
+        if not comparison:
+            raise ComparisonNotFoundError("比對記錄不存在或已刪除")
+        
+        # 獲取視覺化記錄
+        vis = self.db.query(ComparisonVisualization).filter(
+            ComparisonVisualization.comparison_id == comparison_id,
+            ComparisonVisualization.type == vis_type
+        ).first()
+        
+        if not vis:
+            raise VisualizationNotFoundError(f"視覺化記錄不存在（類型: {vis_type.value}）")
+        
+        return vis
 

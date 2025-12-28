@@ -32,7 +32,7 @@ from app.schemas import (
 )
 from app.services.image_service import ImageService
 from app.config import settings
-from app.models import MultiSealComparisonTask, ComparisonStatus
+from app.models import ComparisonStatus
 
 # 配置日誌記錄器
 logger = logging.getLogger(__name__)
@@ -298,29 +298,23 @@ def compare_image1_with_seals(
     立即返回任務 ID，比對在後台異步處理。
     使用 GET /images/tasks/{task_uid}/status 查詢任務狀態。
     """
-    # 生成任務 UID
-    task_uid = str(uuid_lib.uuid4())
-    
     logger.info("=== 創建多印鑑比對任務 ===")
-    logger.info(f"任務 UID: {task_uid}")
     logger.info(f"圖像1 ID: {image1_id}")
     logger.info(f"印鑑數量: {len(request.seal_image_ids)}")
     
-    # 創建任務記錄
-    task = MultiSealComparisonTask(
-        task_uid=task_uid,
+    # 創建任務記錄（通過 Service 層）
+    image_service = ImageService(db)
+    task = image_service.create_multi_seal_comparison_task(
         image1_id=image1_id,
-        status=ComparisonStatus.PENDING,
-        seal_image_ids=[str(sid) for sid in request.seal_image_ids],
+        seal_image_ids=request.seal_image_ids,
         threshold=request.threshold,
         similarity_ssim_weight=request.similarity_ssim_weight,
         similarity_template_weight=request.similarity_template_weight,
         pixel_similarity_weight=request.pixel_similarity_weight,
         histogram_similarity_weight=request.histogram_similarity_weight
     )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+    
+    logger.info(f"任務 UID: {task.task_uid}")
     
     # 提取mask權重參數（如果存在），否則使用預設值
     overlap_weight = request.overlap_weight if request.overlap_weight is not None else 0.5
@@ -335,12 +329,11 @@ def compare_image1_with_seals(
         """後台任務：處理比對"""
         db_task = SessionLocal()
         try:
-            task_record = db_task.query(MultiSealComparisonTask).filter(
-                MultiSealComparisonTask.task_uid == task_uid_str
-            ).first()
-            
-            if not task_record:
-                logger.error(f"任務不存在: {task_uid_str}")
+            image_service_task = ImageService(db_task)
+            try:
+                task_record = image_service_task.get_multi_seal_comparison_task_or_raise(task_uid_str)
+            except Exception as e:
+                logger.error(f"任務不存在: {task_uid_str}, 錯誤: {str(e)}")
                 return
             
             # 更新狀態為處理中
@@ -469,9 +462,8 @@ def compare_image1_with_seals(
             task_timing = results_data.get('task_timing', {}) if isinstance(results_data, dict) else {}
             
             # 最終更新任務為完成前，驗證結果數量
-            task_record = db_task.query(MultiSealComparisonTask).filter(
-                MultiSealComparisonTask.task_uid == task_uid_str
-            ).first()
+            # 重新獲取任務記錄以確保獲取最新數據（回調函數可能已更新）
+            task_record = image_service_task.get_multi_seal_comparison_task(task_uid_str)
             
             if task_record:
                 current_results = task_record.results or []
@@ -654,9 +646,8 @@ def compare_image1_with_seals(
             
             # 更新任務為失敗
             try:
-                task_record = db_task.query(MultiSealComparisonTask).filter(
-                    MultiSealComparisonTask.task_uid == task_uid_str
-                ).first()
+                image_service_error = ImageService(db_task)
+                task_record = image_service_error.get_multi_seal_comparison_task(task_uid_str)
                 if task_record:
                     task_record.status = ComparisonStatus.FAILED
                     task_record.completed_at = datetime.utcnow()
@@ -669,9 +660,9 @@ def compare_image1_with_seals(
         finally:
             db_task.close()
     
-    background_tasks.add_task(process_comparison_task, task_uid, overlap_weight, pixel_diff_penalty_weight, unique_region_penalty_weight, rotation_range, translation_range)
+    background_tasks.add_task(process_comparison_task, task.task_uid, overlap_weight, pixel_diff_penalty_weight, unique_region_penalty_weight, rotation_range, translation_range)
     
-    logger.info(f"任務已創建並加入後台處理: {task_uid}")
+    logger.info(f"任務已創建並加入後台處理: {task.task_uid}")
     
     return MultiSealComparisonTaskResponse(
         id=task.id,
@@ -701,12 +692,8 @@ def get_task_status(
     
     - **task_uid**: 任務 UID
     """
-    task = db.query(MultiSealComparisonTask).filter(
-        MultiSealComparisonTask.task_uid == task_uid
-    ).first()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="任務不存在")
+    image_service = ImageService(db)
+    task = image_service.get_multi_seal_comparison_task_or_raise(task_uid)
     
     return MultiSealComparisonTaskStatusResponse(
         task_uid=task.task_uid,
@@ -732,12 +719,8 @@ def get_task_result(
     
     - **task_uid**: 任務 UID
     """
-    task = db.query(MultiSealComparisonTask).filter(
-        MultiSealComparisonTask.task_uid == task_uid
-    ).first()
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="任務不存在")
+    image_service = ImageService(db)
+    task = image_service.get_multi_seal_comparison_task_or_raise(task_uid)
     
     # 轉換結果為 SealComparisonResult 列表
     results = None
