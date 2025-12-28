@@ -121,6 +121,7 @@ class SealComparisonResult(BaseModel):
     mask_statistics: Optional[Dict[str, Any]] = Field(None, description="Mask統計資訊")
     mask_based_similarity: Optional[float] = Field(None, description="基於mask的相似度")
     structure_similarity: Optional[float] = Field(None, description="結構相似度（對印泥深淺較不敏感，0-1）")
+    alignment_metrics: Optional[Dict[str, Any]] = Field(None, description="對齊過程指標（角度/偏移/救援/符號判別等）")
     input_image1_path: Optional[str] = Field(None, description="疊圖前的圖像1路徑（去背景後的裁切圖像）")
     input_image2_path: Optional[str] = Field(None, description="疊圖前的圖像2路徑（對齊後的印鑑圖像）")
     error: Optional[str] = Field(None, description="錯誤訊息（如果比對失敗）")

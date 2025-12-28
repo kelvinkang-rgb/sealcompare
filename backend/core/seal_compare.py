@@ -275,6 +275,12 @@ class SealComparator:
         import time
         alignment_timing = {}
         best_metrics = {}
+
+        # === 可觀測性：預先填入（即使未觸發也有 key）===
+        best_metrics['angle_sign_check_triggered'] = False
+        best_metrics['angle_sign_flipped'] = False
+        best_metrics['overlap_before_sign_check'] = None
+        best_metrics['overlap_after_sign_check'] = None
         
         # 轉換為灰度圖（如果輸入是彩色圖像）
         if len(image1.shape) == 3:
@@ -1318,50 +1324,66 @@ class SealComparator:
             'angle_sign_check_triggered': False,
             'angle_sign_flipped': False
         }
+
+        angle0 = float(angle)
+        angle1 = -float(angle)
+
         try:
-            ov = float(self._fast_overlap_ratio(img1_gray, img2_gray, angle, offset_x, offset_y, scale=scale))
+            ov0_raw = float(self._fast_overlap_ratio(img1_gray, img2_gray, angle0, offset_x, offset_y, scale=scale))
+            ov1_raw = float(self._fast_overlap_ratio(img1_gray, img2_gray, angle1, offset_x, offset_y, scale=scale))
         except Exception as e:
             metrics['angle_sign_check_error'] = str(e)
-            return angle, int(offset_x), int(offset_y), metrics
-
-        angle_flip = -float(angle)
-        try:
-            ov_flip_raw = float(self._fast_overlap_ratio(img1_gray, img2_gray, angle_flip, offset_x, offset_y, scale=scale))
-        except Exception as e:
-            metrics['angle_sign_check_error_flip'] = str(e)
-            return angle, int(offset_x), int(offset_y), metrics
+            return angle0, int(offset_x), int(offset_y), metrics
 
         metrics['angle_sign_check_triggered'] = True
-        metrics['overlap_before_sign_check'] = ov
-        metrics['overlap_flip_raw'] = ov_flip_raw
+        metrics['overlap_before_sign_check'] = ov0_raw
+        metrics['overlap_flip_raw'] = ov1_raw
 
-        # 只有當 flip 明顯更好，才進一步花 budget 做平移微救援
-        if ov_flip_raw <= ov + improve_threshold:
-            metrics['overlap_after_sign_check'] = ov
-            return angle, int(offset_x), int(offset_y), metrics
+        # 關鍵改動：不再只看 raw overlap（固定 dx/dy），而是對 +θ/-θ 都做小預算平移微搜尋後再比較
+        # 這專治「翻號後需要小幅平移才能變好」的情況。
+        def eval_with_micro_rescue(a: float) -> Tuple[int, int, float, Dict[str, Any]]:
+            rx, ry, ob, oa, rescue_timing = self._translation_rescue_search(
+                img1_gray,
+                img2_gray,
+                angle=a,
+                initial_offset_x=int(offset_x),
+                initial_offset_y=int(offset_y),
+                overlap_threshold=1.0,  # 幾乎不早退，公平比較
+                radius=int(rescue_radius),
+                steps=tuple(rescue_steps),
+                scale=scale
+            )
+            extra = {
+                'overlap_before': float(ob),
+                'overlap_after': float(oa),
+                'evals': rescue_timing.get('stage3_translation_rescue_evals', 0.0) if rescue_timing else 0.0
+            }
+            return int(rx), int(ry), float(oa), extra
 
-        rx, ry, ob, oa, rescue_timing = self._translation_rescue_search(
-            img1_gray,
-            img2_gray,
-            angle=angle_flip,
-            initial_offset_x=int(offset_x),
-            initial_offset_y=int(offset_y),
-            overlap_threshold=1.0,  # 幾乎不會早退，確保有機會找到更佳 dx/dy
-            radius=int(rescue_radius),
-            steps=tuple(rescue_steps),
-            scale=scale
-        )
-        metrics['angle_sign_flip_rescue_overlap_before'] = float(ob)
-        metrics['angle_sign_flip_rescue_overlap_after'] = float(oa)
-        metrics['angle_sign_flip_rescue_evals'] = rescue_timing.get('stage3_translation_rescue_evals', 0.0) if rescue_timing else 0.0
+        # 只有在 overlap 低時才值得花這點 budget（呼叫端已經做過 gating，但這裡也保護一下）
+        if max(ov0_raw, ov1_raw) >= 0.85:
+            metrics['overlap_after_sign_check'] = ov0_raw
+            return angle0, int(offset_x), int(offset_y), metrics
 
-        if oa > ov + improve_threshold:
+        try:
+            x0, y0, ov0_best, ex0 = eval_with_micro_rescue(angle0)
+            x1, y1, ov1_best, ex1 = eval_with_micro_rescue(angle1)
+        except Exception as e:
+            metrics['angle_sign_micro_rescue_error'] = str(e)
+            metrics['overlap_after_sign_check'] = ov0_raw
+            return angle0, int(offset_x), int(offset_y), metrics
+
+        metrics['overlap_after_sign_check'] = float(ov0_best)
+        metrics['overlap_flip_after_micro_rescue'] = float(ov1_best)
+        metrics['angle_sign_micro_rescue_evals'] = float(ex0.get('evals', 0.0) + ex1.get('evals', 0.0))
+
+        # flip if -θ 明顯更好
+        if ov1_best > ov0_best + improve_threshold:
             metrics['angle_sign_flipped'] = True
-            metrics['overlap_after_sign_check'] = float(oa)
-            return float(angle_flip), int(rx), int(ry), metrics
+            metrics['overlap_after_sign_check'] = float(ov1_best)
+            return float(angle1), int(x1), int(y1), metrics
 
-        metrics['overlap_after_sign_check'] = ov
-        return angle, int(offset_x), int(offset_y), metrics
+        return float(angle0), int(x0), int(y0), metrics
 
     def _warp_affine_auto_canvas(
         self,
