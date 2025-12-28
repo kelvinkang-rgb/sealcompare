@@ -57,13 +57,14 @@ function MultiSealTest() {
   const [croppedImageIds, setCroppedImageIds] = useState([])
   // 比對結果數據
   const [comparisonResults, setComparisonResults] = useState(null)
+  const lastCompletedCountRef = useRef(0)
   // 比對任務狀態
   const [currentTaskUid, setCurrentTaskUid] = useState(null)
   const [taskStatus, setTaskStatus] = useState(null)
   
   // ==================== 比對參數設定 ====================
-  // 相似度閾值（0-1，默認 0.88 即 88%）
-  const [threshold, setThreshold] = useState(0.88)
+  // 相似度閾值（0-1，默認 0.83 即 83%）
+  const [threshold, setThreshold] = useState(0.83)
   // 比對印鑑數量上限（默認 3）
   const [maxSeals, setMaxSeals] = useState(3)
   // 記錄上次檢測使用的 maxSeals，用於判斷是否需要重新檢測
@@ -360,13 +361,34 @@ function MultiSealTest() {
             return result
           })
           
-          // 確保結果按 seal_index 排序
-          const sortedResults = [...processedResults].sort((a, b) => {
-            const indexA = a.seal_index || 0
-            const indexB = b.seal_index || 0
-            return indexA - indexB
-          })
-          setComparisonResults(sortedResults)
+          // 增量合併：避免每次輪詢都重建整個結果陣列導致 UI 抖動/變慢
+          // 只有在「已完成可顯示的結果數」增加時才更新（降低 re-render 次數）
+          if (completedResults.length > lastCompletedCountRef.current) {
+            lastCompletedCountRef.current = completedResults.length
+            setComparisonResults((prev) => {
+              const prevArr = Array.isArray(prev) ? prev : []
+              const keyOf = (r) => r?.seal_image_id || r?.seal_index
+              const prevMap = new Map(prevArr.map(r => [keyOf(r), r]))
+
+              for (const r of processedResults) {
+                const k = keyOf(r)
+                const old = prevMap.get(k)
+                const unchanged = old && (
+                  old.overlay1_path === r.overlay1_path &&
+                  old.overlay2_path === r.overlay2_path &&
+                  old.heatmap_path === r.heatmap_path &&
+                  old.mask_based_similarity === r.mask_based_similarity &&
+                  old.is_match === r.is_match &&
+                  old.error === r.error
+                )
+                if (!unchanged) prevMap.set(k, r)
+              }
+
+              const merged = Array.from(prevMap.values())
+              merged.sort((a, b) => (a.seal_index || 0) - (b.seal_index || 0))
+              return merged
+            })
+          }
         } else if (polledTaskResult.status === 'completed') {
           // 如果任務已完成但沒有結果，清空顯示（可能是所有結果都失敗了）
           setComparisonResults([])
@@ -381,6 +403,8 @@ function MultiSealTest() {
       imageAPI.compareImage1WithSeals(image1Id, sealImageIds, threshold, similaritySsimWeight, similarityTemplateWeight, pixelSimilarityWeight, histogramSimilarityWeight, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight),
     onSuccess: (taskData) => {
       // 保存任務 UID 並開始輪詢
+      lastCompletedCountRef.current = 0
+      setComparisonResults(null)
       setCurrentTaskUid(taskData.task_uid)
       setTaskStatus({
         status: taskData.status
@@ -504,6 +528,7 @@ function MultiSealTest() {
     setImage1(null)
     setSealDetectionResult1(null)
     setComparisonResults(null)
+    lastCompletedCountRef.current = 0
     uploadImage1Mutation.reset()
   }
 
@@ -512,6 +537,7 @@ function MultiSealTest() {
     setMultipleSeals([])
     setCroppedImageIds([])
     setComparisonResults(null)
+    lastCompletedCountRef.current = 0
     setLastDetectionMaxSeals(null) // 重置追蹤狀態
     uploadImage2Mutation.reset()
     // 重置 input value，允許重新選擇文件

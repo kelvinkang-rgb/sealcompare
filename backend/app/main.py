@@ -116,7 +116,7 @@ def add_missing_columns():
                     progress REAL,
                     progress_message VARCHAR(500),
                     seal_image_ids JSONB NOT NULL,
-                    threshold REAL NOT NULL DEFAULT 0.95,
+                    threshold REAL NOT NULL DEFAULT 0.83,
                     similarity_ssim_weight REAL NOT NULL DEFAULT 0.5,
                     similarity_template_weight REAL NOT NULL DEFAULT 0.35,
                     pixel_similarity_weight REAL NOT NULL DEFAULT 0.1,

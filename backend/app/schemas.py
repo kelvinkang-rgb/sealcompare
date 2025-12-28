@@ -89,7 +89,7 @@ class CropSealsResponse(BaseModel):
 class MultiSealComparisonRequest(BaseModel):
     """多印鑑比對請求"""
     seal_image_ids: list[UUID] = Field(..., description="裁切後的印鑑圖像 ID 列表")
-    threshold: Optional[float] = Field(0.95, ge=0.0, le=1.0, description="相似度閾值")
+    threshold: Optional[float] = Field(0.83, ge=0.0, le=1.0, description="相似度閾值")
     # 傳統相似度權重參數（保留以向後兼容，但不再使用）
     similarity_ssim_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="SSIM 權重")
     similarity_template_weight: Optional[float] = Field(0.35, ge=0.0, le=1.0, description="Template Match 權重")
@@ -140,7 +140,7 @@ class MultiSealComparisonTaskCreate(BaseModel):
     task_uid: str = Field(..., description="任務 UID（用於追蹤）")
     image1_id: UUID = Field(..., description="圖像1 ID")
     seal_image_ids: list[UUID] = Field(..., description="裁切後的印鑑圖像 ID 列表")
-    threshold: Optional[float] = Field(0.95, ge=0.0, le=1.0, description="相似度閾值")
+    threshold: Optional[float] = Field(0.83, ge=0.0, le=1.0, description="相似度閾值")
     similarity_ssim_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="SSIM 權重")
     similarity_template_weight: Optional[float] = Field(0.35, ge=0.0, le=1.0, description="Template Match 權重")
     pixel_similarity_weight: Optional[float] = Field(0.1, ge=0.0, le=1.0, description="Pixel Similarity 權重")
@@ -205,7 +205,7 @@ class ComparisonBase(BaseModel):
     """比對基礎模型"""
     image1_id: UUID
     image2_id: UUID
-    threshold: float = Field(default=0.95, ge=0.0, le=1.0)
+    threshold: float = Field(default=0.83, ge=0.0, le=1.0)
 
 
 class ComparisonCreate(ComparisonBase):

@@ -31,7 +31,7 @@ function MultiSealComparisonResults({
   results, 
   image1Id, 
   similarityRange,
-  threshold = 0.88,
+  threshold = 0.83,
   overlapWeight = 0.5,
   pixelDiffPenaltyWeight = 0.3,
   uniqueRegionPenaltyWeight = 0.2,
@@ -119,6 +119,7 @@ function MultiSealComparisonResults({
     setModalImageUrl('')
     setModalImage(null)
   }
+
 
   // 篩選、排序、搜尋邏輯
   const filteredAndSortedResults = useMemo(() => {
@@ -290,7 +291,7 @@ function MultiSealComparisonResults({
       
       <Grid container spacing={2}>
         {filteredAndSortedResults.map((result, index) => (
-          <Grid item xs={12} key={result.seal_image_id || index}>
+          <Grid item xs={12} key={result.seal_image_id || result.seal_index || index}>
             <Card>
               <CardContent>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2 }}>
@@ -351,20 +352,27 @@ function MultiSealComparisonResults({
                           輸入圖像1: 去背景後的圖像1
                         </Typography>
                         {result.input_image1_path ? (
-                          <img
-                            src={getImageUrl(result.input_image1_path)}
-                            alt="輸入圖像1"
-                            style={{
-                              maxWidth: '100%',
-                              height: 'auto',
-                              borderRadius: '4px',
-                            }}
-                            onError={(e) => {
-                              e.target.style.display = 'none'
-                              e.target.parentElement.innerHTML =
-                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
-                            }}
-                          />
+                          <Box sx={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <img
+                              src={getImageUrl(result.input_image1_path)}
+                              alt="輸入圖像1"
+                              loading="lazy"
+                              decoding="async"
+                              style={{
+                                maxWidth: '100%',
+                                maxHeight: '100%',
+                                width: 'auto',
+                                height: 'auto',
+                                borderRadius: '4px',
+                                objectFit: 'contain',
+                              }}
+                              onError={(e) => {
+                                e.target.style.display = 'none'
+                                e.target.parentElement.innerHTML =
+                                  '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                              }}
+                            />
+                          </Box>
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
                             未生成
@@ -391,20 +399,27 @@ function MultiSealComparisonResults({
                           輸入圖像2: 對齊後的印鑑圖像
                         </Typography>
                         {result.input_image2_path ? (
-                          <img
-                            src={getImageUrl(result.input_image2_path)}
-                            alt="輸入圖像2"
-                            style={{
-                              maxWidth: '100%',
-                              height: 'auto',
-                              borderRadius: '4px',
-                            }}
-                            onError={(e) => {
-                              e.target.style.display = 'none'
-                              e.target.parentElement.innerHTML =
-                                '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
-                            }}
-                          />
+                          <Box sx={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <img
+                              src={getImageUrl(result.input_image2_path)}
+                              alt="輸入圖像2"
+                              loading="lazy"
+                              decoding="async"
+                              style={{
+                                maxWidth: '100%',
+                                maxHeight: '100%',
+                                width: 'auto',
+                                height: 'auto',
+                                borderRadius: '4px',
+                                objectFit: 'contain',
+                              }}
+                              onError={(e) => {
+                                e.target.style.display = 'none'
+                                e.target.parentElement.innerHTML =
+                                  '<p style="color: #999; text-align: center; padding: 20px;">圖片載入失敗</p>'
+                              }}
+                            />
+                          </Box>
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
                             未生成
@@ -434,6 +449,8 @@ function MultiSealComparisonResults({
                           <img
                             src={getImageUrl(result.overlay1_path)}
                             alt="疊圖1"
+                            loading="lazy"
+                            decoding="async"
                             style={{
                               width: '100%',
                               height: '200px',
@@ -484,6 +501,8 @@ function MultiSealComparisonResults({
                           <img
                             src={getImageUrl(result.overlay2_path)}
                             alt="疊圖2"
+                            loading="lazy"
+                            decoding="async"
                             style={{
                               width: '100%',
                               height: '200px',
@@ -518,7 +537,7 @@ function MultiSealComparisonResults({
                 {/* Mask像素差異視覺化區域 */}
                 {!result.error && (
                   <Box sx={{ mt: 2 }}>
-                    <Accordion defaultExpanded={false}>
+                    <Accordion defaultExpanded={false} TransitionProps={{ unmountOnExit: true }}>
                       <AccordionSummary
                         expandIcon={<ExpandMoreIcon />}
                         aria-controls="mask-visualization-content"
@@ -562,6 +581,8 @@ function MultiSealComparisonResults({
                                   <img
                                     src={getImageUrl(result.overlap_mask_path)}
                                     alt="重疊區域mask"
+                                    loading="lazy"
+                                    decoding="async"
                                     style={{
                                       maxWidth: '100%',
                                       maxHeight: '100%',
@@ -617,6 +638,8 @@ function MultiSealComparisonResults({
                                   <img
                                     src={getImageUrl(result.pixel_diff_mask_path)}
                                     alt="像素差異mask"
+                                    loading="lazy"
+                                    decoding="async"
                                     style={{
                                       maxWidth: '100%',
                                       maxHeight: '100%',
@@ -672,6 +695,8 @@ function MultiSealComparisonResults({
                                   <img
                                     src={getImageUrl(result.diff_mask_2_only_path)}
                                     alt="圖像2獨有區域mask"
+                                    loading="lazy"
+                                    decoding="async"
                                     style={{
                                       maxWidth: '100%',
                                       maxHeight: '100%',
@@ -727,6 +752,8 @@ function MultiSealComparisonResults({
                                   <img
                                     src={getImageUrl(result.diff_mask_1_only_path)}
                                     alt="圖像1獨有區域mask"
+                                    loading="lazy"
+                                    decoding="async"
                                     style={{
                                       maxWidth: '100%',
                                       maxHeight: '100%',
@@ -782,6 +809,8 @@ function MultiSealComparisonResults({
                             <img
                               src={getImageUrl(result.gray_diff_path)}
                               alt="灰度差異圖"
+                              loading="lazy"
+                              decoding="async"
                               style={{
                                 maxWidth: '100%',
                                 maxHeight: '100%',
@@ -810,7 +839,7 @@ function MultiSealComparisonResults({
                   </Box>
                 )}
 
-                {/* Mask統計資訊區域 */}
+                {/* Mask統計資訊區域（不延後，立即可顯示） */}
                 {!result.error && result.mask_statistics && (
                   <Box sx={{ mt: 2 }}>
                     <Accordion>
@@ -931,7 +960,7 @@ function MultiSealComparisonResults({
                 {/* 時間詳情區域 */}
                 {!result.error && result.timing && (
                   <Box sx={{ mt: 2 }}>
-                    <Accordion>
+                    <Accordion TransitionProps={{ unmountOnExit: true }}>
                       <AccordionSummary
                         expandIcon={<ExpandMoreIcon />}
                         aria-controls="timing-content"

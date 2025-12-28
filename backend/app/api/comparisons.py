@@ -26,7 +26,7 @@ def create_comparison(
     
     - **image1_id**: 圖像1 ID
     - **image2_id**: 圖像2 ID
-    - **threshold**: 相似度閾值（0-1，預設 0.95）
+    - **threshold**: 相似度閾值（0-1，預設 0.83）
     - **enable_rotation_search**: 是否啟用旋轉角度搜索（預設 True）
     - **enable_translation_search**: 是否啟用平移搜索（預設 True，因為人工標記印鑑無法確保中心點都一致）
     """

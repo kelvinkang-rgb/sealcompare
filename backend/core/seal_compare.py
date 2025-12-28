@@ -13,7 +13,7 @@ import hashlib
 class SealComparator:
     """印鑑比對器"""
     
-    def __init__(self, threshold: float = 1.0, 
+    def __init__(self, threshold: float = 0.83, 
                  similarity_ssim_weight: float = 0.5,
                  similarity_template_weight: float = 0.35,
                  pixel_similarity_weight: float = 0.1,
@@ -22,7 +22,7 @@ class SealComparator:
         初始化比對器
         
         Args:
-            threshold: 相似度閾值，預設為 1.0（100%）
+            threshold: 相似度閾值，預設為 0.83（83%）
             similarity_ssim_weight: SSIM 權重，預設為 0.5 (50%)
             similarity_template_weight: Template Match 權重，預設為 0.35 (35%)
             pixel_similarity_weight: Pixel Similarity 權重，預設為 0.1 (10%)

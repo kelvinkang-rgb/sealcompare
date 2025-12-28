@@ -293,7 +293,7 @@ def compare_image1_with_seals(
     
     - **image1_id**: 圖像1 ID
     - **seal_image_ids**: 裁切後的印鑑圖像 ID 列表
-    - **threshold**: 相似度閾值，默認0.95
+    - **threshold**: 相似度閾值，默認0.83
     
     立即返回任務 ID，比對在後台異步處理。
     使用 GET /images/tasks/{task_uid}/status 查詢任務狀態。

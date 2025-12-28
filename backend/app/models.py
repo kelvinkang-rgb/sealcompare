@@ -66,7 +66,7 @@ class Comparison(Base):
     status = Column(SQLEnum(ComparisonStatus), default=ComparisonStatus.PENDING, nullable=False)
     is_match = Column(Boolean, nullable=True)
     similarity = Column(Float, nullable=True)
-    threshold = Column(Float, default=0.95, nullable=False)
+    threshold = Column(Float, default=0.83, nullable=False)
     
     # 校正相關
     rotation_angle = Column(Float, nullable=True)
@@ -126,7 +126,7 @@ class MultiSealComparisonTask(Base):
     
     # 比對參數
     seal_image_ids = Column(JSON, nullable=False)  # 印鑑圖像 ID 列表
-    threshold = Column(Float, default=0.95, nullable=False)
+    threshold = Column(Float, default=0.83, nullable=False)
     similarity_ssim_weight = Column(Float, default=0.5, nullable=False)
     similarity_template_weight = Column(Float, default=0.35, nullable=False)
     pixel_similarity_weight = Column(Float, default=0.1, nullable=False)

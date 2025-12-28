@@ -21,7 +21,7 @@ function Comparison() {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [comparisonId, setComparisonId] = useState(null)
-  const [threshold, setThreshold] = useState(0.95)
+  const [threshold, setThreshold] = useState(0.83)
   const [isViewMode, setIsViewMode] = useState(false)
   const formRef = useRef(null)
 
