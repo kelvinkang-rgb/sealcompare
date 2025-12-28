@@ -333,7 +333,7 @@ class ComparisonService:
                         processing_stages['stages'][idx]['status'] = 'completed'
                         processing_stages['stages'][idx]['progress'] = 100
                         
-                        # 構建詳細的時間步驟結構
+                        # 構建詳細的時間步驟結構（完全重構以匹配 seal_compare.py 的實際結構）
                         print(f"DEBUG: alignment_timing 是否存在: {alignment_timing is not None}")
                         print(f"DEBUG: alignment_timing 內容: {alignment_timing}")
                         if alignment_timing:
@@ -341,114 +341,120 @@ class ComparisonService:
                             total_duration = 0.0
                             
                             # 1. 去背景步驟（包含9個詳細子步驟）
+                            # 按照 seal_compare.py 的實際記錄順序
                             remove_bg_steps = []
                             remove_bg_total = alignment_timing.get('remove_background_total', 0.0)
                             if remove_bg_total == 0.0:
                                 remove_bg_total = alignment_timing.get('remove_background', 0.0)
                             
-                            # 去背景的9個詳細步驟
-                            bg_step_labels = {
-                                'step1_convert_to_gray': '轉換灰度',
-                                'step2_detect_bg_color': '偵測背景色',
-                                'step3_otsu_threshold': 'OTSU二值化',
-                                'step4_combine_masks': '結合遮罩',
-                                'step5_morphology_bg': '形態學處理背景',
-                                'step6_contour_detection': '輪廓偵測',
-                                'step7_calculate_bbox': '計算邊界框',
-                                'step8_crop_image': '裁切圖像',
-                                'step9_remove_bg_final': '最終移除背景'
-                            }
+                            # 去背景的9個詳細步驟（按照 seal_compare.py 的順序）
+                            bg_step_labels = [
+                                ('step1_convert_to_gray', '轉換灰度'),
+                                ('step2_detect_bg_color', '偵測背景色'),
+                                ('step3_otsu_threshold', 'OTSU二值化'),
+                                ('step4_combine_masks', '結合遮罩'),
+                                ('step5_morphology_bg', '形態學處理背景'),
+                                ('step6_contour_detection', '輪廓偵測'),
+                                ('step7_calculate_bbox', '計算邊界框'),
+                                ('step8_crop_image', '裁切圖像'),
+                                ('step9_remove_bg_final', '最終移除背景')
+                            ]
                             
-                            for step_key, step_label in bg_step_labels.items():
-                                if step_key in alignment_timing:
-                                    duration = alignment_timing[step_key]
-                                    remove_bg_steps.append({
-                                        'name': step_key,
-                                        'label': step_label,
-                                        'duration': duration
-                                    })
-                            
-                            if remove_bg_total > 0.0 or remove_bg_steps:
-                                sub_stages.append({
-                                    'name': 'remove_background',
-                                    'label': '去背景',
-                                    'duration': remove_bg_total,
-                                    'sub_stages': remove_bg_steps if remove_bg_steps else None
+                            # 添加所有步驟（即使時間為0也顯示）
+                            for step_key, step_label in bg_step_labels:
+                                duration = alignment_timing.get(step_key, 0.0)
+                                remove_bg_steps.append({
+                                    'name': step_key,
+                                    'label': step_label,
+                                    'duration': duration
                                 })
-                                total_duration += remove_bg_total
                             
-                            # 2. 階段1：平移粗調
+                            # 如果沒有總時間，計算所有步驟的總和
+                            if remove_bg_total == 0.0 and remove_bg_steps:
+                                remove_bg_total = sum(step['duration'] for step in remove_bg_steps)
+                            
+                            # 始終添加去背景步驟（即使時間為0）
+                            sub_stages.append({
+                                'name': 'remove_background',
+                                'label': '去背景',
+                                'duration': remove_bg_total,
+                                'sub_stages': remove_bg_steps if remove_bg_steps else None
+                            })
+                            total_duration += remove_bg_total
+                            
+                            # 2. 階段1：平移粗調（始終顯示）
                             stage1_duration = alignment_timing.get('stage1_translation_coarse', 0.0)
-                            if stage1_duration > 0.0:
-                                sub_stages.append({
-                                    'name': 'stage1_translation_coarse',
-                                    'label': '階段1：平移粗調',
-                                    'duration': stage1_duration
-                                })
-                                total_duration += stage1_duration
+                            sub_stages.append({
+                                'name': 'stage1_translation_coarse',
+                                'label': '階段1：平移粗調',
+                                'duration': stage1_duration
+                            })
+                            total_duration += stage1_duration
                             
-                            # 3. 階段2：旋轉粗調
+                            # 3. 階段2：旋轉粗調（始終顯示）
                             stage2_duration = alignment_timing.get('stage2_rotation_coarse', 0.0)
-                            if stage2_duration > 0.0:
-                                sub_stages.append({
-                                    'name': 'stage2_rotation_coarse',
-                                    'label': '階段2：旋轉粗調',
-                                    'duration': stage2_duration
-                                })
-                                total_duration += stage2_duration
+                            sub_stages.append({
+                                'name': 'stage2_rotation_coarse',
+                                'label': '階段2：旋轉粗調',
+                                'duration': stage2_duration
+                            })
+                            total_duration += stage2_duration
                             
-                            # 4. 階段3：平移細調
+                            # 4. 階段3：平移細調（始終顯示）
                             stage3_duration = alignment_timing.get('stage3_translation_fine', 0.0)
-                            if stage3_duration > 0.0:
-                                sub_stages.append({
-                                    'name': 'stage3_translation_fine',
-                                    'label': '階段3：平移細調',
-                                    'duration': stage3_duration
-                                })
-                                total_duration += stage3_duration
+                            sub_stages.append({
+                                'name': 'stage3_translation_fine',
+                                'label': '階段3：平移細調',
+                                'duration': stage3_duration
+                            })
+                            total_duration += stage3_duration
                             
-                            # 5. 階段4：旋轉細調與平移細調
+                            # 5. 階段4：旋轉細調與平移細調（始終顯示，包含子步驟）
                             stage4_total = alignment_timing.get('stage4_total', 0.0)
                             stage4_rotation = alignment_timing.get('stage4_rotation_fine', 0.0)
                             stage4_translation = alignment_timing.get('stage4_translation_fine', 0.0)
                             
-                            if stage4_total > 0.0 or stage4_rotation > 0.0 or stage4_translation > 0.0:
-                                stage4_sub_stages = []
-                                
-                                if stage4_rotation > 0.0:
-                                    stage4_sub_stages.append({
-                                        'name': 'stage4_rotation_fine',
-                                        'label': '旋轉細調',
-                                        'duration': stage4_rotation
-                                    })
-                                
-                                if stage4_translation > 0.0:
-                                    stage4_sub_stages.append({
-                                        'name': 'stage4_translation_fine',
-                                        'label': '平移細調',
-                                        'duration': stage4_translation
-                                    })
-                                
-                                # 使用 stage4_total 如果存在，否則計算總和
-                                stage4_duration = stage4_total if stage4_total > 0.0 else (stage4_rotation + stage4_translation)
-                                
-                                sub_stages.append({
-                                    'name': 'stage4',
-                                    'label': '階段4：旋轉細調與平移細調',
-                                    'duration': stage4_duration,
-                                    'sub_stages': stage4_sub_stages if stage4_sub_stages else None
-                                })
-                                total_duration += stage4_duration
+                            # 構建階段4的子步驟（始終顯示兩個子步驟）
+                            stage4_sub_stages = []
+                            stage4_sub_stages.append({
+                                'name': 'stage4_rotation_fine',
+                                'label': '旋轉細調',
+                                'duration': stage4_rotation
+                            })
+                            stage4_sub_stages.append({
+                                'name': 'stage4_translation_fine',
+                                'label': '平移細調',
+                                'duration': stage4_translation
+                            })
+                            
+                            # 使用 stage4_total 如果存在，否則計算總和
+                            stage4_duration = stage4_total if stage4_total > 0.0 else (stage4_rotation + stage4_translation)
+                            
+                            sub_stages.append({
+                                'name': 'stage4',
+                                'label': '階段4：旋轉細調與平移細調',
+                                'duration': stage4_duration,
+                                'sub_stages': stage4_sub_stages
+                            })
+                            total_duration += stage4_duration
+                            
+                            # 6. 階段5：全局驗證（始終顯示）
+                            stage5_duration = alignment_timing.get('stage5_global_verification', 0.0)
+                            sub_stages.append({
+                                'name': 'stage5_global_verification',
+                                'label': '階段5：全局驗證',
+                                'duration': stage5_duration
+                            })
+                            total_duration += stage5_duration
                             
                             # 更新 stage 的 duration 和 sub_stages
                             processing_stages['stages'][idx]['duration'] = total_duration
-                            processing_stages['stages'][idx]['sub_stages'] = sub_stages if sub_stages else None
+                            processing_stages['stages'][idx]['sub_stages'] = sub_stages
                             
                             # 調試輸出：確認 sub_stages 已構建
                             print(f"DEBUG: 構建了 {len(sub_stages)} 個子步驟，總時間: {total_duration:.3f}秒")
-                            if sub_stages:
-                                for sub_stage in sub_stages:
-                                    print(f"DEBUG: - {sub_stage['label']}: {sub_stage.get('duration', 0):.3f}秒")
+                            for sub_stage in sub_stages:
+                                print(f"DEBUG: - {sub_stage['label']}: {sub_stage.get('duration', 0):.3f}秒")
                         
                         break
             
