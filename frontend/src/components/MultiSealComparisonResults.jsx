@@ -945,155 +945,271 @@ function MultiSealComparisonResults({
                         <TableContainer component={Paper} variant="outlined">
                           <Table size="small">
                             <TableBody>
-                              {result.timing.total !== undefined && (
-                                <TableRow>
-                                  <TableCell colSpan={2} sx={{ backgroundColor: 'primary.light', fontWeight: 'bold', color: 'primary.contrastText' }}>
-                                    總時間: {result.timing.total.toFixed(2)} 秒
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.load_images !== undefined && (
-                                <TableRow>
-                                  <TableCell>載入圖像</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.load_images.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.load_images / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.remove_bg_image1 !== undefined && (
-                                <TableRow>
-                                  <TableCell>圖像1去背景</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.remove_bg_image1.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.remove_bg_image1 / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.remove_bg_align_image2 !== undefined && (
-                                <>
-                                  <TableRow>
-                                    <TableCell sx={{ fontWeight: 'medium' }}>圖像2去背景和對齊</TableCell>
-                                    <TableCell align="right" sx={{ fontWeight: 'medium' }}>
-                                      {result.timing.remove_bg_align_image2.toFixed(2)} 秒
-                                      {result.timing.total ? ` (${((result.timing.remove_bg_align_image2 / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                    </TableCell>
-                                  </TableRow>
-                                  {result.timing.alignment_stages && (
-                                    <>
-                                      {result.timing.alignment_stages.remove_background !== undefined && (
+                              {(() => {
+                                const timing = result.timing || {}
+                                const alignmentStages = timing.alignment_stages || {}
+                                const hasAlignmentStages = alignmentStages && typeof alignmentStages === 'object'
+
+                                const formatSeconds = (v) => {
+                                  const n = typeof v === 'number' ? v : 0
+                                  return `${n.toFixed(2)} 秒`
+                                }
+
+                                const formatPercent = (part, total) => {
+                                  const p = typeof part === 'number' ? part : 0
+                                  const t = typeof total === 'number' ? total : 0
+                                  if (!t || t <= 0) return ''
+                                  return ` (${((p / t) * 100).toFixed(1)}%)`
+                                }
+
+                                // === 任務級主 key（維持現有顯示順序） ===
+                                const displayedTimingKeys = new Set([
+                                  'total',
+                                  'load_images',
+                                  'remove_bg_image1',
+                                  'remove_bg_align_image2',
+                                  'save_aligned_images',
+                                  'similarity_calculation',
+                                  'save_corrected_images',
+                                  'create_overlay',
+                                  'calculate_mask_stats',
+                                  'create_heatmap',
+                                  'alignment_stages',
+                                ])
+
+                                // === alignment_stages（依 seal_compare.py 結構化） ===
+                                const bgStepDefs = [
+                                  ['step1_convert_to_gray', '轉換灰度'],
+                                  ['step2_detect_bg_color', '偵測背景色'],
+                                  ['step3_otsu_threshold', 'OTSU二值化'],
+                                  ['step4_combine_masks', '結合遮罩'],
+                                  ['step5_morphology_bg', '形態學處理背景'],
+                                  ['step6_contour_detection', '輪廓偵測'],
+                                  ['step7_calculate_bbox', '計算邊界框'],
+                                  ['step8_crop_image', '裁切圖像'],
+                                  ['step9_remove_bg_final', '最終移除背景'],
+                                ]
+
+                                const stageDefs = [
+                                  ['stage1_translation_coarse', '階段1：平移粗調'],
+                                  ['stage2_rotation_coarse', '階段2：旋轉粗調'],
+                                  ['stage3_translation_fine', '階段3：平移細調'],
+                                  ['stage4_total', '階段4：旋轉細調與平移細調（總計）'],
+                                  ['stage5_global_verification', '階段5：全局驗證'],
+                                ]
+
+                                const stage4SubDefs = [
+                                  ['stage4_rotation_fine', '└─ 旋轉細調'],
+                                  ['stage4_translation_fine', '└─ 平移細調'],
+                                ]
+
+                                const knownAlignmentKeys = new Set([
+                                  'remove_background_total',
+                                  'remove_background',
+                                  ...bgStepDefs.map(([k]) => k),
+                                  ...stageDefs.map(([k]) => k),
+                                  ...stage4SubDefs.map(([k]) => k),
+                                ])
+
+                                const otherAlignmentEntries = hasAlignmentStages
+                                  ? Object.entries(alignmentStages).filter(([k]) => !knownAlignmentKeys.has(k))
+                                  : []
+
+                                const otherTimingEntries = Object.entries(timing).filter(([k]) => !displayedTimingKeys.has(k))
+
+                                const renderKeyValueRows = (entries, parentTotal) => {
+                                  if (!entries || entries.length === 0) return null
+                                  return entries.map(([k, v]) => (
+                                    <TableRow key={k}>
+                                      <TableCell sx={{ color: 'text.secondary' }}>{k}</TableCell>
+                                      <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                        {typeof v === 'number' ? formatSeconds(v) : JSON.stringify(v)}
+                                        {typeof v === 'number' ? formatPercent(v, parentTotal) : ''}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))
+                                }
+
+                                return (
+                                  <>
+                                    {/* 總時間 */}
+                                    {timing.total !== undefined && (
+                                      <TableRow>
+                                        <TableCell colSpan={2} sx={{ backgroundColor: 'primary.light', fontWeight: 'bold', color: 'primary.contrastText' }}>
+                                          總時間: {typeof timing.total === 'number' ? timing.total.toFixed(2) : '0.00'} 秒
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+
+                                    {/* 任務級主階段 */}
+                                    {timing.load_images !== undefined && (
+                                      <TableRow>
+                                        <TableCell>載入圖像</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.load_images)}{formatPercent(timing.load_images, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    {timing.remove_bg_image1 !== undefined && (
+                                      <TableRow>
+                                        <TableCell>圖像1去背景</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.remove_bg_image1)}{formatPercent(timing.remove_bg_image1, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+
+                                    {/* 圖像2去背景 + 對齊（細節） */}
+                                    {timing.remove_bg_align_image2 !== undefined && (
+                                      <>
                                         <TableRow>
-                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
-                                            └─ 去背景
-                                          </TableCell>
-                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                            {result.timing.alignment_stages.remove_background.toFixed(2)} 秒
-                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.remove_background / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
+                                          <TableCell sx={{ fontWeight: 'medium' }}>圖像2去背景和對齊</TableCell>
+                                          <TableCell align="right" sx={{ fontWeight: 'medium' }}>
+                                            {formatSeconds(timing.remove_bg_align_image2)}{formatPercent(timing.remove_bg_align_image2, timing.total)}
                                           </TableCell>
                                         </TableRow>
-                                      )}
-                                      {result.timing.alignment_stages.stage1_coarse_search !== undefined && (
+
+                                        {hasAlignmentStages && (
+                                          <>
+                                            {/* 去背景（9步驟 + total） */}
+                                            <TableRow>
+                                              <TableCell sx={{ pl: 4, color: 'text.secondary', fontWeight: 'medium' }}>
+                                                ├─ 去背景
+                                              </TableCell>
+                                              <TableCell align="right" sx={{ color: 'text.secondary', fontWeight: 'medium' }}>
+                                                {formatSeconds(
+                                                  alignmentStages.remove_background_total ??
+                                                    alignmentStages.remove_background ??
+                                                    0
+                                                )}
+                                                {formatPercent(
+                                                  alignmentStages.remove_background_total ??
+                                                    alignmentStages.remove_background ??
+                                                    0,
+                                                  timing.remove_bg_align_image2
+                                                )}
+                                              </TableCell>
+                                            </TableRow>
+
+                                            {bgStepDefs.map(([k, label], idx) => {
+                                              const v = alignmentStages[k]
+                                              const prefix = idx === bgStepDefs.length - 1 ? '│  └─' : '│  ├─'
+                                              return (
+                                                <TableRow key={k}>
+                                                  <TableCell sx={{ pl: 6, color: 'text.secondary' }}>
+                                                    {prefix} {label}
+                                                  </TableCell>
+                                                  <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                                    {formatSeconds(v)}
+                                                  </TableCell>
+                                                </TableRow>
+                                              )
+                                            })}
+
+                                            {/* 對齊階段 1-5 */}
+                                            {stageDefs.map(([k, label]) => (
+                                              <TableRow key={k}>
+                                                <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
+                                                  ├─ {label}
+                                                </TableCell>
+                                                <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                                  {formatSeconds(alignmentStages[k])}
+                                                  {formatPercent(alignmentStages[k], timing.remove_bg_align_image2)}
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+
+                                            {/* 階段4子步驟 */}
+                                            {stage4SubDefs.map(([k, label]) => (
+                                              <TableRow key={k}>
+                                                <TableCell sx={{ pl: 6, color: 'text.secondary' }}>
+                                                  │  {label}
+                                                </TableCell>
+                                                <TableCell align="right" sx={{ color: 'text.secondary' }}>
+                                                  {formatSeconds(alignmentStages[k])}
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+
+                                            {/* alignment_stages 其他未識別 key */}
+                                            {otherAlignmentEntries.length > 0 && (
+                                              <>
+                                                <TableRow>
+                                                  <TableCell colSpan={2} sx={{ pl: 4, backgroundColor: 'grey.100', fontWeight: 'bold' }}>
+                                                    其他（alignment_stages）
+                                                  </TableCell>
+                                                </TableRow>
+                                                {renderKeyValueRows(otherAlignmentEntries, timing.remove_bg_align_image2)}
+                                              </>
+                                            )}
+                                          </>
+                                        )}
+                                      </>
+                                    )}
+
+                                    {timing.save_aligned_images !== undefined && (
+                                      <TableRow>
+                                        <TableCell>保存對齊圖像</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.save_aligned_images)}{formatPercent(timing.save_aligned_images, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    {timing.similarity_calculation !== undefined && (
+                                      <TableRow>
+                                        <TableCell>相似度計算</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.similarity_calculation)}{formatPercent(timing.similarity_calculation, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    {timing.save_corrected_images !== undefined && (
+                                      <TableRow>
+                                        <TableCell>保存校正圖像</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.save_corrected_images)}{formatPercent(timing.save_corrected_images, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    {timing.create_overlay !== undefined && (
+                                      <TableRow>
+                                        <TableCell>生成疊圖</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.create_overlay)}{formatPercent(timing.create_overlay, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    {timing.calculate_mask_stats !== undefined && (
+                                      <TableRow>
+                                        <TableCell>計算Mask統計</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.calculate_mask_stats)}{formatPercent(timing.calculate_mask_stats, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    {timing.create_heatmap !== undefined && (
+                                      <TableRow>
+                                        <TableCell>生成熱力圖</TableCell>
+                                        <TableCell align="right">
+                                          {formatSeconds(timing.create_heatmap)}{formatPercent(timing.create_heatmap, timing.total)}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+
+                                    {/* timing 其他未識別 key（全量呈現） */}
+                                    {otherTimingEntries.length > 0 && (
+                                      <>
                                         <TableRow>
-                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
-                                            └─ 階段1: 粗搜索
-                                          </TableCell>
-                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                            {result.timing.alignment_stages.stage1_coarse_search.toFixed(2)} 秒
-                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage1_coarse_search / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
+                                          <TableCell colSpan={2} sx={{ backgroundColor: 'grey.100', fontWeight: 'bold' }}>
+                                            其他（timing）
                                           </TableCell>
                                         </TableRow>
-                                      )}
-                                      {result.timing.alignment_stages.stage2_full_evaluation !== undefined && (
-                                        <TableRow>
-                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
-                                            └─ 階段2: 完整尺寸評估
-                                          </TableCell>
-                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                            {result.timing.alignment_stages.stage2_full_evaluation.toFixed(2)} 秒
-                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage2_full_evaluation / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
-                                          </TableCell>
-                                        </TableRow>
-                                      )}
-                                      {result.timing.alignment_stages.stage3_fine_search !== undefined && (
-                                        <TableRow>
-                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
-                                            └─ 階段3: 細搜索優化
-                                          </TableCell>
-                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                            {result.timing.alignment_stages.stage3_fine_search.toFixed(2)} 秒
-                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage3_fine_search / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
-                                          </TableCell>
-                                        </TableRow>
-                                      )}
-                                      {result.timing.alignment_stages.stage4_ultra_fine_search !== undefined && (
-                                        <TableRow>
-                                          <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
-                                            └─ 階段4: 超細搜索優化
-                                          </TableCell>
-                                          <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                            {result.timing.alignment_stages.stage4_ultra_fine_search.toFixed(2)} 秒
-                                            {result.timing.remove_bg_align_image2 ? ` (${((result.timing.alignment_stages.stage4_ultra_fine_search / result.timing.remove_bg_align_image2) * 100).toFixed(1)}%)` : ''}
-                                          </TableCell>
-                                        </TableRow>
-                                      )}
-                                    </>
-                                  )}
-                                </>
-                              )}
-                              {result.timing.save_aligned_images !== undefined && (
-                                <TableRow>
-                                  <TableCell>保存對齊圖像</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.save_aligned_images.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.save_aligned_images / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.similarity_calculation !== undefined && (
-                                <TableRow>
-                                  <TableCell>相似度計算</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.similarity_calculation.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.similarity_calculation / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.save_corrected_images !== undefined && (
-                                <TableRow>
-                                  <TableCell>保存校正圖像</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.save_corrected_images.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.save_corrected_images / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.create_overlay !== undefined && (
-                                <TableRow>
-                                  <TableCell>生成疊圖</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.create_overlay.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.create_overlay / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.calculate_mask_stats !== undefined && (
-                                <TableRow>
-                                  <TableCell>計算Mask統計</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.calculate_mask_stats.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.calculate_mask_stats / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                              {result.timing.create_heatmap !== undefined && (
-                                <TableRow>
-                                  <TableCell>生成熱力圖</TableCell>
-                                  <TableCell align="right">
-                                    {result.timing.create_heatmap.toFixed(2)} 秒
-                                    {result.timing.total ? ` (${((result.timing.create_heatmap / result.timing.total) * 100).toFixed(1)}%)` : ''}
-                                  </TableCell>
-                                </TableRow>
-                              )}
+                                        {renderKeyValueRows(otherTimingEntries, timing.total)}
+                                      </>
+                                    )}
+                                  </>
+                                )
+                              })()}
                             </TableBody>
                           </Table>
                         </TableContainer>

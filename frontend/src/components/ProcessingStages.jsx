@@ -75,15 +75,17 @@ function ProcessingStages({ processingStages }) {
                 }}
               >
                 {(isLast ? '└─' : '├─')} {subStage.label}
-                {subDuration > 0 && (
-                  <span style={{ marginLeft: '8px', fontWeight: 'normal', fontFamily: 'inherit' }}>
-                    {formatDuration(subDuration)}
-                    {percentage > 0 && ` (${percentage}%)`}
-                  </span>
-                )}
+                <span style={{ marginLeft: '8px', fontWeight: 'normal', fontFamily: 'inherit' }}>
+                  {formatDuration(subDuration)}
+                  {percentage > 0 && ` (${percentage}%)`}
+                </span>
               </Typography>
               {/* 遞歸渲染子步驟的子步驟 */}
-              {hasSubStages && renderSubStages(subStage.sub_stages, subDuration, level + 1)}
+              {hasSubStages && (
+                <Box sx={{ pl: 2 }}>
+                  {renderSubStages(subStage.sub_stages, subDuration, level + 1)}
+                </Box>
+              )}
             </Box>
           )
         })}

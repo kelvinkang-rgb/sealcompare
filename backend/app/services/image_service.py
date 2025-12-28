@@ -390,12 +390,14 @@ class ImageService:
         
         # 去背景
         remove_bg_start = time.time()
+        remove_bg_timing: Dict[str, float] = {}
         try:
-            image, _ = comparator._auto_detect_bounds_and_remove_background(image)
+            # 需要完整去背景步驟時間（step1..step9 + remove_background_total）
+            image, remove_bg_timing = comparator._auto_detect_bounds_and_remove_background(image, return_timing=True)
         except Exception as e:
             print(f"警告：自動外框偵測失敗，使用原圖: {str(e)}")
             # 如果處理失敗，使用原圖繼續處理
-            pass
+            remove_bg_timing = {}
         remove_bg_time = time.time() - remove_bg_start
         
         # 對齊處理
@@ -406,19 +408,30 @@ class ImageService:
                 image_aligned, angle, offset, similarity, metrics, alignment_timing = comparator._align_image2_to_image1(
                     reference_image, image, rotation_range=rotation_range, translation_range=translation_range
                 )
-                # 將去背景時間添加到對齊時間字典中
                 if alignment_timing is None:
                     alignment_timing = {}
-                alignment_timing['remove_background'] = remove_bg_time
+                # 合併去背景「詳細步驟」時間到 alignment_timing，供前端顯示
+                # 注意：多印鑑頁面依賴 result.timing.alignment_stages 來呈現這些資訊
+                alignment_timing.update(remove_bg_timing)
+                # 向後兼容：保留 remove_background 作為總時間
+                if 'remove_background_total' in remove_bg_timing and remove_bg_timing.get('remove_background_total', 0.0) > 0:
+                    alignment_timing['remove_background'] = float(remove_bg_timing['remove_background_total'])
+                else:
+                    alignment_timing['remove_background'] = float(remove_bg_time)
                 return image_aligned, angle, offset, similarity, metrics, alignment_timing
             except Exception as e:
                 print(f"警告：圖像2對齊優化失敗，使用原圖: {str(e)}")
                 # 如果對齊失敗，直接返回原圖
-                alignment_timing = {'remove_background': remove_bg_time}
+                alignment_timing = dict(remove_bg_timing) if remove_bg_timing else {}
+                if 'remove_background_total' in alignment_timing and alignment_timing.get('remove_background_total', 0.0) > 0:
+                    alignment_timing['remove_background'] = float(alignment_timing['remove_background_total'])
+                else:
+                    alignment_timing['remove_background'] = float(remove_bg_time)
                 return image, None, None, None, None, alignment_timing
         else:
             # 圖像1：只去背景，不對齊
-            return image, None, None, None, None, None
+            # 回傳去背景 timing（即使目前呼叫端不使用，也保持資訊完整）
+            return image, None, None, None, None, remove_bg_timing
     
     def compare_image1_with_seals(
         self, 
