@@ -32,7 +32,7 @@ from app.schemas import (
 )
 from app.services.image_service import ImageService
 from app.config import settings
-from app.models import ComparisonStatus
+from app.models import ComparisonStatus, MultiSealComparisonTask
 
 # 配置日誌記錄器
 logger = logging.getLogger(__name__)

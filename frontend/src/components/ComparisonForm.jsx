@@ -6,6 +6,7 @@ import { imageAPI } from '../services/api'
 import SealDetectionBox from './SealDetectionBox'
 import ImagePreview from './ImagePreview'
 import BatchSealAdjustment from './BatchSealAdjustment'
+import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function ComparisonForm({ onSubmit }) {
   const queryClient = useQueryClient()
@@ -20,6 +21,9 @@ function ComparisonForm({ onSubmit }) {
   const [isDetecting2, setIsDetecting2] = useState(false)
   const [batchMode, setBatchMode] = useState(false)
   const [showBatchDialog, setShowBatchDialog] = useState(false)
+  
+  // 功能開關
+  const showBatchSealAdjustment = useFeatureFlag(FEATURE_FLAGS.BATCH_SEAL_ADJUSTMENT)
 
   const uploadImage1Mutation = useMutation({
     mutationFn: imageAPI.upload,
@@ -637,17 +641,18 @@ function ComparisonForm({ onSubmit }) {
       </Dialog>
 
       {/* 批量調整對話框 */}
-      <Dialog
-        open={showBatchDialog}
-        onClose={() => {}} // 不允許點擊外部關閉
-        disableEscapeKeyDown={true} // 不允許按 ESC 關閉
-        maxWidth="lg"
-        fullWidth
-      >
-        <DialogTitle>批量調整印鑑位置</DialogTitle>
-        <DialogContent>
-          {uploadImage1Mutation.data?.id && uploadImage2Mutation.data?.id && (
-            <BatchSealAdjustment
+      {showBatchSealAdjustment && (
+        <Dialog
+          open={showBatchDialog}
+          onClose={() => {}} // 不允許點擊外部關閉
+          disableEscapeKeyDown={true} // 不允許按 ESC 關閉
+          maxWidth="lg"
+          fullWidth
+        >
+          <DialogTitle>批量調整印鑑位置</DialogTitle>
+          <DialogContent>
+            {uploadImage1Mutation.data?.id && uploadImage2Mutation.data?.id && (
+              <BatchSealAdjustment
               image1Id={uploadImage1Mutation.data.id}
               image2Id={uploadImage2Mutation.data.id}
               image1InitialBbox={sealDetectionResult?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
@@ -658,8 +663,9 @@ function ComparisonForm({ onSubmit }) {
               onCancel={handleBatchCancel}
             />
           )}
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
+      )}
     </Box>
   )
 }

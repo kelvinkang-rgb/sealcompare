@@ -15,6 +15,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { comparisonAPI, imageAPI } from '../services/api'
 import ComparisonForm from '../components/ComparisonForm'
 import ComparisonResult from '../components/ComparisonResult'
+import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function Comparison() {
   const navigate = useNavigate()
@@ -24,6 +25,9 @@ function Comparison() {
   const [threshold, setThreshold] = useState(0.83)
   const [isViewMode, setIsViewMode] = useState(false)
   const formRef = useRef(null)
+  
+  // 功能開關
+  const showThresholdSetting = useFeatureFlag(FEATURE_FLAGS.THRESHOLD_SETTING)
 
   // 從 URL 參數讀取 comparisonId（查看已有記錄）
   useEffect(() => {
@@ -93,22 +97,24 @@ function Comparison() {
               </Paper>
             </Grid>
 
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  比對設置
-                </Typography>
-                <TextField
-                  label="相似度閾值"
-                  type="number"
-                  value={threshold}
-                  onChange={(e) => setThreshold(parseFloat(e.target.value))}
-                  inputProps={{ min: 0, max: 1, step: 0.01 }}
-                  fullWidth
-                  sx={{ mb: 2 }}
-                />
-              </Paper>
-            </Grid>
+            {showThresholdSetting && (
+              <Grid item xs={12} md={6}>
+                <Paper sx={{ p: 3 }}>
+                  <Typography variant="h6" gutterBottom>
+                    比對設置
+                  </Typography>
+                  <TextField
+                    label="相似度閾值"
+                    type="number"
+                    value={threshold}
+                    onChange={(e) => setThreshold(parseFloat(e.target.value))}
+                    inputProps={{ min: 0, max: 1, step: 0.01 }}
+                    fullWidth
+                    sx={{ mb: 2 }}
+                  />
+                </Paper>
+              </Grid>
+            )}
 
             {createComparisonMutation.isError && (
               <Grid item xs={12}>

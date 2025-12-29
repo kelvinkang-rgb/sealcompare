@@ -57,6 +57,26 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api/v1
+        # 功能開關配置（true = 顯示，false = 隱藏）
+        # 預設所有功能啟用，如需隱藏特定組件，將對應值設為 "false"
+        VITE_FEATURE_BATCH_SEAL_ADJUSTMENT: "true"
+        VITE_FEATURE_METRICS_EXPLANATION_DIALOG: "false"
+        VITE_FEATURE_SIMILARITY_HISTOGRAM: "true"
+        VITE_FEATURE_COMPARISON_EDIT_DIALOG: "true"
+        VITE_FEATURE_DELETE_CONFIRM_DIALOG: "true"
+        VITE_FEATURE_PROCESSING_STAGES: "true"
+        VITE_FEATURE_VERIFICATION_VIEW: "true"
+        VITE_FEATURE_IMAGE_MODAL: "false"
+        VITE_FEATURE_IMAGE_PREVIEW_DIALOG: "true"
+        # UI 元素開關配置（true = 顯示，false = 隱藏）
+        VITE_FEATURE_MASK_STATISTICS: "false"
+        VITE_FEATURE_TIMING_DETAILS: "false"
+        VITE_FEATURE_TASK_TIMING_STATISTICS: "false"
+        VITE_FEATURE_ADVANCED_SETTINGS: "true"
+        VITE_FEATURE_MAX_SEALS_SETTING: "true"
+        VITE_FEATURE_THRESHOLD_SETTING: "false"
+        VITE_FEATURE_MASK_WEIGHTS_SETTING: "false"
+        VITE_FEATURE_ALIGNMENT_TIMING_DETAILS: "false"
     container_name: sealcompare-frontend
     ports:
       - "3000:80"

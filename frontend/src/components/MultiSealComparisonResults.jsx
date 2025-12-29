@@ -26,6 +26,7 @@ import {
 } from '@mui/material'
 import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, ExpandMore as ExpandMoreIcon, Search as SearchIcon } from '@mui/icons-material'
 import ImagePreviewDialog from './ImagePreviewDialog'
+import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function MultiSealComparisonResults({ 
   results, 
@@ -37,6 +38,11 @@ function MultiSealComparisonResults({
   uniqueRegionPenaltyWeight = 0.2,
   calculateMaskBasedSimilarity
 }) {
+  // 功能開關
+  const showImagePreviewDialog = useFeatureFlag(FEATURE_FLAGS.IMAGE_PREVIEW_DIALOG)
+  const showMaskStatistics = useFeatureFlag(FEATURE_FLAGS.MASK_STATISTICS)
+  const showTimingDetails = useFeatureFlag(FEATURE_FLAGS.TIMING_DETAILS)
+  
   const [modalOpen, setModalOpen] = useState(false)
   const [modalImageUrl, setModalImageUrl] = useState('')
   const [modalImage, setModalImage] = useState(null)
@@ -861,7 +867,7 @@ function MultiSealComparisonResults({
                 )}
 
                 {/* Mask統計資訊區域（不延後，立即可顯示） */}
-                {!result.error && result.mask_statistics && (
+                {showMaskStatistics && !result.error && result.mask_statistics && (
                   <Box sx={{ mt: 2 }}>
                     <Accordion>
                       <AccordionSummary
@@ -979,7 +985,7 @@ function MultiSealComparisonResults({
                 )}
 
                 {/* 時間詳情區域 */}
-                {!result.error && result.timing && (
+                {showTimingDetails && !result.error && result.timing && (
                   <Box sx={{ mt: 2 }}>
                     <Accordion TransitionProps={{ unmountOnExit: true }}>
                       <AccordionSummary
@@ -1273,14 +1279,16 @@ function MultiSealComparisonResults({
         ))}
       </Grid>
 
-      <ImagePreviewDialog
-        open={modalOpen}
-        onClose={handleCloseModal}
-        image={modalImage}
-        imageUrl={modalImageUrl}
-        sealBbox={null}
-        seals={[]}
-      />
+      {showImagePreviewDialog && (
+        <ImagePreviewDialog
+          open={modalOpen}
+          onClose={handleCloseModal}
+          image={modalImage}
+          imageUrl={modalImageUrl}
+          sealBbox={null}
+          seals={[]}
+        />
+      )}
     </Box>
   )
 }

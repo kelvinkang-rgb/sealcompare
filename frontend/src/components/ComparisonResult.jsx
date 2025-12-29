@@ -12,10 +12,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { comparisonAPI } from '../services/api'
 import VerificationView from './VerificationView'
 import ProcessingStages from './ProcessingStages'
+import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function ComparisonResult({ comparisonId, onResetComparison }) {
   const [pollingInterval, setPollingInterval] = useState(1000)
   const queryClient = useQueryClient()
+  
+  // 功能開關
+  const showProcessingStages = useFeatureFlag(FEATURE_FLAGS.PROCESSING_STAGES)
+  const showVerificationView = useFeatureFlag(FEATURE_FLAGS.VERIFICATION_VIEW)
+  const showAlignmentTimingDetails = useFeatureFlag(FEATURE_FLAGS.ALIGNMENT_TIMING_DETAILS)
 
   const { data: comparison, isLoading, error } = useQuery({
     queryKey: ['comparison', comparisonId],
@@ -106,7 +112,7 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
               </Typography>
             )}
           </Alert>
-          {comparison.details?.processing_stages && (
+          {showProcessingStages && comparison.details?.processing_stages && (
             <ProcessingStages processingStages={comparison.details.processing_stages} />
           )}
         </Box>
@@ -132,7 +138,7 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
                 </Typography>
               )}
               {/* 顯示對齊時間詳情 */}
-              {comparison.details?.alignment_optimization?.timing && (
+              {showAlignmentTimingDetails && comparison.details?.alignment_optimization?.timing && (
                 <Box sx={{ mt: 1, p: 1, bgcolor: 'background.default', borderRadius: 1 }}>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
                     圖像2處理時間詳情:
@@ -257,7 +263,9 @@ function ComparisonResult({ comparisonId, onResetComparison }) {
             </Typography>
           </Box>
 
-          <VerificationView comparisonId={comparisonId} />
+          {showVerificationView && (
+            <VerificationView comparisonId={comparisonId} />
+          )}
         </>
       )}
 

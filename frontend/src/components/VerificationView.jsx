@@ -2,8 +2,12 @@ import React, { useState } from 'react'
 import { Box, Typography, Grid, Paper } from '@mui/material'
 import { visualizationAPI } from '../services/api'
 import ImageModal from './ImageModal'
+import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function VerificationView({ comparisonId }) {
+  // 功能開關
+  const showImageModal = useFeatureFlag(FEATURE_FLAGS.IMAGE_MODAL)
+  
   const [modalOpen, setModalOpen] = useState(false)
   const [modalImageUrl, setModalImageUrl] = useState('')
   const [modalTitle, setModalTitle] = useState('')
@@ -226,12 +230,14 @@ function VerificationView({ comparisonId }) {
         </Grid>
       </Grid>
 
-      <ImageModal
-        open={modalOpen}
-        onClose={handleCloseModal}
-        imageUrl={modalImageUrl}
-        title={modalTitle}
-      />
+      {showImageModal && (
+        <ImageModal
+          open={modalOpen}
+          onClose={handleCloseModal}
+          imageUrl={modalImageUrl}
+          title={modalTitle}
+        />
+      )}
     </Box>
   )
 }

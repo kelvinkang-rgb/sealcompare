@@ -33,9 +33,18 @@ import MultiSealPreview from '../components/MultiSealPreview'
 import MultiSealDetectionBox from '../components/MultiSealDetectionBox'
 import MultiSealComparisonResults from '../components/MultiSealComparisonResults'
 import SimilarityHistogram from '../components/SimilarityHistogram'
+import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function MultiSealTest() {
   const navigate = useNavigate()
+  
+  // 功能開關
+  const showSimilarityHistogram = useFeatureFlag(FEATURE_FLAGS.SIMILARITY_HISTOGRAM)
+  const showAdvancedSettings = useFeatureFlag(FEATURE_FLAGS.ADVANCED_SETTINGS)
+  const showMaxSealsSetting = useFeatureFlag(FEATURE_FLAGS.MAX_SEALS_SETTING)
+  const showThresholdSetting = useFeatureFlag(FEATURE_FLAGS.THRESHOLD_SETTING)
+  const showMaskWeightsSetting = useFeatureFlag(FEATURE_FLAGS.MASK_WEIGHTS_SETTING)
+  const showTaskTimingStatistics = useFeatureFlag(FEATURE_FLAGS.TASK_TIMING_STATISTICS)
   
   // ==================== 圖像1相關狀態 ====================
   // 圖像1數據和檢測狀態
@@ -776,11 +785,12 @@ function MultiSealTest() {
       </Box>
 
       {/* 進階設定 */}
-      <Accordion 
-        expanded={advancedSettingsOpen} 
-        onChange={(e, expanded) => setAdvancedSettingsOpen(expanded)}
-        sx={{ mb: 3 }}
-      >
+      {showAdvancedSettings && (
+        <Accordion 
+          expanded={advancedSettingsOpen} 
+          onChange={(e, expanded) => setAdvancedSettingsOpen(expanded)}
+          sx={{ mb: 3 }}
+        >
         <AccordionSummary
           expandIcon={<ExpandMoreIcon />}
           aria-controls="advanced-settings-content"
@@ -791,14 +801,17 @@ function MultiSealTest() {
             <Typography variant="h6">
               進階設定
             </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-              （印鑑數量上限: {maxSeals} 個，相似度閾值: {Math.round(threshold * 100)}%）
-            </Typography>
+            {showMaxSealsSetting && showThresholdSetting && (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                （印鑑數量上限: {maxSeals} 個，相似度閾值: {Math.round(threshold * 100)}%）
+              </Typography>
+            )}
           </Box>
         </AccordionSummary>
         <AccordionDetails>
           {/* 比對印鑑數量上限設定 */}
-          <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+          {showMaxSealsSetting && (
+            <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
             <Typography variant="body2" gutterBottom fontWeight="bold">
               比對印鑑數量上限
             </Typography>
@@ -843,9 +856,11 @@ function MultiSealTest() {
               />
             </Box>
           </Box>
+          )}
 
           {/* 相似度閾值設定 */}
-          <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+          {showThresholdSetting && (
+            <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
             <Typography variant="body2" gutterBottom fontWeight="bold">
               相似度閾值設定
             </Typography>
@@ -888,9 +903,11 @@ function MultiSealTest() {
               />
             </Box>
           </Box>
+          )}
 
           {/* Mask相似度權重參數設定 */}
-          <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+          {showMaskWeightsSetting && (
+            <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
               <Typography variant="h6">
                 Mask相似度權重參數設定
@@ -1015,15 +1032,19 @@ function MultiSealTest() {
             </Typography>
           </Grid>
         </Grid>
-        <Box sx={{ mt: 2 }}>
-              <Typography variant="caption" color={Math.abs(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight - 1.0) < 0.01 ? 'success.main' : 'warning.main'}>
-                權重總和: {(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight).toFixed(2)} 
-                {Math.abs(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight - 1.0) < 0.01 ? ' ✓' : ' (建議調整為 1.0)'}
-              </Typography>
-            </Box>
+        {showMaskWeightsSetting && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="caption" color={Math.abs(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight - 1.0) < 0.01 ? 'success.main' : 'warning.main'}>
+              權重總和: {(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight).toFixed(2)} 
+              {Math.abs(overlapWeight + pixelDiffPenaltyWeight + uniqueRegionPenaltyWeight - 1.0) < 0.01 ? ' ✓' : ' (建議調整為 1.0)'}
+            </Typography>
           </Box>
+        )}
+          </Box>
+          )}
         </AccordionDetails>
       </Accordion>
+      )}
 
       <Grid container spacing={3}>
         {/* 圖像1區域 */}
@@ -1315,14 +1336,14 @@ function MultiSealTest() {
       </Grid>
 
       {/* Histogram 統計圖表 */}
-      {comparisonResults && comparisonResults.length > 0 && (
+      {showSimilarityHistogram && comparisonResults && comparisonResults.length > 0 && (
         <SimilarityHistogram
           results={comparisonResults}
         />
       )}
 
       {/* 顯示任務級別時間統計 */}
-      {polledTaskResult?.task_timing && polledTaskResult.status === 'completed' && (
+      {showTaskTimingStatistics && polledTaskResult?.task_timing && polledTaskResult.status === 'completed' && (
         <Box sx={{ mt: 4 }}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>

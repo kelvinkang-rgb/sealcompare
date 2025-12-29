@@ -22,6 +22,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { comparisonAPI } from '../services/api'
 import ComparisonEditDialog from '../components/ComparisonEditDialog'
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog'
+import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function History() {
   const navigate = useNavigate()
@@ -30,6 +31,10 @@ function History() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedComparison, setSelectedComparison] = useState(null)
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
+  
+  // 功能開關
+  const showComparisonEditDialog = useFeatureFlag(FEATURE_FLAGS.COMPARISON_EDIT_DIALOG)
+  const showDeleteConfirmDialog = useFeatureFlag(FEATURE_FLAGS.DELETE_CONFIRM_DIALOG)
 
   const { data: comparisons, isLoading } = useQuery({
     queryKey: ['comparisons'],
@@ -157,22 +162,26 @@ function History() {
                     >
                       查看
                     </Button>
-                    <IconButton
-                      size="small"
-                      color="primary"
-                      onClick={() => handleEdit(comparison)}
-                      title="編輯"
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      color="error"
-                      onClick={() => handleDelete(comparison)}
-                      title="刪除"
-                    >
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
+                    {showComparisonEditDialog && (
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => handleEdit(comparison)}
+                        title="編輯"
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    )}
+                    {showDeleteConfirmDialog && (
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleDelete(comparison)}
+                        title="刪除"
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    )}
                   </Box>
                 </TableCell>
               </TableRow>
@@ -182,26 +191,30 @@ function History() {
       </TableContainer>
 
       {/* 編輯對話框 */}
-      <ComparisonEditDialog
-        open={editDialogOpen}
-        onClose={() => {
-          setEditDialogOpen(false)
-          setSelectedComparison(null)
-        }}
-        comparison={selectedComparison}
-        onSave={handleSaveEdit}
-      />
+      {showComparisonEditDialog && (
+        <ComparisonEditDialog
+          open={editDialogOpen}
+          onClose={() => {
+            setEditDialogOpen(false)
+            setSelectedComparison(null)
+          }}
+          comparison={selectedComparison}
+          onSave={handleSaveEdit}
+        />
+      )}
 
       {/* 刪除確認對話框 */}
-      <DeleteConfirmDialog
-        open={deleteDialogOpen}
-        onClose={() => {
-          setDeleteDialogOpen(false)
-          setSelectedComparison(null)
-        }}
-        onConfirm={handleConfirmDelete}
-        comparison={selectedComparison}
-      />
+      {showDeleteConfirmDialog && (
+        <DeleteConfirmDialog
+          open={deleteDialogOpen}
+          onClose={() => {
+            setDeleteDialogOpen(false)
+            setSelectedComparison(null)
+          }}
+          onConfirm={handleConfirmDelete}
+          comparison={selectedComparison}
+        />
+      )}
 
       {/* 操作反饋提示 */}
       <Snackbar
