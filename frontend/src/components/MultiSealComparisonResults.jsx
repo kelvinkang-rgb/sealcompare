@@ -485,7 +485,12 @@ function MultiSealComparisonResults({
                               borderRadius: '4px',
                             }}
                             onError={(e) => {
-                              console.error(`疊圖1載入失敗 (印鑑 ${result.seal_index}):`, result.overlay1_path, getImageUrl(result.overlay1_path))
+                              const imageUrl = getImageUrl(result.overlay1_path)
+                              console.error(`疊圖1載入失敗 (印鑑 ${result.seal_index}):`, {
+                                overlay1_path: result.overlay1_path,
+                                imageUrl: imageUrl,
+                                fullResult: result
+                              })
                               e.target.style.display = 'none'
                               const errorMsg = e.target.parentElement.querySelector('.error-message') || document.createElement('p')
                               errorMsg.className = 'error-message'
@@ -496,12 +501,20 @@ function MultiSealComparisonResults({
                               }
                             }}
                             onLoad={() => {
-                              console.log(`疊圖1載入成功 (印鑑 ${result.seal_index}):`, result.overlay1_path)
+                              console.log(`疊圖1載入成功 (印鑑 ${result.seal_index}):`, {
+                                overlay1_path: result.overlay1_path,
+                                imageUrl: getImageUrl(result.overlay1_path)
+                              })
                             }}
                           />
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
                             {result.overlay_error ? '生成失敗' : '未生成'}
+                            {process.env.NODE_ENV === 'development' && (
+                              <Typography variant="caption" display="block" sx={{ mt: 0.5, color: 'text.secondary' }}>
+                                調試: overlay1_path = {result.overlay1_path || 'null'}
+                              </Typography>
+                            )}
                           </Box>
                         )}
                       </Paper>
@@ -537,7 +550,12 @@ function MultiSealComparisonResults({
                               borderRadius: '4px',
                             }}
                             onError={(e) => {
-                              console.error(`疊圖2載入失敗 (印鑑 ${result.seal_index}):`, result.overlay2_path, getImageUrl(result.overlay2_path))
+                              const imageUrl = getImageUrl(result.overlay2_path)
+                              console.error(`疊圖2載入失敗 (印鑑 ${result.seal_index}):`, {
+                                overlay2_path: result.overlay2_path,
+                                imageUrl: imageUrl,
+                                fullResult: result
+                              })
                               e.target.style.display = 'none'
                               const errorMsg = e.target.parentElement.querySelector('.error-message') || document.createElement('p')
                               errorMsg.className = 'error-message'
@@ -548,12 +566,20 @@ function MultiSealComparisonResults({
                               }
                             }}
                             onLoad={() => {
-                              console.log(`疊圖2載入成功 (印鑑 ${result.seal_index}):`, result.overlay2_path)
+                              console.log(`疊圖2載入成功 (印鑑 ${result.seal_index}):`, {
+                                overlay2_path: result.overlay2_path,
+                                imageUrl: getImageUrl(result.overlay2_path)
+                              })
                             }}
                           />
                         ) : (
                           <Box sx={{ p: 2, color: 'text.secondary' }}>
                             {result.overlay_error ? '生成失敗' : '未生成'}
+                            {process.env.NODE_ENV === 'development' && (
+                              <Typography variant="caption" display="block" sx={{ mt: 0.5, color: 'text.secondary' }}>
+                                調試: overlay2_path = {result.overlay2_path || 'null'}
+                              </Typography>
+                            )}
                           </Box>
                         )}
                       </Paper>

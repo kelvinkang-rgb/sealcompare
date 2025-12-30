@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Container,
   Typography,
@@ -9,6 +9,7 @@ import {
   Paper,
   Alert,
   CircularProgress,
+  LinearProgress,
   Grid,
   Dialog,
   DialogTitle,
@@ -39,6 +40,7 @@ import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function MultiSealTest() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   
   // 功能開關
   const showSimilarityHistogram = useFeatureFlag(FEATURE_FLAGS.SIMILARITY_HISTOGRAM)
@@ -87,12 +89,15 @@ function MultiSealTest() {
   // PDF 比對結果：相似度區間篩選（可空）
   const [pdfSimilarityMin, setPdfSimilarityMin] = useState('')
   const [pdfSimilarityMax, setPdfSimilarityMax] = useState('')
+  // PDF 比對結果數據（處理後的結果，對齊 PNG/JPG 的 comparisonResults 更新策略）
+  const [pdfComparisonResults, setPdfComparisonResults] = useState(null)
 
   const resetPdfTaskUI = useCallback(() => {
     setPdfTaskUid(null)
     setPdfTaskStatus(null)
     setPdfSimilarityMin('')
     setPdfSimilarityMax('')
+    setPdfComparisonResults(null)
   }, [])
 
   const clamp01 = useCallback((v) => {
@@ -400,10 +405,11 @@ function MultiSealTest() {
   }
 
   // 輪詢任務結果（包括狀態和部分結果）- 合併為單一輪詢
+  // 允許已完成任務至少查詢一次結果（用於顯示最終結果）
   const { data: polledTaskResult } = useQuery({
     queryKey: ['task-result', currentTaskUid],
     queryFn: () => imageAPI.getTaskResult(currentTaskUid),
-    enabled: !!currentTaskUid && taskStatus?.status !== 'completed' && taskStatus?.status !== 'failed',
+    enabled: !!currentTaskUid,
     refetchInterval: (query) => {
       const data = query.state.data
       // 如果任務完成或失敗，停止輪詢
@@ -431,21 +437,124 @@ function MultiSealTest() {
     refetchOnWindowFocus: true,
   })
 
+  // PDF 任務結果查詢：允許已完成任務至少查詢一次結果（用於顯示最終結果）
+  // 任務進行中時定期查詢以獲取增量結果（後端有增量寫入）
   const { data: polledPdfTaskResult } = useQuery({
     queryKey: ['pdf-task-result', pdfTaskUid],
     queryFn: () => imageAPI.getPdfTaskResult(pdfTaskUid),
-    enabled: !!pdfTaskUid && (
-      polledPdfTaskStatus?.status === 'completed' || 
-      polledPdfTaskStatus?.status === 'failed' ||
-      (polledPdfTaskStatus?.status === 'processing' && polledPdfTaskStatus.progress >= 100)
-    ),
+    enabled: !!pdfTaskUid,
+    refetchInterval: (query) => {
+      const resultData = query.state.data
+      const status = polledPdfTaskStatus?.status || resultData?.status
+      // 如果任務完成或失敗，停止輪詢
+      if (status === 'completed' || status === 'failed') {
+        return false
+      }
+      // 如果任務進行中，定期查詢結果（後端有增量寫入，可以即時顯示部分結果）
+      if (status === 'processing') {
+        return 2000 // 每 2 秒查詢一次，獲取增量結果
+      }
+      // 其他情況（pending）不輪詢
+      return false
+    },
+    refetchOnWindowFocus: true,
   })
 
   useEffect(() => {
     if (polledPdfTaskStatus) {
       setPdfTaskStatus(polledPdfTaskStatus)
+      // 當任務完成或失敗時，強制觸發結果查詢以確保獲取最終結果
+      if (polledPdfTaskStatus.status === 'completed' || polledPdfTaskStatus.status === 'failed') {
+        queryClient.invalidateQueries({ queryKey: ['pdf-task-result', pdfTaskUid] })
+      }
     }
-  }, [polledPdfTaskStatus])
+  }, [polledPdfTaskStatus, pdfTaskUid, queryClient])
+
+  // 處理 PDF 比對結果（對齊 PNG/JPG 的處理邏輯：只顯示已生成疊圖或有錯誤的結果，增量合併，completed 強制更新）
+  useEffect(() => {
+    if (!polledPdfTaskResult) return
+
+    // 1) 同步狀態（從結果中提取狀態信息，避免 status polling 停在舊狀態）
+    if (polledPdfTaskResult.status) {
+      const pagesDone = Number(polledPdfTaskResult.pages_done)
+      const pagesTotal = Number(polledPdfTaskResult.pages_total)
+      const progressFromCounts =
+        Number.isFinite(pagesDone) && Number.isFinite(pagesTotal) && pagesTotal > 0
+          ? (pagesDone / pagesTotal) * 100
+          : undefined
+
+      setPdfTaskStatus((prev) => ({
+        ...(prev || {}),
+        status: polledPdfTaskResult.status,
+        progress: progressFromCounts ?? prev?.progress,
+      }))
+    }
+
+    // 2) 結果處理：只顯示已生成疊圖（overlay1/overlay2）或 error 的項目
+    const rawPages = Array.isArray(polledPdfTaskResult.results_by_page)
+      ? polledPdfTaskResult.results_by_page
+      : []
+
+    const normalizeResults = (page) =>
+      Array.isArray(page?.results)
+        ? page.results
+        : (page?.results && Array.isArray(page.results.results) ? page.results.results : [])
+
+    const processedPages = rawPages.map((page) => {
+      const pageResults = normalizeResults(page)
+      const completedResults = pageResults.filter((r) => (r?.overlay1_path || r?.overlay2_path) || r?.error)
+
+      const processedResults = completedResults.map((r) => {
+        if (r?.error) return r
+
+        // 新主指標：structure_similarity
+        if (r.structure_similarity !== null && r.structure_similarity !== undefined) {
+          const primary = r.structure_similarity
+          const dynamicIsMatch = primary >= threshold
+          return {
+            ...r,
+            mask_based_similarity: primary,
+            is_match: dynamicIsMatch,
+            _primary_metric: 'structure_similarity',
+          }
+        }
+
+        if (r.mask_statistics) {
+          const dynamicMaskSimilarity = calculateMaskBasedSimilarity(
+            r.mask_statistics,
+            overlapWeight,
+            pixelDiffPenaltyWeight,
+            uniqueRegionPenaltyWeight
+          )
+          const dynamicIsMatch = dynamicMaskSimilarity >= threshold
+          return {
+            ...r,
+            mask_based_similarity: dynamicMaskSimilarity,
+            is_match: dynamicIsMatch,
+            _primary_metric: 'mask_based_similarity',
+          }
+        }
+
+        const fallback = r.mask_based_similarity
+        return {
+          ...r,
+          is_match: fallback !== null && fallback !== undefined ? fallback >= threshold : r.is_match,
+          _primary_metric: 'mask_based_similarity',
+        }
+      })
+
+      return {
+        ...page,
+        results: processedResults,
+      }
+    })
+
+    // 重要：PDF 最終階段常見「結果數量不變，但 overlay/heatmap 路徑補齊」。
+    // 若用「可顯示結果數量」做 gate，會導致 completed 後 UI 停在空白/舊資料。
+    // 以 results endpoint 作為真實來源：每次 polledPdfTaskResult 變更都同步到 UI。
+    processedPages.sort((a, b) => (a?.page_index || 0) - (b?.page_index || 0))
+    setPdfComparisonResults(processedPages)
+  }, [polledPdfTaskResult, threshold, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight])
   
   // 當輪詢結果更新時，同時更新狀態和結果顯示
   useEffect(() => {
@@ -453,9 +562,14 @@ function MultiSealTest() {
       // 更新任務狀態（從結果中提取狀態信息）
       const statusInfo = {
         status: polledTaskResult.status,
+        progress: polledTaskResult.progress,
+        progress_message: polledTaskResult.progress_message,
         total_count: polledTaskResult.total_count,
         success_count: polledTaskResult.success_count,
-        error: polledTaskResult.error
+        error: polledTaskResult.error,
+        created_at: polledTaskResult.created_at,
+        started_at: polledTaskResult.started_at,
+        completed_at: polledTaskResult.completed_at,
       }
       setTaskStatus(statusInfo)
       
@@ -538,10 +652,15 @@ function MultiSealTest() {
             }
           })
           
-          // 增量合併：避免每次輪詢都重建整個結果陣列導致 UI 抖動/變慢
-          // 只有在「已完成可顯示的結果數」增加時才更新（降低 re-render 次數）
-          if (completedResults.length > lastCompletedCountRef.current) {
-            lastCompletedCountRef.current = completedResults.length
+          // 任務完成時強制更新結果，即使數量沒有增加
+          // 否則只在結果數量增加時更新（降低 re-render 次數）
+          const isTaskCompleted = polledTaskResult.status === 'completed'
+          const shouldUpdate = isTaskCompleted || completedResults.length > lastCompletedCountRef.current
+          
+          if (shouldUpdate) {
+            if (!isTaskCompleted) {
+              lastCompletedCountRef.current = completedResults.length
+            }
             setComparisonResults((prev) => {
               const prevArr = Array.isArray(prev) ? prev : []
               const keyOf = (r) => r?.seal_image_id || r?.seal_index
@@ -567,9 +686,12 @@ function MultiSealTest() {
             })
           }
         } else if (polledTaskResult.status === 'completed') {
-          // 如果任務已完成但沒有結果，清空顯示（可能是所有結果都失敗了）
+          // 如果任務已完成但沒有符合條件的結果，清空顯示（可能是所有結果都失敗了或沒有疊圖）
           setComparisonResults([])
         }
+      } else if (polledTaskResult.status === 'completed' && !polledTaskResult.results) {
+        // 任務完成但完全沒有 results 數據，清空顯示
+        setComparisonResults([])
       }
     }
   }, [polledTaskResult, currentTaskUid, threshold, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight])
@@ -584,7 +706,15 @@ function MultiSealTest() {
       setComparisonResults(null)
       setCurrentTaskUid(taskData.task_uid)
       setTaskStatus({
-        status: taskData.status
+        status: taskData.status,
+        progress: taskData.progress,
+        progress_message: taskData.progress_message,
+        total_count: taskData.total_count,
+        success_count: taskData.success_count,
+        error: taskData.error,
+        created_at: taskData.created_at,
+        started_at: taskData.started_at,
+        completed_at: taskData.completed_at,
       })
       setLastError(null)
       setErrorStage(null)
@@ -781,8 +911,7 @@ function MultiSealTest() {
     setComparisonResults(null)
     lastCompletedCountRef.current = 0
     setLastDetectionMaxSeals(null) // 重置追蹤狀態
-    setPdfTaskUid(null)
-    setPdfTaskStatus(null)
+    resetPdfTaskUI()
     uploadImage2Mutation.reset()
     // 重置 input value，允許重新選擇文件
     if (image2InputRef.current) {
@@ -870,6 +999,8 @@ function MultiSealTest() {
     }
 
     try {
+      // 重置 PDF 比對結果狀態（對齊 PNG/JPG 的處理）
+      setPdfComparisonResults(null)
       const r = await imageAPI.comparePdf(image1EffectiveId, uploadImage2Mutation.data.id, {
         maxSeals,
         threshold,
@@ -1394,11 +1525,13 @@ function MultiSealTest() {
                     }
                     return pageImg
                   })
-                  setImage1TemplatePageId(pageImg?.id || null)
-                  // 更換模板頁後，舊的 PDF 全頁比對結果已不再適用
-                  if (pdfTaskUid) {
+                  // 只有「模板頁真的變更」才清除舊的 PDF 全頁比對任務狀態；
+                  // 避免同一頁的 refetch/onPageImageLoaded 觸發把剛開始的任務清掉，導致 UI 看不到摘要/結果。
+                  const nextTemplateId = pageImg?.id || null
+                  if (pdfTaskUid && String(nextTemplateId) !== String(image1TemplatePageId)) {
                     resetPdfTaskUI()
                   }
+                  setImage1TemplatePageId(nextTemplateId)
                 }}
               />
             )}
@@ -1612,6 +1745,33 @@ function MultiSealTest() {
                           {taskStatus.status === 'completed' && `比對完成：${taskStatus.success_count}/${taskStatus.total_count} 個印鑑成功`}
                           {taskStatus.status === 'failed' && `比對失敗：${taskStatus.error || '未知錯誤'}`}
                         </Typography>
+                        {(taskStatus.status === 'pending' || taskStatus.status === 'processing') && (
+                          <Box sx={{ mt: 0.5 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              {(() => {
+                                const p = Number(taskStatus.progress)
+                                const done = Number(taskStatus.success_count)
+                                const total = Number(taskStatus.total_count)
+                                const hasCounts = Number.isFinite(done) && Number.isFinite(total) && total >= 0
+                                const countsText = hasCounts ? `${Math.max(0, done)}/${Math.max(0, total)}` : null
+
+                                // 主指標：已完成/總數；輔助：百分比與訊息
+                                if (!Number.isFinite(p)) {
+                                  return `${countsText ? `進度：${countsText}` : '正在取得進度...'}${taskStatus.progress_message ? ` - ${taskStatus.progress_message}` : ''}`
+                                }
+                                return `${countsText ? `進度：${countsText}` : `進度：${p.toFixed(1)}%`}${taskStatus.progress_message ? ` - ${taskStatus.progress_message}` : ''}${countsText ? `（${p.toFixed(1)}%）` : ''}`
+                              })()}
+                            </Typography>
+                            {(() => {
+                              const p = Number(taskStatus.progress)
+                              if (!Number.isFinite(p)) {
+                                return <LinearProgress sx={{ mt: 0.75 }} />
+                              }
+                              const clamped = Math.max(0, Math.min(100, p))
+                              return <LinearProgress variant="determinate" value={clamped} sx={{ mt: 0.75 }} />
+                            })()}
+                          </Box>
+                        )}
                         <Typography variant="caption" display="block" sx={{ mt: 0.5, fontFamily: 'monospace' }}>
                           任務 UID: {currentTaskUid}
                         </Typography>
@@ -1751,14 +1911,131 @@ function MultiSealTest() {
         </Box>
       )}
 
-      {/* 顯示 PDF 全頁比對結果（攤平顯示） */}
-      {image2?.is_pdf && polledPdfTaskResult?.results_by_page &&
-        (polledPdfTaskResult.status === 'completed' ||
-          (polledPdfTaskResult.status === 'processing' &&
-            pdfTaskStatus?.progress >= 100 &&
-            polledPdfTaskResult.results_by_page.length > 0)) && (
+      {/* 任務完成但沒有符合條件的結果時顯示提示 */}
+      {taskStatus?.status === 'completed' && 
+       (!comparisonResults || comparisonResults.length === 0) && 
+       polledTaskResult && (
         <Box sx={{ mt: 4 }}>
-          {polledPdfTaskResult.status === 'processing' && (
+          <Alert severity="info">
+            <Typography variant="body2" gutterBottom>
+              任務已完成，但沒有可顯示的比對結果。
+            </Typography>
+            {polledTaskResult.total_count !== undefined && polledTaskResult.total_count > 0 && (
+              <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                總共處理了 {polledTaskResult.total_count} 個印鑑，成功 {polledTaskResult.success_count || 0} 個。
+                {polledTaskResult.results && polledTaskResult.results.length > 0 && (
+                  <span> 但所有結果都缺少疊圖數據（overlay1_path/overlay2_path）。</span>
+                )}
+              </Typography>
+            )}
+            {polledTaskResult.error && (
+              <Typography variant="caption" display="block" sx={{ mt: 0.5, color: 'error.main' }}>
+                錯誤：{polledTaskResult.error}
+              </Typography>
+            )}
+          </Alert>
+        </Box>
+      )}
+
+      {/* 顯示 PDF 全頁比對結果（攤平顯示） */}
+      {image2?.is_pdf && (pdfTaskUid || pdfTaskStatus || polledPdfTaskResult) && (
+        <Box sx={{ mt: 4 }}>
+          {(() => {
+            const statusFromStatus = pdfTaskStatus?.status
+            const statusFromResult = polledPdfTaskResult?.status
+            const effectiveStatus = statusFromResult || statusFromStatus || '—'
+
+            const pagesTotalRaw =
+              polledPdfTaskResult?.pages_total ?? pdfTaskStatus?.pages_total ?? polledPdfTaskStatus?.pages_total
+            const pagesDoneRaw =
+              polledPdfTaskResult?.pages_done ?? pdfTaskStatus?.pages_done ?? polledPdfTaskStatus?.pages_done
+
+            const pagesTotal = Number(pagesTotalRaw)
+            const pagesDone = Number(pagesDoneRaw)
+            const hasCounts =
+              Number.isFinite(pagesTotal) && pagesTotal > 0 && Number.isFinite(pagesDone) && pagesDone >= 0
+
+            const progressPct = hasCounts ? (pagesDone / pagesTotal) * 100 : Number(pdfTaskStatus?.progress)
+            const hasProgress = Number.isFinite(progressPct)
+
+            const rawPages = Array.isArray(pdfComparisonResults)
+              ? pdfComparisonResults
+              : (Array.isArray(polledPdfTaskResult?.results_by_page) ? polledPdfTaskResult.results_by_page : [])
+
+            const pagesWithDetected = rawPages.filter(p => !!p?.detected).length
+            const pagesWithVisibleResults = rawPages.filter(p => Array.isArray(p?.results) && p.results.length > 0).length
+            const visibleResultsCount = rawPages.reduce((sum, p) => sum + (Array.isArray(p?.results) ? p.results.length : 0), 0)
+            const pagesWithReason = rawPages.filter(p => !p?.detected && p?.reason).length
+
+            const waitingFinal =
+              effectiveStatus === 'completed' &&
+              (!polledPdfTaskResult || !Array.isArray(polledPdfTaskResult.results_by_page) || polledPdfTaskResult.results_by_page.length === 0)
+
+            return (
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  PDF 任務摘要
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Job: {pdfTaskUid || polledPdfTaskResult?.task_uid || '—'}
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                  狀態：{effectiveStatus}
+                  {hasCounts ? `（頁面：${Math.max(0, pagesDone)}/${Math.max(0, pagesTotal)}）` : ''}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {`頁面統計：有偵測 ${pagesWithDetected} 頁｜有可顯示結果 ${pagesWithVisibleResults} 頁｜可顯示結果總數 ${visibleResultsCount}｜無偵測原因 ${pagesWithReason} 頁`}
+                </Typography>
+
+                <Box sx={{ mt: 1 }}>
+                  {hasProgress ? (
+                    <LinearProgress variant="determinate" value={Math.max(0, Math.min(100, progressPct))} />
+                  ) : (
+                    <LinearProgress />
+                  )}
+                </Box>
+
+                {waitingFinal && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    任務顯示完成，但尚未取得最終結果資料（正在重新查詢結果…）
+                  </Alert>
+                )}
+              </Paper>
+            )
+          })()}
+
+          {(() => {
+            const statusFromStatus = pdfTaskStatus?.status
+            const statusFromResult = polledPdfTaskResult?.status
+            const effectiveStatus = statusFromResult || statusFromStatus
+
+            if (effectiveStatus !== 'completed') return null
+
+            if (!polledPdfTaskResult) {
+              return (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  任務已完成，正在取得最終結果…
+                </Alert>
+              )
+            }
+
+            if (Array.isArray(polledPdfTaskResult.results_by_page) && polledPdfTaskResult.results_by_page.length === 0) {
+              return (
+                <Alert severity="warning" sx={{ mt: 2 }}>
+                  PDF 比對任務已完成，但後端回傳 results_by_page 為空。請檢查後端日誌或重新執行比對。
+                </Alert>
+              )
+            }
+
+            return null
+          })()}
+        </Box>
+      )}
+
+      {image2?.is_pdf && pdfComparisonResults &&
+        pdfComparisonResults.length > 0 && (
+        <Box sx={{ mt: 4 }}>
+          {polledPdfTaskResult?.status === 'processing' && (
             <Alert severity="info" sx={{ mb: 2 }}>
               任務處理完成，結果已可用（狀態更新中）
             </Alert>
@@ -1793,10 +2070,7 @@ function MultiSealTest() {
           </Box>
 
           {(() => {
-            const rawPages = Array.isArray(polledPdfTaskResult?.results_by_page)
-              ? polledPdfTaskResult.results_by_page
-              : []
-
+            const rawPages = Array.isArray(pdfComparisonResults) ? pdfComparisonResults : []
             const pages = [...rawPages].sort((a, b) => (a.page_index || 0) - (b.page_index || 0))
 
             const minVal = pdfSimilarityMin === '' ? null : Number(pdfSimilarityMin)
@@ -1805,27 +2079,15 @@ function MultiSealTest() {
             const hasMax = Number.isFinite(maxVal)
 
             const scoreOf = (x) => (x?.mask_based_similarity ?? x?.structure_similarity ?? x?.similarity ?? 0)
-            const normalizeResults = (page) => (
-              Array.isArray(page?.results)
-                ? page.results
-                : (page?.results && Array.isArray(page.results.results) ? page.results.results : [])
-            )
+            const normalizeResults = (page) => (Array.isArray(page?.results) ? page.results : [])
             const inRange = (score) => {
               if (hasMin && score < minVal) return false
               if (hasMax && score > maxVal) return false
               return true
             }
 
-            const hasLegacyPayload = pages.some(p => !Array.isArray(p?.results) && p?.results && Array.isArray(p.results.results))
-
             return (
               <Box sx={{ mt: 2 }}>
-                {hasLegacyPayload && (
-                  <Alert severity="warning" sx={{ mb: 2 }}>
-                    你正在查看舊版 PDF 任務結果（results 結構較舊）。若顯示不完整，請重新執行一次「開始 PDF 全頁比對」以產生新版結果。
-                  </Alert>
-                )}
-
                 {pages.map((p) => {
                   const normalized = normalizeResults(p)
                   const filtered = normalized.filter(x => inRange(scoreOf(x)))

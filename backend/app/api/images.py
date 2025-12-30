@@ -1113,18 +1113,31 @@ def get_pdf_task_result(task_uid: str, db: Session = Depends(get_db)):
         logger.info(f"[PDF任務] 任務 {task_uid} 狀態為 processing 但結果已存在，視為 completed")
     
     # 正規化 page_image_id -> UUID 讓 Pydantic 可解析
+    # 確保 results 陣列中的所有欄位（包括圖片路徑）都被正確保留
     normalized = []
     for r in results_by_page:
         try:
+            # 確保 results 陣列中的所有欄位都被保留（包括 overlay1_path, overlay2_path, heatmap_path 等）
+            results = r.get("results") or []
+            # 驗證 results 中包含圖片路徑欄位（用於調試）
+            if results and len(results) > 0:
+                sample_result = results[0] if isinstance(results, list) else None
+                if sample_result and isinstance(sample_result, dict):
+                    has_overlay = sample_result.get("overlay1_path") or sample_result.get("overlay2_path")
+                    has_heatmap = sample_result.get("heatmap_path")
+                    if has_overlay or has_heatmap:
+                        logger.debug(f"[PDF任務] 結果包含圖片路徑: overlay={bool(has_overlay)}, heatmap={bool(has_heatmap)}")
+            
             normalized.append({
                 "page_index": r.get("page_index", 0),
                 "page_image_id": r.get("page_image_id"),
                 "detected": bool(r.get("detected")),
                 "count": int(r.get("count", 0) or 0),
-                "results": r.get("results") or [],
+                "results": results,  # 直接使用 results，確保所有欄位都被保留
                 "reason": r.get("reason"),
             })
-        except Exception:
+        except Exception as e:
+            logger.error(f"[PDF任務] 正規化結果時發生錯誤: {str(e)}", exc_info=True)
             continue
     return PdfCompareTaskResultResponse(
         task_uid=task.task_uid,

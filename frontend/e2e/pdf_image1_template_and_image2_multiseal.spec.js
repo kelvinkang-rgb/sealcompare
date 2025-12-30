@@ -1,7 +1,24 @@
 const { test, expect } = require('@playwright/test')
 const path = require('path')
 
+function attachConsoleErrorCollector(page) {
+  const errors = []
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      errors.push(`[console.error] ${msg.text()}`)
+    }
+  })
+  page.on('pageerror', (err) => {
+    errors.push(`[pageerror] ${err?.message || String(err)}`)
+  })
+
+  return () => {
+    expect(errors, `瀏覽器主控台出現錯誤：\n${errors.join('\n')}`).toEqual([])
+  }
+}
+
 test('PDF：圖像1 可跳頁預覽並手動框選；圖像2 可逐頁編輯多印鑑框', async ({ page }) => {
+  const assertNoConsoleErrors = attachConsoleErrorCollector(page)
   const pdfPath = path.resolve(__dirname, '..', '..', 'test_images', '案例一-印章有壓到線上.pdf')
 
   await page.goto('/multi-seal-test')
@@ -53,9 +70,70 @@ test('PDF：圖像1 可跳頁預覽並手動框選；圖像2 可逐頁編輯多�
   await image2Dialog.getByRole('button', { name: '添加' }).click()
   await image2Dialog.getByRole('button', { name: /確認/ }).click()
   await expect(image2Dialog).toBeHidden()
+
+  assertNoConsoleErrors()
+})
+
+test('PDF：全頁比對完成後必須在 UI 顯示摘要與頁級結果', async ({ page }) => {
+  test.setTimeout(300_000)
+  const assertNoConsoleErrors = attachConsoleErrorCollector(page)
+  const pdfPath = path.resolve(__dirname, '..', '..', 'test_images', '案例一-印章有壓到線上.pdf')
+
+  await page.goto('/multi-seal-test')
+
+  // 圖像1：上傳 PDF → 會自動跳到建議頁並打開印鑑框選對話框
+  await page.setInputFiles('#image1-upload', pdfPath)
+  const image1Dialog = page.getByRole('dialog').filter({ hasText: '調整圖像1印鑑位置' })
+  await expect(image1Dialog).toBeVisible()
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/seal-location') && r.request().method() === 'PUT' && r.status() === 200),
+    image1Dialog.getByRole('button', { name: '確認' }).click(),
+  ])
+  await expect(image1Dialog).toBeHidden()
+
+  // 圖像2：上傳 PDF → 等逐頁偵測完成
+  await page.setInputFiles('#image2-upload', pdfPath)
+  await page.waitForResponse((r) => r.url().includes('/detect-multiple-seals') && r.request().method() === 'POST' && r.status() === 200, { timeout: 120_000 })
+
+  // 觸發 PDF 全頁比對
+  const startBtn = page.getByRole('button', { name: '開始 PDF 全頁比對' })
+  await expect(startBtn).toBeEnabled({ timeout: 60_000 })
+
+  const compareResp = await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/compare-pdf') && r.request().method() === 'POST' && r.status() === 200, { timeout: 60_000 }),
+    startBtn.click(),
+  ]).then(([resp]) => resp)
+
+  const compareData = await compareResp.json()
+  const taskUid = compareData?.task_uid
+  expect(taskUid, 'compare-pdf 必須回傳 task_uid').toBeTruthy()
+
+  // processing/completed 都要有摘要
+  const summaryPaper = page.locator('.MuiPaper-root', { hasText: 'PDF 任務摘要' })
+  await expect(summaryPaper).toBeVisible({ timeout: 60_000 })
+  await expect(summaryPaper).toContainText(String(taskUid).slice(0, 8))
+  await expect(summaryPaper).toContainText('狀態：')
+  await expect(summaryPaper.locator('.MuiLinearProgress-root')).toBeVisible()
+
+  // 等待任務完成（以 UI 摘要呈現為準：completed 或 failed）
+  await expect.poll(async () => {
+    const t = await summaryPaper.textContent()
+    const m = t ? t.match(/狀態：(completed|failed)/) : null
+    return m ? m[1] : ''
+  }, { timeout: 240_000, intervals: [1000, 2000, 3000] }).toMatch(/completed|failed/)
+
+  const summaryText = await summaryPaper.textContent()
+  expect(summaryText || '', 'PDF 任務不可失敗（否則無法驗證 UI 結果呈現）').toContain('狀態：completed')
+
+  // completed 後必須能看到頁級結果區塊（至少有「第 N 頁」）
+  await expect(page.getByText('PDF 比對結果')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByRole('heading', { name: /第\s*\d+\s*頁/ }).first()).toBeVisible({ timeout: 120_000 })
+
+  assertNoConsoleErrors()
 })
 
 test('PNG/JPG：既有多印鑑流程不回歸（基本 smoke）', async ({ page }) => {
+  const assertNoConsoleErrors = attachConsoleErrorCollector(page)
   const image1Path = path.resolve(__dirname, '..', '..', 'test_images', '1-1.png')
   const image2Path = path.resolve(__dirname, '..', '..', 'test_images', '1-2.png')
 
@@ -120,7 +198,18 @@ test('PNG/JPG：既有多印鑑流程不回歸（基本 smoke）', async ({ page
   await expect(compareBtn).toBeVisible({ timeout: 60_000 })
   await expect(compareBtn).toHaveText('開始比對多印鑑', { timeout: 60_000 })
   await compareBtn.click()
+
+  // 需求：觸發後需顯示 job uid、以及可查詢的進度/狀態（UI 以 Alert 顯示）
+  const taskAlert = page.locator('[role="alert"]').filter({ hasText: '任務 UID:' })
+  await expect(taskAlert).toBeVisible({ timeout: 60_000 })
+  await expect(taskAlert).toContainText('任務 UID:')
+  // 進度顯示（百分比或進度訊息），並有 progressbar（LinearProgress）
+  await expect(taskAlert.locator('.MuiLinearProgress-root')).toBeVisible({ timeout: 60_000 })
+  await expect(taskAlert).toContainText(/進度：\d+\/\d+|%|已完成|開始比對|正在取得進度|任務等待處理|正在處理比對任務/)
+
   await expect(page.getByText(/比對結果/)).toBeVisible({ timeout: 120_000 })
+
+  assertNoConsoleErrors()
 })
 
 
