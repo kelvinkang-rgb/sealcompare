@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -17,6 +17,7 @@ import {
   DialogContentText,
   Snackbar,
   TextField,
+  MenuItem,
   Slider,
   Accordion,
   AccordionSummary,
@@ -31,6 +32,7 @@ import ImagePreview from '../components/ImagePreview'
 import SealDetectionBox from '../components/SealDetectionBox'
 import MultiSealPreview from '../components/MultiSealPreview'
 import MultiSealDetectionBox from '../components/MultiSealDetectionBox'
+import PdfPagePicker from '../components/PdfPagePicker'
 import MultiSealComparisonResults from '../components/MultiSealComparisonResults'
 import SimilarityHistogram from '../components/SimilarityHistogram'
 import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
@@ -49,6 +51,10 @@ function MultiSealTest() {
   // ==================== 圖像1相關狀態 ====================
   // 圖像1數據和檢測狀態
   const [image1, setImage1] = useState(null)
+  // 圖像1為 PDF 時：選定的模板頁（page image）
+  const [image1TemplatePage, setImage1TemplatePage] = useState(null)
+  const [image1TemplatePageId, setImage1TemplatePageId] = useState(null)
+  const [image1PreferredPageId, setImage1PreferredPageId] = useState(null)
   const [showSealDialog1, setShowSealDialog1] = useState(false)
   const [sealDetectionResult1, setSealDetectionResult1] = useState(null)
   const [isDetecting1, setIsDetecting1] = useState(false)
@@ -56,8 +62,13 @@ function MultiSealTest() {
   // ==================== 圖像2相關狀態 ====================
   // 圖像2數據和多印鑑檢測狀態
   const [image2, setImage2] = useState(null)
+  // 圖像2為 PDF 時：選定的預覽/編輯頁（page image）
+  const [image2SelectedPage, setImage2SelectedPage] = useState(null)
+  const [image2SelectedPageId, setImage2SelectedPageId] = useState(null)
+  const [image2PreferredPageId, setImage2PreferredPageId] = useState(null)
   const [showSealDialog2, setShowSealDialog2] = useState(false)
   const [multipleSeals, setMultipleSeals] = useState([])
+  const [pdfPageDetections2, setPdfPageDetections2] = useState(null) // PDF 圖像2：每頁偵測結果
   const [isDetecting2, setIsDetecting2] = useState(false)
   const image2InputRef = useRef(null) // 引用圖像2的 input 元素，用於重置文件選擇
   
@@ -70,6 +81,26 @@ function MultiSealTest() {
   // 比對任務狀態
   const [currentTaskUid, setCurrentTaskUid] = useState(null)
   const [taskStatus, setTaskStatus] = useState(null)
+  // PDF 比對任務狀態（image1 第1頁 vs image2 全部頁）
+  const [pdfTaskUid, setPdfTaskUid] = useState(null)
+  const [pdfTaskStatus, setPdfTaskStatus] = useState(null)
+  // PDF 比對結果：相似度區間篩選（可空）
+  const [pdfSimilarityMin, setPdfSimilarityMin] = useState('')
+  const [pdfSimilarityMax, setPdfSimilarityMax] = useState('')
+
+  const resetPdfTaskUI = useCallback(() => {
+    setPdfTaskUid(null)
+    setPdfTaskStatus(null)
+    setPdfSimilarityMin('')
+    setPdfSimilarityMax('')
+  }, [])
+
+  const clamp01 = useCallback((v) => {
+    if (v === null || v === undefined) return undefined
+    const n = Number(v)
+    if (!Number.isFinite(n)) return undefined
+    return Math.max(0, Math.min(1, n))
+  }, [])
   
   // ==================== 比對參數設定 ====================
   // 相似度閾值（0-1，默認 0.83 即 83%）
@@ -95,11 +126,65 @@ function MultiSealTest() {
   const [errorDialogOpen, setErrorDialogOpen] = useState(false)
   const [errorDetailsExpanded, setErrorDetailsExpanded] = useState(false)
 
+  const image1Effective = image1?.is_pdf ? image1TemplatePage : image1
+  const image1EffectiveId = image1?.is_pdf ? image1TemplatePageId : image1?.id
+  const image1HasSeal = !!image1Effective?.seal_bbox
+
+  const image2Effective = image2?.is_pdf ? image2SelectedPage : image2
+  const image2EffectiveId = image2?.is_pdf ? image2SelectedPageId : image2?.id
+  const image2PageDetection = Array.isArray(pdfPageDetections2)
+    ? pdfPageDetections2.find(p => String(p.page_image_id) === String(image2SelectedPageId))
+    : null
+  const image2EffectiveSeals = image2?.is_pdf
+    ? (image2SelectedPage?.multiple_seals || image2PageDetection?.seals || [])
+    : (image2?.multiple_seals || multipleSeals || [])
+
   // 上傳圖像1
   const uploadImage1Mutation = useMutation({
     mutationFn: imageAPI.upload,
     onSuccess: async (data) => {
       setImage1(data)
+      setImage1TemplatePage(null)
+      setImage1TemplatePageId(null)
+      setImage1PreferredPageId(null)
+      // PDF：逐頁偵測並跳到建議頁，再讓使用者手動框選微調
+      if (data?.is_pdf) {
+        setIsDetecting1(true)
+        try {
+          const detectionResult = await imageAPI.detectSeal(data.id)
+          setSealDetectionResult1(detectionResult)
+          const pageId = detectionResult?.page_image_id || data?.pages?.[0]?.id || null
+          setImage1PreferredPageId(pageId)
+          if (pageId) {
+            const pageImage = await imageAPI.get(pageId)
+            setImage1TemplatePage(pageImage)
+            setImage1TemplatePageId(pageId)
+            setShowSealDialog1(true)
+            setSnackbar({
+              open: true,
+              message: `圖像1 PDF 已自動跳到第 ${detectionResult?.page_index || pageImage?.page_index || '?'} 頁，請確認/微調模板印鑑框`,
+              severity: 'info'
+            })
+          } else {
+            setSnackbar({
+              open: true,
+              message: `圖像1 已上傳 PDF（共 ${data.pdf_page_count || data.pages?.length || 0} 頁），但未取得分頁，無法預覽/框選`,
+              severity: 'warning'
+            })
+          }
+        } catch (error) {
+          console.error('PDF 偵測失敗:', error)
+          setSealDetectionResult1({ detected: false, bbox: null, center: null })
+          setSnackbar({
+            open: true,
+            message: 'PDF 偵測失敗，請改用手動選頁後框選（或檢查後端日誌）',
+            severity: 'error'
+          })
+        } finally {
+          setIsDetecting1(false)
+        }
+        return
+      }
       // 自動檢測印鑑
       setIsDetecting1(true)
       try {
@@ -121,7 +206,7 @@ function MultiSealTest() {
                 center_y: Math.round(detectionResult.center.center_y),
                 radius: typeof detectionResult.center.radius === 'number' ? detectionResult.center.radius : 0
               } : null,
-              confidence: detectionResult.confidence || 1.0
+              confidence: clamp01(detectionResult.confidence) ?? 1.0
             }
             
             await updateSealLocation1Mutation.mutateAsync({
@@ -149,8 +234,12 @@ function MultiSealTest() {
   const updateSealLocation1Mutation = useMutation({
     mutationFn: ({ imageId, locationData }) => imageAPI.updateSealLocation(imageId, locationData),
     onSuccess: (data) => {
-      setShowSealDialog1(false)
-      setImage1(data)
+      if (image1?.is_pdf) {
+        setImage1TemplatePage(data)
+        setImage1TemplatePageId(data?.id || image1TemplatePageId)
+      } else {
+        setImage1(data)
+      }
     },
   })
 
@@ -159,11 +248,42 @@ function MultiSealTest() {
     mutationFn: imageAPI.upload,
     onSuccess: async (data) => {
       setImage2(data)
+      setImage2SelectedPage(null)
+      setImage2SelectedPageId(null)
+      setImage2PreferredPageId(null)
       setCroppedImageIds([]) // 清除舊的裁切圖像ID
+      setPdfPageDetections2(null)
       // 自動檢測多個印鑑
       setIsDetecting2(true)
       try {
         const detectionResult = await imageAPI.detectMultipleSeals(data.id, maxSeals)
+        // PDF：後端會回傳 pages
+        if (data?.is_pdf && Array.isArray(detectionResult.pages)) {
+          setPdfPageDetections2(detectionResult.pages)
+          setMultipleSeals([])
+          // 預設跳到第一個有偵測到印鑑的頁，否則第 1 頁
+          const preferred = detectionResult.pages.find(p => p.detected && (p.count > 0 || (p.seals && p.seals.length > 0)))
+          const preferredPageId = preferred?.page_image_id || detectionResult.pages[0]?.page_image_id || data?.pages?.[0]?.id || null
+          setImage2PreferredPageId(preferredPageId)
+          setImage2SelectedPageId(preferredPageId)
+          if (preferredPageId) {
+            try {
+              const pageImage = await imageAPI.get(preferredPageId)
+              setImage2SelectedPage(pageImage)
+            } catch (e) {
+              // 即使拉取頁面失敗，也保留摘要
+              console.error('拉取 PDF 頁面失敗:', e)
+            }
+          }
+          setLastDetectionMaxSeals(maxSeals) // 記錄本次檢測使用的 maxSeals
+          setSnackbar({
+            open: true,
+            message: `PDF 圖像2 逐頁偵測完成（共 ${detectionResult.pages.length} 頁，總計 ${detectionResult.total_count ?? detectionResult.count ?? 0} 個印鑑）`,
+            severity: 'success'
+          })
+          return
+        }
+
         if (detectionResult.detected && detectionResult.seals && detectionResult.seals.length > 0) {
           setMultipleSeals(detectionResult.seals)
           setLastDetectionMaxSeals(maxSeals) // 記錄本次檢測使用的 maxSeals
@@ -205,7 +325,6 @@ function MultiSealTest() {
       } else if (data.multiple_seals === null || data.multiple_seals === undefined) {
         setMultipleSeals([])
       }
-      setShowSealDialog2(false)
       const savedCount = (data.multiple_seals && Array.isArray(data.multiple_seals)) 
         ? data.multiple_seals.length 
         : multipleSeals.length
@@ -296,6 +415,37 @@ function MultiSealTest() {
     },
     refetchOnWindowFocus: true,
   })
+
+  // ===== PDF 任務輪詢（image1 第1頁 vs image2 全部頁）=====
+  const { data: polledPdfTaskStatus } = useQuery({
+    queryKey: ['pdf-task-status', pdfTaskUid],
+    queryFn: () => imageAPI.getPdfTaskStatus(pdfTaskUid),
+    enabled: !!pdfTaskUid,
+    refetchInterval: (query) => {
+      const s = query.state.data?.status
+      if (s === 'completed' || s === 'failed') {
+        return false
+      }
+      return 1500
+    },
+    refetchOnWindowFocus: true,
+  })
+
+  const { data: polledPdfTaskResult } = useQuery({
+    queryKey: ['pdf-task-result', pdfTaskUid],
+    queryFn: () => imageAPI.getPdfTaskResult(pdfTaskUid),
+    enabled: !!pdfTaskUid && (
+      polledPdfTaskStatus?.status === 'completed' || 
+      polledPdfTaskStatus?.status === 'failed' ||
+      (polledPdfTaskStatus?.status === 'processing' && polledPdfTaskStatus.progress >= 100)
+    ),
+  })
+
+  useEffect(() => {
+    if (polledPdfTaskStatus) {
+      setPdfTaskStatus(polledPdfTaskStatus)
+    }
+  }, [polledPdfTaskStatus])
   
   // 當輪詢結果更新時，同時更新狀態和結果顯示
   useEffect(() => {
@@ -507,7 +657,7 @@ function MultiSealTest() {
 
   // 處理圖像1印鑑確認
   const handleSealConfirm1 = async (locationData) => {
-    if (uploadImage1Mutation.data?.id) {
+    if (image1EffectiveId) {
       try {
         const normalizedLocationData = {
           bbox: locationData.bbox ? {
@@ -521,51 +671,118 @@ function MultiSealTest() {
             center_y: Math.round(locationData.center.center_y),
             radius: typeof locationData.center.radius === 'number' ? locationData.center.radius : 0
           } : null,
-          confidence: locationData.confidence || 1.0
+          confidence: clamp01(locationData.confidence) ?? 1.0
         }
         
         await updateSealLocation1Mutation.mutateAsync({
-          imageId: uploadImage1Mutation.data.id,
+          imageId: image1EffectiveId,
           locationData: normalizedLocationData
         })
+
+        // PDF：以 DB 為真。保存成功後立即 refetch 該 page image，確保主畫面預覽框同步更新
+        if (image1?.is_pdf) {
+          const refreshed = await imageAPI.get(image1EffectiveId)
+          setImage1TemplatePage(refreshed)
+          setImage1TemplatePageId(refreshed?.id || image1TemplatePageId)
+        }
+
+        // 模板更新後，舊的 PDF 全頁比對結果已不再適用，避免二次操作混用
+        if (image2?.is_pdf) {
+          resetPdfTaskUI()
+        }
+
+        // 等所有更新完成後再關閉，避免對話框關閉但主畫面仍是舊 state
+        setShowSealDialog1(false)
       } catch (error) {
         console.error('更新印鑑位置失敗:', error)
-        alert('更新印鑑位置失敗，請重試')
+        setSnackbar({
+          open: true,
+          message: `更新印鑑位置失敗：${error?.response?.data?.detail || error.message || '請重試'}`,
+          severity: 'error'
+        })
+        throw error
       }
     }
   }
 
   // 處理圖像2多印鑑確認
   const handleMultipleSealsConfirm = async (seals) => {
-    if (uploadImage2Mutation.data?.id) {
-      setMultipleSeals(seals)
+    if (!uploadImage2Mutation.data?.id) return
+    if (saveMultipleSealsMutation.isPending) return
+
+    // PDF：保存到「選定頁」的 page image 上（僅用於預覽/手動確認；PDF 全頁比對仍會重新 auto detect）
+    if (image2?.is_pdf) {
+      if (!image2SelectedPageId) {
+        setSnackbar({ open: true, message: '請先選擇要保存的 PDF 頁面', severity: 'warning' })
+        return
+      }
       try {
         await saveMultipleSealsMutation.mutateAsync({
-          imageId: uploadImage2Mutation.data.id,
+          imageId: image2SelectedPageId,
           seals: seals
         })
+        // 以 DB 為真：保存成功後 refetch 該 page image，確保主畫面預覽與後續流程一致
+        const refreshed = await imageAPI.get(image2SelectedPageId)
+        setImage2SelectedPage(refreshed)
+        // 同步更新摘要（該頁顯示手動後的數量）
+        const effectiveSeals = (refreshed?.multiple_seals && Array.isArray(refreshed.multiple_seals)) ? refreshed.multiple_seals : seals
+        setPdfPageDetections2(prev => Array.isArray(prev)
+          ? prev.map(p => String(p.page_image_id) === String(image2SelectedPageId)
+              ? { ...p, detected: effectiveSeals.length > 0, seals: effectiveSeals, count: effectiveSeals.length, reason: effectiveSeals.length > 0 ? 'manual' : p.reason }
+              : p
+            )
+          : prev
+        )
+        setShowSealDialog2(false)
       } catch (error) {
-        console.error('保存多印鑑位置失敗:', error)
+        console.error('保存 PDF 頁多印鑑位置失敗:', error)
+        setSnackbar({ open: true, message: '保存失敗，請重試', severity: 'error' })
+        throw error
       }
+      return
+    }
+
+    // 一般圖片：維持既有行為
+    setMultipleSeals(seals)
+    try {
+      await saveMultipleSealsMutation.mutateAsync({
+        imageId: uploadImage2Mutation.data.id,
+        seals: seals
+      })
+      setShowSealDialog2(false)
+    } catch (error) {
+      console.error('保存多印鑑位置失敗:', error)
+      throw error
     }
   }
 
   // 處理清除
   const handleClearImage1 = () => {
     setImage1(null)
+    setImage1TemplatePage(null)
+    setImage1TemplatePageId(null)
+    setImage1PreferredPageId(null)
     setSealDetectionResult1(null)
     setComparisonResults(null)
+    // 清除 PDF 任務結果（模板清除後不應殘留）
+    resetPdfTaskUI()
     lastCompletedCountRef.current = 0
     uploadImage1Mutation.reset()
   }
 
   const handleClearImage2 = () => {
     setImage2(null)
+    setImage2SelectedPage(null)
+    setImage2SelectedPageId(null)
+    setImage2PreferredPageId(null)
     setMultipleSeals([])
+    setPdfPageDetections2(null)
     setCroppedImageIds([])
     setComparisonResults(null)
     lastCompletedCountRef.current = 0
     setLastDetectionMaxSeals(null) // 重置追蹤狀態
+    setPdfTaskUid(null)
+    setPdfTaskStatus(null)
     uploadImage2Mutation.reset()
     // 重置 input value，允許重新選擇文件
     if (image2InputRef.current) {
@@ -575,14 +792,24 @@ function MultiSealTest() {
 
   // 處理編輯圖像1印鑑
   const handleEditImage1Seal = () => {
-    if (uploadImage1Mutation.data?.id) {
+    if (image1EffectiveId) {
       setShowSealDialog1(true)
+    } else if (image1?.is_pdf) {
+      setSnackbar({ open: true, message: '請先等待 PDF 解析完成並選擇模板頁', severity: 'info' })
     }
   }
 
   // 處理編輯圖像2多印鑑
   const handleEditImage2Seals = async () => {
     if (uploadImage2Mutation.data?.id) {
+      if (image2?.is_pdf) {
+        if (!image2SelectedPageId) {
+          setSnackbar({ open: true, message: '請先選擇要編輯的 PDF 頁面', severity: 'info' })
+          return
+        }
+        setShowSealDialog2(true)
+        return
+      }
       // 如果 maxSeals 改變了，重新觸發檢測
       if (lastDetectionMaxSeals !== null && lastDetectionMaxSeals !== maxSeals) {
         setIsDetecting2(true)
@@ -627,10 +854,50 @@ function MultiSealTest() {
     }
   }
 
+  // PDF 全頁比對：image1 模板頁 vs image2 全部頁
+  const handlePdfCompare = async () => {
+    if (!uploadImage1Mutation.data?.id || !uploadImage2Mutation.data?.id) {
+      setSnackbar({ open: true, message: '請先上傳圖像1與圖像2', severity: 'warning' })
+      return
+    }
+    if (!image2?.is_pdf) {
+      setSnackbar({ open: true, message: '圖像2 需要是 PDF 才能使用全頁比對', severity: 'warning' })
+      return
+    }
+    if (!image1EffectiveId || !image1HasSeal) {
+      setSnackbar({ open: true, message: '圖像1 請先選定模板頁並標記印鑑位置', severity: 'warning' })
+      return
+    }
+
+    try {
+      const r = await imageAPI.comparePdf(image1EffectiveId, uploadImage2Mutation.data.id, {
+        maxSeals,
+        threshold,
+        overlapWeight,
+        pixelDiffPenaltyWeight,
+        uniqueRegionPenaltyWeight
+      })
+      setPdfTaskUid(r.task_uid)
+      setPdfTaskStatus({ status: r.status, progress: r.progress, progress_message: r.progress_message })
+      setSnackbar({ open: true, message: `PDF 全頁比對已開始（UID: ${r.task_uid?.substring(0, 8)}...)`, severity: 'info' })
+    } catch (e) {
+      console.error(e)
+      setSnackbar({ open: true, message: `PDF 全頁比對啟動失敗：${e?.response?.data?.detail || e.message}`, severity: 'error' })
+    }
+  }
+
   // 合併處理：保存、裁切、比對
   const handleCropAndCompare = async () => {
     // 1. 驗證前置條件
-    if (!uploadImage1Mutation.data?.id || !image1?.seal_bbox) {
+    if (image1?.is_pdf || image2?.is_pdf) {
+      setSnackbar({
+        open: true,
+        message: 'PDF 請使用「PDF 全頁比對」流程',
+        severity: 'info'
+      })
+      return
+    }
+    if (!uploadImage1Mutation.data?.id || !image1HasSeal) {
       setSnackbar({
         open: true,
         message: '請先上傳並標記圖像1的印鑑位置',
@@ -1055,7 +1322,7 @@ function MultiSealTest() {
             </Typography>
             <Box sx={{ mb: 2 }}>
               <input
-                accept="image/*"
+                accept="image/*,application/pdf,.pdf"
                 style={{ display: 'none' }}
                 id="image1-upload"
                 type="file"
@@ -1104,14 +1371,40 @@ function MultiSealTest() {
             </Box>
             
             <ImagePreview
-              image={image1}
-              label="圖像1預覽"
+              image={image1Effective}
+              label={image1?.is_pdf ? '圖像1（PDF 模板頁）預覽' : '圖像1預覽'}
               onEdit={handleEditImage1Seal}
               showSealIndicator={true}
             />
 
+            {image1?.is_pdf && (
+              <PdfPagePicker
+                pdfImage={image1}
+                preferredPageImageId={image1PreferredPageId}
+                label="模板頁"
+                disabled={uploadImage1Mutation.isPending || isDetecting1}
+                onPageImageLoaded={(pageImg) => {
+                  // 防止舊快取回灌：若後到的資料比目前 state 更舊（updated_at 較早），不要覆寫
+                  setImage1TemplatePage((prev) => {
+                    if (!prev) return pageImg
+                    const prevT = prev?.updated_at ? Date.parse(prev.updated_at) : NaN
+                    const nextT = pageImg?.updated_at ? Date.parse(pageImg.updated_at) : NaN
+                    if (Number.isFinite(prevT) && Number.isFinite(nextT) && nextT < prevT) {
+                      return prev
+                    }
+                    return pageImg
+                  })
+                  setImage1TemplatePageId(pageImg?.id || null)
+                  // 更換模板頁後，舊的 PDF 全頁比對結果已不再適用
+                  if (pdfTaskUid) {
+                    resetPdfTaskUI()
+                  }
+                }}
+              />
+            )}
+
             {/* 編輯印鑑位置按鈕 */}
-            {image1 && (
+            {image1EffectiveId && (
               <Box sx={{ mt: 2 }}>
                 <Button
                   variant="outlined"
@@ -1135,7 +1428,7 @@ function MultiSealTest() {
             <Box sx={{ mb: 2 }}>
               <input
                 ref={image2InputRef}
-                accept="image/*"
+                accept="image/*,application/pdf,.pdf"
                 style={{ display: 'none' }}
                 id="image2-upload"
                 type="file"
@@ -1184,14 +1477,77 @@ function MultiSealTest() {
             </Box>
             
             <MultiSealPreview
-              image={image2}
-              seals={image2?.multiple_seals || multipleSeals || []}
-              label="圖像2預覽"
-              onSealClick={() => setShowSealDialog2(true)}
+              image={image2Effective}
+              seals={image2EffectiveSeals}
+              label={image2?.is_pdf ? '圖像2（PDF 單頁預覽）' : '圖像2預覽'}
+              onSealClick={handleEditImage2Seals}
             />
 
+            {image2?.is_pdf && (
+              <Box sx={{ mt: 2 }}>
+                <Alert severity="info">
+                  圖像2為 PDF（共 {image2.pdf_page_count || image2.pages?.length || 0} 頁）。可先逐頁預覽/手動調整多印鑑框；但「PDF 全頁比對」仍會重新 auto detect。
+                </Alert>
+                <PdfPagePicker
+                  pdfImage={image2}
+                  preferredPageImageId={image2PreferredPageId}
+                  label="預覽/編輯頁"
+                  disabled={uploadImage2Mutation.isPending || isDetecting2}
+                  onPageImageLoaded={(pageImg) => {
+                    setImage2SelectedPage(pageImg)
+                    setImage2SelectedPageId(pageImg?.id || null)
+                  }}
+                />
+                {Array.isArray(pdfPageDetections2) && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      PDF 逐頁偵測摘要：
+                    </Typography>
+                    <Box sx={{ maxHeight: 180, overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}>
+                      {pdfPageDetections2.map(p => (
+                        <Typography key={`${p.page_index}-${p.page_image_id}`} variant="caption" sx={{ display: 'block' }}>
+                          第 {p.page_index} 頁：{p.count} 個 {p.detected ? '' : '(未偵測到)'}
+                        </Typography>
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+              </Box>
+            )}
+
             {/* 操作按鈕 */}
-            {multipleSeals.length > 0 && (
+            {image2?.is_pdf ? (
+              <Box sx={{ mt: 2 }}>
+                <Button
+                  variant="outlined"
+                  fullWidth
+                  onClick={handleEditImage2Seals}
+                  disabled={!image2SelectedPageId}
+                  sx={{ mb: 1 }}
+                >
+                  編輯此頁多印鑑框
+                </Button>
+                <Button
+                  variant="contained"
+                  fullWidth
+                  onClick={handlePdfCompare}
+                  disabled={!!pdfTaskUid && pdfTaskStatus?.status !== 'completed' && pdfTaskStatus?.status !== 'failed'}
+                >
+                  開始 PDF 全頁比對
+                </Button>
+                {pdfTaskStatus && (
+                  <Alert severity={pdfTaskStatus.status === 'failed' ? 'error' : 'info'} sx={{ mt: 1 }}>
+                    狀態：{pdfTaskStatus.status}{pdfTaskStatus.progress_message ? ` - ${pdfTaskStatus.progress_message}` : ''}
+                  </Alert>
+                )}
+                {pdfTaskStatus?.status === 'processing' && pdfTaskStatus.progress >= 100 && 
+                 (!polledPdfTaskResult?.results_by_page || polledPdfTaskResult.results_by_page.length === 0) && (
+                  <Alert severity="warning" sx={{ mt: 1 }}>
+                    任務進度已達 100%，但結果尚未完成。這可能是任務處理異常，請重新執行「開始 PDF 全頁比對」。
+                  </Alert>
+                )}
+              </Box>
+            ) : multipleSeals.length > 0 && (
               <Box sx={{ mt: 2 }}>
                 <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
                   <Button
@@ -1207,7 +1563,7 @@ function MultiSealTest() {
                     onClick={handleCropAndCompare}
                     disabled={
                       !uploadImage1Mutation.data?.id || 
-                      !image1?.seal_bbox ||
+                      !image1HasSeal ||
                       saveMultipleSealsMutation.isPending ||
                       cropSealsMutation.isPending ||
                       compareMutation.isPending ||
@@ -1384,7 +1740,7 @@ function MultiSealTest() {
         <Box sx={{ mt: 4 }}>
           <MultiSealComparisonResults 
             results={comparisonResults}
-            image1Id={uploadImage1Mutation.data?.id}
+            image1Id={image1EffectiveId}
             similarityRange={null}
             threshold={threshold}
             overlapWeight={overlapWeight}
@@ -1392,6 +1748,122 @@ function MultiSealTest() {
             uniqueRegionPenaltyWeight={uniqueRegionPenaltyWeight}
             calculateMaskBasedSimilarity={calculateMaskBasedSimilarity}
           />
+        </Box>
+      )}
+
+      {/* 顯示 PDF 全頁比對結果（攤平顯示） */}
+      {image2?.is_pdf && polledPdfTaskResult?.results_by_page &&
+        (polledPdfTaskResult.status === 'completed' ||
+          (polledPdfTaskResult.status === 'processing' &&
+            pdfTaskStatus?.progress >= 100 &&
+            polledPdfTaskResult.results_by_page.length > 0)) && (
+        <Box sx={{ mt: 4 }}>
+          {polledPdfTaskResult.status === 'processing' && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              任務處理完成，結果已可用（狀態更新中）
+            </Alert>
+          )}
+
+          <Typography variant="subtitle1" gutterBottom>
+            PDF 比對結果
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Job: {pdfTaskUid || polledPdfTaskResult?.task_uid || '—'}
+          </Typography>
+
+          <Box sx={{ display: 'flex', gap: 2, mt: 2, flexWrap: 'wrap' }}>
+            <TextField
+              size="small"
+              label="相似度下限"
+              type="number"
+              inputProps={{ min: 0, max: 1, step: 0.01 }}
+              value={pdfSimilarityMin}
+              onChange={(e) => setPdfSimilarityMin(e.target.value)}
+              sx={{ width: 180 }}
+            />
+            <TextField
+              size="small"
+              label="相似度上限"
+              type="number"
+              inputProps={{ min: 0, max: 1, step: 0.01 }}
+              value={pdfSimilarityMax}
+              onChange={(e) => setPdfSimilarityMax(e.target.value)}
+              sx={{ width: 180 }}
+            />
+          </Box>
+
+          {(() => {
+            const rawPages = Array.isArray(polledPdfTaskResult?.results_by_page)
+              ? polledPdfTaskResult.results_by_page
+              : []
+
+            const pages = [...rawPages].sort((a, b) => (a.page_index || 0) - (b.page_index || 0))
+
+            const minVal = pdfSimilarityMin === '' ? null : Number(pdfSimilarityMin)
+            const maxVal = pdfSimilarityMax === '' ? null : Number(pdfSimilarityMax)
+            const hasMin = Number.isFinite(minVal)
+            const hasMax = Number.isFinite(maxVal)
+
+            const scoreOf = (x) => (x?.mask_based_similarity ?? x?.structure_similarity ?? x?.similarity ?? 0)
+            const normalizeResults = (page) => (
+              Array.isArray(page?.results)
+                ? page.results
+                : (page?.results && Array.isArray(page.results.results) ? page.results.results : [])
+            )
+            const inRange = (score) => {
+              if (hasMin && score < minVal) return false
+              if (hasMax && score > maxVal) return false
+              return true
+            }
+
+            const hasLegacyPayload = pages.some(p => !Array.isArray(p?.results) && p?.results && Array.isArray(p.results.results))
+
+            return (
+              <Box sx={{ mt: 2 }}>
+                {hasLegacyPayload && (
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    你正在查看舊版 PDF 任務結果（results 結構較舊）。若顯示不完整，請重新執行一次「開始 PDF 全頁比對」以產生新版結果。
+                  </Alert>
+                )}
+
+                {pages.map((p) => {
+                  const normalized = normalizeResults(p)
+                  const filtered = normalized.filter(x => inRange(scoreOf(x)))
+                  const best = normalized.length > 0 ? Math.max(...normalized.map(x => scoreOf(x))) : 0
+                  const suffix = p.detected
+                    ? `（${p.count} 個，最佳 ${(best * 100).toFixed(1)}%）`
+                    : '（未偵測到）'
+
+                  return (
+                    <Box key={`${p.page_index}-${p.page_image_id}`} sx={{ mt: 3 }}>
+                      <Typography variant="subtitle2">
+                        第 {p.page_index} 頁 {suffix}
+                      </Typography>
+
+                      {filtered.length > 0 ? (
+                        <Box sx={{ mt: 2 }}>
+                          <MultiSealComparisonResults
+                            results={filtered}
+                            image1Id={image1EffectiveId}
+                            similarityRange={null}
+                            threshold={threshold}
+                            overlapWeight={overlapWeight}
+                            pixelDiffPenaltyWeight={pixelDiffPenaltyWeight}
+                            uniqueRegionPenaltyWeight={uniqueRegionPenaltyWeight}
+                            calculateMaskBasedSimilarity={calculateMaskBasedSimilarity}
+                          />
+                        </Box>
+                      ) : (
+                        <Alert severity="info" sx={{ mt: 2 }}>
+                          第 {p.page_index} 頁沒有比對結果：{p.reason || '未檢測到印鑑或在目前相似度區間下無符合結果'}
+                        </Alert>
+                      )}
+                    </Box>
+                  )
+                })}
+              </Box>
+            )
+          })()}
         </Box>
       )}
 
@@ -1415,11 +1887,15 @@ function MultiSealTest() {
       >
         <DialogTitle>調整圖像1印鑑位置</DialogTitle>
         <DialogContent>
-          {uploadImage1Mutation.data?.id && (
+          {image1EffectiveId && (
             <SealDetectionBox
-              imageId={uploadImage1Mutation.data.id}
-              initialBbox={image1?.seal_bbox || sealDetectionResult1?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
-              initialCenter={image1?.seal_center || sealDetectionResult1?.center || uploadImage1Mutation.data?.seal_center || null}
+              // 重要：避免 Dialog 關閉/重開或保存後 state 沒刷新而顯示舊 bbox
+              // - image1Effective.updated_at 會在 PUT /seal-location 後更新
+              // - 以 key 強制 remount，確保初始值一定來自最新 props
+              key={`${image1EffectiveId}:${image1Effective?.updated_at || ''}`}
+              imageId={image1EffectiveId}
+              initialBbox={image1Effective?.seal_bbox || sealDetectionResult1?.bbox || null}
+              initialCenter={image1Effective?.seal_center || sealDetectionResult1?.center || null}
               onConfirm={handleSealConfirm1}
               onCancel={() => setShowSealDialog1(false)}
             />
@@ -1437,10 +1913,10 @@ function MultiSealTest() {
       >
         <DialogTitle>調整圖像2多印鑑位置</DialogTitle>
         <DialogContent>
-          {uploadImage2Mutation.data?.id && (
+          {(image2?.is_pdf ? image2SelectedPageId : uploadImage2Mutation.data?.id) && (
             <MultiSealDetectionBox
-              imageId={uploadImage2Mutation.data.id}
-              initialSeals={image2?.multiple_seals || multipleSeals || []}
+              imageId={image2?.is_pdf ? image2SelectedPageId : uploadImage2Mutation.data.id}
+              initialSeals={image2EffectiveSeals}
               onConfirm={handleMultipleSealsConfirm}
               onCancel={() => setShowSealDialog2(false)}
             />

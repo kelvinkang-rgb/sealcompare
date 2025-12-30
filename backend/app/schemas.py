@@ -33,7 +33,26 @@ class ImageResponse(ImageBase):
     seal_bbox: Optional[Dict[str, int]] = None
     seal_center: Optional[Dict[str, Any]] = None
     multiple_seals: Optional[list[Dict[str, Any]]] = None  # 多印鑑檢測結果（測試功能）
+    # PDF 相關（B：PDF 任務 + 分頁）
+    is_pdf: bool = False
+    pdf_page_count: Optional[int] = None
+    source_pdf_id: Optional[UUID] = None
+    page_index: Optional[int] = None
+    pages: Optional[list["PdfPageInfo"]] = None
     
+    class Config:
+        from_attributes = True
+
+
+class PdfPageInfo(BaseModel):
+    """PDF 分頁圖像資訊（用於在 UI 展開頁列表）"""
+    id: UUID
+    page_index: int
+    filename: str
+    file_path: str
+    mime_type: Optional[str] = None
+    created_at: datetime
+
     class Config:
         from_attributes = True
 
@@ -45,6 +64,9 @@ class SealDetectionResponse(BaseModel):
     bbox: Optional[Dict[str, int]] = None
     center: Optional[Dict[str, Any]] = None
     reason: Optional[str] = None
+    # PDF：若 image_id 是 PDF，本次最佳偵測所在頁
+    page_image_id: Optional[UUID] = None
+    page_index: Optional[int] = None
 
 
 class SealLocationUpdate(BaseModel):
@@ -67,6 +89,19 @@ class MultipleSealsDetectionResponse(BaseModel):
     seals: list[SealInfo] = Field(default_factory=list, description="檢測到的印鑑列表")
     count: int = Field(0, description="檢測到的印鑑數量")
     reason: Optional[str] = Field(None, description="失敗原因")
+    # PDF：逐頁結果（B 模式）
+    pages: Optional[list["PdfPageSealsResult"]] = Field(default=None, description="PDF 每頁的偵測結果")
+    total_count: Optional[int] = Field(default=None, description="PDF 全部頁總數量（count 的總和）")
+
+
+class PdfPageSealsResult(BaseModel):
+    """PDF 單頁多印鑑偵測結果"""
+    page_index: int
+    page_image_id: UUID
+    detected: bool
+    seals: list[SealInfo] = Field(default_factory=list)
+    count: int = 0
+    reason: Optional[str] = None
 
 
 class MultipleSealsSaveRequest(BaseModel):
@@ -181,6 +216,59 @@ class MultiSealComparisonTaskStatusResponse(BaseModel):
     success_count: Optional[int] = None
     error: Optional[str] = None
     created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+# ========= PDF 比對（B 模式：PDF 任務 + 分頁） =========
+class PdfCompareRequest(BaseModel):
+    """PDF 比對請求：image1 第1頁作模板，比對 image2 全部頁"""
+    image2_pdf_id: UUID = Field(..., description="圖像2 的 PDF Image ID")
+    max_seals: int = Field(160, ge=1, le=160, description="每頁最多偵測印鑑數")
+    margin: int = Field(10, ge=0, le=50, description="裁切邊距（像素）")
+    threshold: Optional[float] = Field(0.83, ge=0.0, le=1.0, description="相似度閾值")
+    overlap_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0)
+    pixel_diff_penalty_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0)
+    unique_region_penalty_weight: Optional[float] = Field(0.2, ge=0.0, le=1.0)
+    rotation_range: Optional[float] = Field(15.0, ge=0.0, le=180.0)
+    translation_range: Optional[int] = Field(100, ge=0, le=1000)
+
+
+class PdfCompareTaskResponse(BaseModel):
+    task_uid: str
+    image1_id: UUID
+    image2_pdf_id: UUID
+    status: str
+    progress: float = 0.0
+    progress_message: Optional[str] = None
+    pages_total: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+
+class PdfComparePageResult(BaseModel):
+    page_index: int
+    page_image_id: UUID
+    detected: bool
+    count: int
+    results: list[Dict[str, Any]] = Field(default_factory=list)
+    reason: Optional[str] = None
+
+
+class PdfCompareTaskStatusResponse(BaseModel):
+    task_uid: str
+    status: str
+    progress: float = 0.0
+    progress_message: Optional[str] = None
+    pages_total: Optional[int] = None
+    pages_done: Optional[int] = None
+
+
+class PdfCompareTaskResultResponse(BaseModel):
+    task_uid: str
+    status: str
+    pages_total: Optional[int] = None
+    pages_done: Optional[int] = None
+    results_by_page: list[PdfComparePageResult] = Field(default_factory=list)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 

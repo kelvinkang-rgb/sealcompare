@@ -5,7 +5,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List, Dict
+from typing import List, Dict, Any
 from uuid import UUID
 from pathlib import Path
 import time
@@ -28,7 +28,11 @@ from app.schemas import (
     SealComparisonResult,
     RotatedSealsDetectionResponse,
     MultiSealComparisonTaskResponse,
-    MultiSealComparisonTaskStatusResponse
+    MultiSealComparisonTaskStatusResponse,
+    PdfCompareRequest,
+    PdfCompareTaskResponse,
+    PdfCompareTaskStatusResponse,
+    PdfCompareTaskResultResponse
 )
 from app.services.image_service import ImageService
 from app.config import settings
@@ -38,6 +42,32 @@ from app.models import ComparisonStatus, MultiSealComparisonTask
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/images", tags=["images"])
+
+
+def serialize_uuids(obj: Any) -> Any:
+    """
+    遞歸地將對象中的所有 UUID 對象轉換為字符串，以便 JSON 序列化
+    
+    Args:
+        obj: 要處理的對象（可以是 dict, list, UUID, 或其他類型）
+        
+    Returns:
+        轉換後的對象
+    """
+    if isinstance(obj, UUID):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {key: serialize_uuids(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_uuids(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(serialize_uuids(item) for item in obj)
+    else:
+        return obj
+
+
+def _is_pdf_image(db_image) -> bool:
+    return bool(getattr(db_image, "is_pdf", False) or (getattr(db_image, "mime_type", "") == "application/pdf"))
 
 
 @router.post("/upload", response_model=ImageResponse, status_code=201)
@@ -66,6 +96,22 @@ async def upload_image(
     
     try:
         image = image_service.create_image(file)
+        # PDF：回傳頁資訊（B 模式）
+        if getattr(image, "is_pdf", False):
+            pages = image_service.get_pdf_pages(image.id)
+            resp = ImageResponse.model_validate(image).model_dump()
+            resp["pages"] = [
+                {
+                    "id": p.id,
+                    "page_index": p.page_index,
+                    "filename": p.filename,
+                    "file_path": p.file_path,
+                    "mime_type": p.mime_type,
+                    "created_at": p.created_at,
+                }
+                for p in pages
+            ]
+            return resp
         return image
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"上傳失敗: {str(e)}")
@@ -87,6 +133,21 @@ def get_image(
     if not image:
         raise HTTPException(status_code=404, detail="圖像不存在")
     
+    if getattr(image, "is_pdf", False):
+        pages = image_service.get_pdf_pages(image.id)
+        resp = ImageResponse.model_validate(image).model_dump()
+        resp["pages"] = [
+            {
+                "id": p.id,
+                "page_index": p.page_index,
+                "filename": p.filename,
+                "file_path": p.file_path,
+                "mime_type": p.mime_type,
+                "created_at": p.created_at,
+            }
+            for p in pages
+        ]
+        return resp
     return image
 
 
@@ -151,8 +212,46 @@ def detect_seal(
     """
     image_service = ImageService(db)
     try:
-        result = image_service.detect_seal(image_id)
-        return result
+        img = image_service.get_image(image_id)
+        if not img:
+            raise HTTPException(status_code=404, detail="圖像不存在")
+
+        # PDF：逐頁偵測並回傳最佳頁（confidence 最大者）
+        if _is_pdf_image(img):
+            pages = image_service.get_pdf_pages(img.id)
+            best_result = None
+            best_conf = -1.0
+            best_page = None
+
+            for p in pages:
+                r = image_service.detect_seal(p.id)
+                if not r or not r.get("detected"):
+                    continue
+                conf = float(r.get("confidence") or 0.0)
+                if conf > best_conf:
+                    best_conf = conf
+                    best_result = r
+                    best_page = p
+
+            if best_result and best_page:
+                return {
+                    **best_result,
+                    "page_image_id": best_page.id,
+                    "page_index": int(best_page.page_index or 0),
+                }
+
+            return {
+                "detected": False,
+                "confidence": 0.0,
+                "bbox": None,
+                "center": None,
+                "reason": "未檢測到印鑑",
+                "page_image_id": None,
+                "page_index": None,
+            }
+
+        # 一般圖片：沿用既有行為
+        return image_service.detect_seal(image_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -202,6 +301,39 @@ def detect_multiple_seals(
     """
     image_service = ImageService(db)
     try:
+        img = image_service.get_image(image_id)
+        if not img:
+            raise HTTPException(status_code=404, detail="圖像不存在")
+
+        # PDF：逐頁偵測（B 模式）
+        if getattr(img, "is_pdf", False):
+            pages = image_service.get_pdf_pages(img.id)
+            page_results = []
+            total = 0
+            any_detected = False
+            for p in pages:
+                r = image_service.detect_multiple_seals(p.id, max_seals=max_seals)
+                c = int(r.get("count", 0) or 0)
+                total += c
+                if r.get("detected"):
+                    any_detected = True
+                page_results.append({
+                    "page_index": int(p.page_index or 0),
+                    "page_image_id": p.id,
+                    "detected": bool(r.get("detected")),
+                    "seals": r.get("seals") or [],
+                    "count": c,
+                    "reason": r.get("reason"),
+                })
+            return {
+                "detected": any_detected,
+                "seals": [],
+                "count": total,
+                "total_count": total,
+                "pages": page_results,
+                "reason": None if any_detected else "未檢測到印鑑",
+            }
+
         result = image_service.detect_multiple_seals(image_id, max_seals=max_seals)
         return result
     except HTTPException:
@@ -683,6 +815,325 @@ def compare_image1_with_seals(
         created_at=task.created_at,
         started_at=task.started_at,
         completed_at=task.completed_at
+    )
+
+
+@router.post("/{image1_id}/compare-pdf", response_model=PdfCompareTaskResponse)
+def compare_image1_with_pdf(
+    image1_id: UUID,
+    request: PdfCompareRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    PDF 全頁比對（B 模式）：
+    - image1：
+      - 若傳入的是「PDF root image」，會取第 1 頁作模板（並嘗試自動 detect-seal）
+      - 若傳入的是「PDF page image」（source_pdf_id 不為空），就以該頁作為模板
+    - image2：PDF 的每一頁都做多印鑑偵測 → 裁切 → 與 image1 模板比對
+    """
+    image_service = ImageService(db)
+
+    # 解析 image1 template（若是 PDF，取第 1 頁）
+    image1 = image_service.get_image(image1_id)
+    if not image1:
+        raise HTTPException(status_code=404, detail="圖像1不存在")
+    template_id = image1_id
+    if _is_pdf_image(image1):
+        pages1 = image_service.get_pdf_pages(image1.id)
+        if not pages1:
+            raise HTTPException(status_code=400, detail="圖像1 PDF 沒有分頁")
+        template_id = pages1[0].id
+
+    # image2 必須是 PDF
+    image2_pdf = image_service.get_image(request.image2_pdf_id)
+    if not image2_pdf:
+        raise HTTPException(status_code=404, detail="圖像2 PDF 不存在")
+    if not _is_pdf_image(image2_pdf):
+        raise HTTPException(status_code=400, detail="圖像2 必須是 PDF")
+
+    pages2 = image_service.get_pdf_pages(image2_pdf.id)
+    pages_total = len(pages2)
+
+    # 建立任務記錄（沿用 MultiSealComparisonTask 作為任務追蹤容器）
+    import uuid as uuid_lib
+    task_uid = str(uuid_lib.uuid4())
+    task = MultiSealComparisonTask(
+        task_uid=task_uid,
+        image1_id=template_id,
+        status=ComparisonStatus.PENDING,
+        seal_image_ids=[],
+        threshold=request.threshold,
+        similarity_ssim_weight=0.5,
+        similarity_template_weight=0.35,
+        pixel_similarity_weight=0.1,
+        histogram_similarity_weight=0.05,
+        progress=0.0,
+        progress_message="PDF 任務已建立",
+        total_count=pages_total,
+        success_count=0
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    # 將 request 參數提取為局部變數，避免閉包問題
+    image2_pdf_id_val = request.image2_pdf_id
+    max_seals_val = request.max_seals
+    margin_val = request.margin
+    threshold_val = request.threshold
+    overlap_weight_val = request.overlap_weight
+    pixel_diff_penalty_weight_val = request.pixel_diff_penalty_weight
+    unique_region_penalty_weight_val = request.unique_region_penalty_weight
+    rotation_range_val = request.rotation_range
+    translation_range_val = request.translation_range
+
+    def process_pdf_task(task_uid_str: str):
+        db_task = SessionLocal()
+        logger = logging.getLogger(__name__)
+        try:
+            logger.info(f"[PDF任務] 開始處理任務 {task_uid_str}")
+            svc = ImageService(db_task)
+            task_record = svc.get_multi_seal_comparison_task_or_raise(task_uid_str)
+
+            # 嘗試確保 template 有 seal_bbox（若未標記，先自動 detect）
+            try:
+                tmpl = svc.get_image(task_record.image1_id)
+                if tmpl and not tmpl.seal_bbox:
+                    logger.info(f"[PDF任務] 模板 {task_record.image1_id} 未標記印鑑，嘗試自動偵測")
+                    svc.detect_seal(task_record.image1_id)
+            except Exception as e:
+                logger.warning(f"[PDF任務] 模板印鑑偵測失敗（允許繼續）: {str(e)}")
+                # 允許使用者已手動標記或後續報錯
+                pass
+
+            task_record.status = ComparisonStatus.PROCESSING
+            task_record.started_at = datetime.utcnow()
+            task_record.progress = 0.0
+            task_record.progress_message = "開始處理 PDF 全頁比對"
+            db_task.commit()
+
+            # 重新取 image2_pdf/pages（使用局部變數，避免閉包引用）
+            pdf = svc.get_image(image2_pdf_id_val)
+            if not pdf:
+                raise ValueError(f"PDF 圖像 {image2_pdf_id_val} 不存在")
+            pages = svc.get_pdf_pages(pdf.id) if pdf else []
+            pages_total_inner = len(pages)
+            logger.info(f"[PDF任務] 找到 {pages_total_inner} 頁需要處理")
+            results_by_page = []
+
+            done = 0
+            for p in pages:
+                try:
+                    logger.info(f"[PDF任務] 處理第 {p.page_index} 頁 (page_image_id={p.id})")
+                    det = svc.detect_multiple_seals(p.id, max_seals=max_seals_val)
+                    seals = det.get("seals") or []
+                    count = int(det.get("count", 0) or 0)
+                    if det.get("detected") and seals:
+                        logger.info(f"[PDF任務] 第 {p.page_index} 頁偵測到 {count} 個印鑑")
+                        # 裁切
+                        cropped_ids = svc.crop_seals(p.id, seals, margin=margin_val)
+                        # 比對
+                        page_payload = svc.compare_image1_with_seals(
+                            image1_id=task_record.image1_id,
+                            seal_image_ids=cropped_ids,
+                            threshold=threshold_val,
+                            overlap_weight=overlap_weight_val,
+                            pixel_diff_penalty_weight=pixel_diff_penalty_weight_val,
+                            unique_region_penalty_weight=unique_region_penalty_weight_val,
+                            rotation_range=rotation_range_val,
+                            translation_range=translation_range_val
+                        )
+                        # compare_image1_with_seals 回傳 {results: [...], task_timing: {...}}
+                        page_results = page_payload.get("results") if isinstance(page_payload, dict) else page_payload
+                        if not isinstance(page_results, list):
+                            logger.warning(f"[PDF任務] 第 {p.page_index} 頁比對結果格式異常: {type(page_results)}")
+                            page_results = []
+                        # 將結果中的所有 UUID 對象轉換為字符串，以便 JSON 序列化
+                        page_results_serialized = serialize_uuids(page_results)
+                        logger.info(f"[PDF任務] 第 {p.page_index} 頁比對完成，結果數量: {len(page_results_serialized)}")
+                        results_by_page.append({
+                            "page_index": int(p.page_index or 0),
+                            "page_image_id": str(p.id),
+                            "detected": True,
+                            "count": count,
+                            "results": page_results_serialized or [],
+                            "reason": None
+                        })
+                    else:
+                        logger.info(f"[PDF任務] 第 {p.page_index} 頁未偵測到印鑑: {det.get('reason', '未知原因')}")
+                        results_by_page.append({
+                            "page_index": int(p.page_index or 0),
+                            "page_image_id": str(p.id),
+                            "detected": False,
+                            "count": 0,
+                            "results": [],
+                            "reason": det.get("reason") or "未檢測到印鑑"
+                        })
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"[PDF任務] 第 {p.page_index} 頁處理失敗: {error_msg}", exc_info=True)
+                    results_by_page.append({
+                        "page_index": int(p.page_index or 0),
+                        "page_image_id": str(p.id),
+                        "detected": False,
+                        "count": 0,
+                        "results": [],
+                        "reason": error_msg
+                    })
+
+                done += 1
+                task_record.progress = (done / max(1, pages_total_inner)) * 100.0
+                task_record.progress_message = f"PDF 比對進度：{done}/{pages_total_inner} 頁"
+                task_record.success_count = done
+                # 增量落盤：避免最後一次 commit 失敗導致 progress=100 但 results 空/NULL
+                try:
+                    task_record.results = serialize_uuids({
+                        "mode": "pdf",
+                        "image2_pdf_id": str(image2_pdf_id_val),
+                        "template_image_id": str(task_record.image1_id),
+                        "pages_total": pages_total_inner,
+                        "results_by_page": results_by_page,
+                    })
+                    db_task.commit()
+                except Exception as e_commit_page:
+                    logger.error(
+                        f"[PDF任務] 第 {p.page_index} 頁增量寫入失敗: {str(e_commit_page)}",
+                        exc_info=True
+                    )
+                    db_task.rollback()
+                    raise
+
+            logger.info(f"[PDF任務] 所有頁面處理完成，準備寫入結果 (共 {len(results_by_page)} 頁)")
+            
+            # 驗證結果不為空
+            if not results_by_page:
+                raise ValueError("results_by_page 為空，無法完成任務")
+            
+            # 準備結果數據
+            results_data = serialize_uuids({
+                "mode": "pdf",
+                "image2_pdf_id": str(image2_pdf_id_val),
+                "template_image_id": str(task_record.image1_id),
+                "pages_total": pages_total_inner,
+                "results_by_page": results_by_page,
+            })
+            
+            # 寫入結果和更新狀態（在同一個事務中，帶重試機制）
+            max_retries = 2
+            retry_count = 0
+            committed = False
+            
+            while retry_count < max_retries and not committed:
+                try:
+                    # 如果重試，需要重新獲取 task_record（避免 stale 對象）
+                    if retry_count > 0:
+                        db_task.rollback()
+                        db_task.refresh(task_record)
+                        logger.info(f"[PDF任務] 重試寫入結果 (第 {retry_count} 次)")
+                    
+                    task_record.results = results_data
+                    task_record.status = ComparisonStatus.COMPLETED
+                    task_record.completed_at = datetime.utcnow()
+                    task_record.progress = 100.0
+                    task_record.progress_message = "PDF 全頁比對完成"
+                    db_task.commit()
+                    committed = True
+                    logger.info(f"[PDF任務] 任務 {task_uid_str} 完成，結果已寫入資料庫")
+                except Exception as commit_error:
+                    retry_count += 1
+                    logger.error(f"[PDF任務] 寫入結果失敗 (嘗試 {retry_count}/{max_retries}): {str(commit_error)}", exc_info=True)
+                    db_task.rollback()
+                    if retry_count >= max_retries:
+                        raise Exception(f"寫入結果失敗，重試 {max_retries} 次後仍失敗: {str(commit_error)}")
+        except Exception as e:
+            error_msg = str(e)
+            error_trace = traceback.format_exc()
+            logger.error(f"[PDF任務] 任務 {task_uid_str} 處理失敗: {error_msg}", exc_info=True)
+            try:
+                # 若前面 flush/commit 失敗，session 可能處於 PendingRollback 狀態
+                db_task.rollback()
+                task_record = db_task.query(MultiSealComparisonTask).filter(MultiSealComparisonTask.task_uid == task_uid_str).first()
+                if task_record:
+                    task_record.status = ComparisonStatus.FAILED
+                    task_record.error = error_msg
+                    task_record.error_trace = error_trace
+                    task_record.completed_at = datetime.utcnow()
+                    db_task.commit()
+                    logger.info(f"[PDF任務] 任務 {task_uid_str} 狀態已更新為 FAILED")
+            except Exception as inner_e:
+                logger.error(f"[PDF任務] 更新任務狀態失敗: {str(inner_e)}", exc_info=True)
+        finally:
+            db_task.close()
+
+    background_tasks.add_task(process_pdf_task, task.task_uid)
+
+    return PdfCompareTaskResponse(
+        task_uid=task.task_uid,
+        image1_id=template_id,
+        image2_pdf_id=request.image2_pdf_id,
+        status=task.status.value,
+        progress=float(task.progress or 0.0),
+        progress_message=task.progress_message,
+        pages_total=pages_total,
+        created_at=task.created_at,
+    )
+
+
+@router.get("/pdf-tasks/{task_uid}/status", response_model=PdfCompareTaskStatusResponse)
+def get_pdf_task_status(task_uid: str, db: Session = Depends(get_db)):
+    svc = ImageService(db)
+    task = svc.get_multi_seal_comparison_task_or_raise(task_uid)
+    pages_total = task.total_count
+    pages_done = task.success_count
+    return PdfCompareTaskStatusResponse(
+        task_uid=task.task_uid,
+        status=task.status.value,
+        progress=float(task.progress or 0.0),
+        progress_message=task.progress_message,
+        pages_total=pages_total,
+        pages_done=pages_done,
+    )
+
+
+@router.get("/pdf-tasks/{task_uid}", response_model=PdfCompareTaskResultResponse)
+def get_pdf_task_result(task_uid: str, db: Session = Depends(get_db)):
+    svc = ImageService(db)
+    task = svc.get_multi_seal_comparison_task_or_raise(task_uid)
+    payload = task.results or {}
+    results_by_page = payload.get("results_by_page") or []
+    
+    # 如果任務狀態是 processing 但進度為 100% 且有結果，視為已完成（僅在響應中，不修改資料庫）
+    effective_status = task.status.value
+    if (task.status == ComparisonStatus.PROCESSING and 
+        task.progress is not None and 
+        task.progress >= 100.0 and 
+        results_by_page):
+        effective_status = "completed"
+        logger.info(f"[PDF任務] 任務 {task_uid} 狀態為 processing 但結果已存在，視為 completed")
+    
+    # 正規化 page_image_id -> UUID 讓 Pydantic 可解析
+    normalized = []
+    for r in results_by_page:
+        try:
+            normalized.append({
+                "page_index": r.get("page_index", 0),
+                "page_image_id": r.get("page_image_id"),
+                "detected": bool(r.get("detected")),
+                "count": int(r.get("count", 0) or 0),
+                "results": r.get("results") or [],
+                "reason": r.get("reason"),
+            })
+        except Exception:
+            continue
+    return PdfCompareTaskResultResponse(
+        task_uid=task.task_uid,
+        status=effective_status,  # 使用有效狀態
+        pages_total=payload.get("pages_total") or task.total_count,
+        pages_done=task.success_count,
+        results_by_page=normalized,
+        started_at=task.started_at,
+        completed_at=task.completed_at,
     )
 
 

@@ -104,6 +104,56 @@ def add_missing_columns():
         except Exception as e:
             print(f"添加 multiple_seals 欄位時出錯（可能已存在）: {e}")
             conn.rollback()
+
+        # PDF 相關欄位（B 模式：PDF 任務 + 分頁）
+        try:
+            conn.execute(text("""
+                ALTER TABLE images
+                ADD COLUMN IF NOT EXISTS is_pdf BOOLEAN DEFAULT FALSE NOT NULL
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 is_pdf 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+
+        try:
+            conn.execute(text("""
+                ALTER TABLE images
+                ADD COLUMN IF NOT EXISTS pdf_page_count INTEGER
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 pdf_page_count 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+
+        try:
+            conn.execute(text("""
+                ALTER TABLE images
+                ADD COLUMN IF NOT EXISTS source_pdf_id UUID REFERENCES images(id)
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 source_pdf_id 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+
+        try:
+            conn.execute(text("""
+                ALTER TABLE images
+                ADD COLUMN IF NOT EXISTS page_index INTEGER
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"添加 page_index 欄位時出錯（可能已存在）: {e}")
+            conn.rollback()
+
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_images_source_pdf_id ON images(source_pdf_id)
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"創建 idx_images_source_pdf_id 索引時出錯（可能已存在）: {e}")
+            conn.rollback()
         
         # 創建多印鑑比對任務表
         try:

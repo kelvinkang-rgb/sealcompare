@@ -48,10 +48,21 @@ class Image(Base):
     
     # 多印鑑檢測相關（測試功能）
     multiple_seals = Column(JSON, nullable=True)  # [{"bbox": {...}, "center": {...}, "confidence": float}, ...]
+
+    # PDF 相關（B 模式：PDF 任務 + 分頁）
+    # - PDF 本體：is_pdf=True, pdf_page_count 有值
+    # - PDF 分頁圖：source_pdf_id 指向 PDF Image，page_index 表示頁序（1-based）
+    is_pdf = Column(Boolean, default=False, nullable=False)
+    pdf_page_count = Column(Integer, nullable=True)
+    source_pdf_id = Column(UUID(as_uuid=True), ForeignKey("images.id"), nullable=True)
+    page_index = Column(Integer, nullable=True)
     
     # 關係
     comparisons_as_image1 = relationship("Comparison", foreign_keys="Comparison.image1_id", back_populates="image1")
     comparisons_as_image2 = relationship("Comparison", foreign_keys="Comparison.image2_id", back_populates="image2")
+
+    # 自關聯：PDF 與 pages（避免前端/Schema recursion，這裡只做關聯方便查詢）
+    source_pdf = relationship("Image", remote_side=[id], foreign_keys=[source_pdf_id], backref="pdf_pages")
 
 
 class Comparison(Base):

@@ -95,6 +95,41 @@ export const imageAPI = {
     })
     return response.data // 返回任務信息，包含 task_uid
   },
+
+  // PDF 全頁比對（B 模式）
+  comparePdf: async (image1Id, image2PdfId, {
+    maxSeals = 160,
+    margin = 10,
+    threshold = 0.83,
+    overlapWeight = 0.5,
+    pixelDiffPenaltyWeight = 0.3,
+    uniqueRegionPenaltyWeight = 0.2,
+    rotationRange = 15.0,
+    translationRange = 100
+  } = {}) => {
+    const response = await api.post(`/images/${image1Id}/compare-pdf`, {
+      image2_pdf_id: image2PdfId,
+      max_seals: maxSeals,
+      margin,
+      threshold,
+      overlap_weight: overlapWeight,
+      pixel_diff_penalty_weight: pixelDiffPenaltyWeight,
+      unique_region_penalty_weight: uniqueRegionPenaltyWeight,
+      rotation_range: rotationRange,
+      translation_range: translationRange
+    })
+    return response.data
+  },
+
+  getPdfTaskStatus: async (taskUid) => {
+    const response = await api.get(`/images/pdf-tasks/${taskUid}/status`)
+    return response.data
+  },
+
+  getPdfTaskResult: async (taskUid) => {
+    const response = await api.get(`/images/pdf-tasks/${taskUid}`)
+    return response.data
+  },
   
   // 查詢任務狀態
   getTaskStatus: async (taskUid) => {

@@ -16,6 +16,8 @@ function MultiSealDetectionBox({ imageId, initialSeals = [], onConfirm, onCancel
   const [dragStart, setDragStart] = useState({ x: 0, y: 0, sealIndex: null, bbox: null })
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
   const dragStateRef = useRef({ isDragging: false, dragType: null, dragStart: null, scale: 1, imageSize: { width: 0, height: 0 } })
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
 
   // 不同印鑑使用不同顏色
   const sealColors = [
@@ -343,8 +345,14 @@ function MultiSealDetectionBox({ imageId, initialSeals = [], onConfirm, onCancel
   }
 
   // 處理確認
-  const handleConfirm = () => {
-    if (onConfirm && seals.length > 0) {
+  const handleConfirm = async () => {
+    if (!onConfirm || seals.length === 0) return
+    if (isSaving) return
+
+    setIsSaving(true)
+    setSaveError(null)
+
+    try {
       const normalizedSeals = seals.map(seal => ({
         bbox: {
           x: Math.round(seal.bbox.x),
@@ -360,7 +368,12 @@ function MultiSealDetectionBox({ imageId, initialSeals = [], onConfirm, onCancel
         confidence: seal.confidence || 0.5
       }))
       
-      onConfirm(normalizedSeals)
+      await Promise.resolve(onConfirm(normalizedSeals))
+    } catch (e) {
+      setSaveError(e?.response?.data?.detail || e?.message || '保存失敗，請重試')
+      throw e
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -441,18 +454,24 @@ function MultiSealDetectionBox({ imageId, initialSeals = [], onConfirm, onCancel
         </Box>
       )}
 
+      {saveError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {saveError}
+        </Alert>
+      )}
+
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
         {showCancelButton && onCancel && (
-          <Button variant="outlined" onClick={onCancel}>
+          <Button variant="outlined" onClick={onCancel} disabled={isSaving}>
             取消
           </Button>
         )}
         <Button 
           variant="contained" 
           onClick={handleConfirm}
-          disabled={seals.length === 0}
+          disabled={seals.length === 0 || isSaving}
         >
-          確認 ({seals.length} 個印鑑)
+          {isSaving ? '保存中...' : `確認 (${seals.length} 個印鑑)`}
         </Button>
       </Box>
     </Paper>

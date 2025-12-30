@@ -6,12 +6,17 @@ import { imageAPI } from '../services/api'
 import SealDetectionBox from './SealDetectionBox'
 import ImagePreview from './ImagePreview'
 import BatchSealAdjustment from './BatchSealAdjustment'
+import PdfPagePicker from './PdfPagePicker'
 import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
 
 function ComparisonForm({ onSubmit }) {
   const queryClient = useQueryClient()
   const [image1, setImage1] = useState(null)
   const [image2, setImage2] = useState(null)
+  // 圖像1為 PDF 時：使用者選定的模板頁（page image）
+  const [image1TemplatePage, setImage1TemplatePage] = useState(null)
+  const [image1TemplatePageId, setImage1TemplatePageId] = useState(null)
+  const [image1PreferredPageId, setImage1PreferredPageId] = useState(null)
   const [enableRotation, setEnableRotation] = useState(true)
   const [showSealDialog, setShowSealDialog] = useState(false)
   const [sealDetectionResult, setSealDetectionResult] = useState(null)
@@ -25,15 +30,39 @@ function ComparisonForm({ onSubmit }) {
   // 功能開關
   const showBatchSealAdjustment = useFeatureFlag(FEATURE_FLAGS.BATCH_SEAL_ADJUSTMENT)
 
+  const image1Effective = image1?.is_pdf ? image1TemplatePage : image1
+  const image1EffectiveId = image1?.is_pdf ? image1TemplatePageId : image1?.id
+  const image1HasSeal = !!image1Effective?.seal_bbox
+
   const uploadImage1Mutation = useMutation({
     mutationFn: imageAPI.upload,
     onSuccess: async (data) => {
       setImage1(data)
+      setImage1TemplatePage(null)
+      setImage1TemplatePageId(null)
+      setImage1PreferredPageId(null)
       // 自動檢測印鑑
       setIsDetecting(true)
       try {
         const detectionResult = await imageAPI.detectSeal(data.id)
         setSealDetectionResult(detectionResult)
+
+        // PDF：後端會回傳最佳頁 page_image_id/page_index；前端跳到該頁並讓使用者手動微調
+        if (data?.is_pdf) {
+          const pageId = detectionResult?.page_image_id || data?.pages?.[0]?.id || null
+          setImage1PreferredPageId(pageId)
+
+          if (pageId) {
+            const pageImage = await imageAPI.get(pageId)
+            setImage1TemplatePage(pageImage)
+            setImage1TemplatePageId(pageId)
+            setShowSealDialog(true)
+          } else {
+            // 沒有分頁資訊時，無法提供框選（這應該很少發生）
+            setShowSealDialog(false)
+          }
+          return
+        }
         
         // 檢查檢測是否成功（detected === true 且 bbox 存在）
         if (detectionResult.detected === true && detectionResult.bbox) {
@@ -109,6 +138,14 @@ function ComparisonForm({ onSubmit }) {
     mutationFn: ({ imageId, locationData }) => imageAPI.updateSealLocation(imageId, locationData),
     onSuccess: (data, variables) => {
       // 根據 imageId 判斷關閉哪個對話框
+      if (image1?.is_pdf) {
+        if (variables.imageId === image1TemplatePageId) {
+          setShowSealDialog(false)
+          setImage1TemplatePage(data)
+        }
+        return
+      }
+
       if (variables.imageId === uploadImage1Mutation.data?.id) {
         setShowSealDialog(false)
         // 更新 image1 狀態
@@ -151,11 +188,11 @@ function ComparisonForm({ onSubmit }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (
-      uploadImage1Mutation.data?.id &&
+      image1EffectiveId &&
       uploadImage2Mutation.data?.id
     ) {
       onSubmit(
-        uploadImage1Mutation.data.id,
+        image1EffectiveId,
         uploadImage2Mutation.data.id,
         enableRotation
       )
@@ -163,7 +200,7 @@ function ComparisonForm({ onSubmit }) {
   }
 
   const handleSealConfirm = async (locationData) => {
-    if (uploadImage1Mutation.data?.id) {
+    if (image1EffectiveId) {
       try {
         // 確保數據格式正確
         const normalizedLocationData = {
@@ -182,7 +219,7 @@ function ComparisonForm({ onSubmit }) {
         }
         
         await updateSealLocationMutation.mutateAsync({
-          imageId: uploadImage1Mutation.data.id,
+          imageId: image1EffectiveId,
           locationData: normalizedLocationData
         })
       } catch (error) {
@@ -237,14 +274,14 @@ function ComparisonForm({ onSubmit }) {
       return
     }
 
-    if (!image1?.seal_bbox) {
+    if (!image1HasSeal) {
       alert('請先為圖像1標記印鑑位置')
       return
     }
 
     try {
       // 獲取圖像1的文件並重新上傳作為圖像2
-      const image1Data = uploadImage1Mutation.data
+      const image1Data = image1Effective || uploadImage1Mutation.data
       const image1FileUrl = imageAPI.getFile(image1Data.id)
       
       // 從 URL 獲取文件並重新上傳
@@ -281,6 +318,9 @@ function ComparisonForm({ onSubmit }) {
   // 處理清除圖像
   const handleClearImage1 = () => {
     setImage1(null)
+    setImage1TemplatePage(null)
+    setImage1TemplatePageId(null)
+    setImage1PreferredPageId(null)
     setSealDetectionResult(null)
     uploadImage1Mutation.reset()
   }
@@ -293,7 +333,7 @@ function ComparisonForm({ onSubmit }) {
 
   // 處理編輯圖像1的印鑑位置
   const handleEditImage1Seal = () => {
-    if (uploadImage1Mutation.data?.id) {
+    if (image1EffectiveId) {
       if (batchMode && uploadImage2Mutation.data?.id) {
         setShowBatchDialog(true)
       } else {
@@ -317,7 +357,7 @@ function ComparisonForm({ onSubmit }) {
   const handleBatchConfirm = async (locationData) => {
     try {
       // 確認圖像1
-      if (locationData.image1 && uploadImage1Mutation.data?.id) {
+      if (locationData.image1 && image1EffectiveId) {
         const normalizedLocationData1 = {
           bbox: locationData.image1.bbox ? {
             x: Math.round(locationData.image1.bbox.x),
@@ -333,7 +373,7 @@ function ComparisonForm({ onSubmit }) {
           confidence: 1.0
         }
         await updateSealLocationMutation.mutateAsync({
-          imageId: uploadImage1Mutation.data.id,
+          imageId: image1EffectiveId,
           locationData: normalizedLocationData1
         })
       }
@@ -379,7 +419,7 @@ function ComparisonForm({ onSubmit }) {
     }
 
     // 使用 mutation data 或 state，確保獲取最新的印鑑位置
-    const image1Data = image1 || uploadImage1Mutation.data
+    const image1Data = image1Effective || image1 || uploadImage1Mutation.data
     if (!image1Data?.seal_bbox) {
       alert('圖像1還沒有標記印鑑位置')
       return
@@ -410,7 +450,7 @@ function ComparisonForm({ onSubmit }) {
               圖像1
             </Typography>
             <input
-              accept="image/*"
+              accept="image/*,application/pdf,.pdf"
               style={{ display: 'none' }}
               id="image1-upload"
               type="file"
@@ -460,11 +500,23 @@ function ComparisonForm({ onSubmit }) {
           
           {/* 圖像預覽 */}
           <ImagePreview
-            image={image1}
-            label="圖像1預覽"
+            image={image1Effective}
+            label={image1?.is_pdf ? `圖像1（PDF 模板頁）預覽` : "圖像1預覽"}
             onEdit={handleEditImage1Seal}
             showSealIndicator={true}
           />
+          {image1?.is_pdf && (
+            <PdfPagePicker
+              pdfImage={image1}
+              preferredPageImageId={image1PreferredPageId}
+              label="模板頁"
+              disabled={isDetecting || uploadImage1Mutation.isPending}
+              onPageImageLoaded={(pageImg) => {
+                setImage1TemplatePage(pageImg)
+                setImage1TemplatePageId(pageImg?.id || null)
+              }}
+            />
+          )}
         </Grid>
 
         {/* 圖像2區域 */}
@@ -475,7 +527,7 @@ function ComparisonForm({ onSubmit }) {
             </Typography>
             <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
               <input
-                accept="image/*"
+                accept="image/*,application/pdf,.pdf"
                 style={{ display: 'none' }}
                 id="image2-upload"
                 type="file"
@@ -489,10 +541,10 @@ function ComparisonForm({ onSubmit }) {
                   disabled={
                     uploadImage2Mutation.isPending || 
                     isDetecting2 || 
-                    !(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox)
+                    !image1HasSeal
                   }
                   title={
-                    !(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox)
+                    !image1HasSeal
                       ? '請先完成圖像1的印章位置確認'
                       : undefined
                   }
@@ -514,14 +566,14 @@ function ComparisonForm({ onSubmit }) {
                   variant="outlined"
                   startIcon={<ContentCopyIcon />}
                   onClick={handleUseSameImage}
-                  disabled={!(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox)}
+                  disabled={!image1HasSeal}
                   title="使用圖像1作為圖像2（需要先標記圖像1的印鑑位置）"
                 >
                   使用同一張
                 </Button>
               )}
             </Box>
-            {!(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox) && uploadImage1Mutation.data && (
+            {!image1HasSeal && uploadImage1Mutation.data && (
               <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
                 請先完成圖像1的印章位置確認
               </Typography>
@@ -559,7 +611,7 @@ function ComparisonForm({ onSubmit }) {
           {/* 複製印鑑位置按鈕 */}
           {uploadImage1Mutation.data && 
            uploadImage2Mutation.data && 
-           (image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox) && 
+           image1HasSeal && 
            !(image2?.seal_bbox || uploadImage2Mutation.data?.seal_bbox) && (
             <Button
               variant="outlined"
@@ -591,7 +643,7 @@ function ComparisonForm({ onSubmit }) {
           showSealDialog ||
           showSealDialog2 ||
           showBatchDialog ||
-          !(image1?.seal_bbox || uploadImage1Mutation.data?.seal_bbox) ||
+          !image1HasSeal ||
           !(image2?.seal_bbox || uploadImage2Mutation.data?.seal_bbox)
         }
       >
@@ -607,11 +659,11 @@ function ComparisonForm({ onSubmit }) {
       >
         <DialogTitle>調整圖像1印鑑位置</DialogTitle>
         <DialogContent>
-          {uploadImage1Mutation.data?.id && (
+          {image1EffectiveId && (
             <SealDetectionBox
-              imageId={uploadImage1Mutation.data.id}
-              initialBbox={sealDetectionResult?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
-              initialCenter={sealDetectionResult?.center || uploadImage1Mutation.data?.seal_center || null}
+              imageId={image1EffectiveId}
+              initialBbox={image1Effective?.seal_bbox || sealDetectionResult?.bbox || null}
+              initialCenter={image1Effective?.seal_center || sealDetectionResult?.center || null}
               onConfirm={handleSealConfirm}
               onCancel={handleSealCancel}
             />
@@ -651,18 +703,18 @@ function ComparisonForm({ onSubmit }) {
         >
           <DialogTitle>批量調整印鑑位置</DialogTitle>
           <DialogContent>
-            {uploadImage1Mutation.data?.id && uploadImage2Mutation.data?.id && (
+            {image1EffectiveId && uploadImage2Mutation.data?.id && (
               <BatchSealAdjustment
-              image1Id={uploadImage1Mutation.data.id}
-              image2Id={uploadImage2Mutation.data.id}
-              image1InitialBbox={sealDetectionResult?.bbox || uploadImage1Mutation.data?.seal_bbox || null}
-              image1InitialCenter={sealDetectionResult?.center || uploadImage1Mutation.data?.seal_center || null}
-              image2InitialBbox={sealDetectionResult2?.bbox || uploadImage2Mutation.data?.seal_bbox || null}
-              image2InitialCenter={sealDetectionResult2?.center || uploadImage2Mutation.data?.seal_center || null}
-              onConfirm={handleBatchConfirm}
-              onCancel={handleBatchCancel}
-            />
-          )}
+                image1Id={image1EffectiveId}
+                image2Id={uploadImage2Mutation.data.id}
+                image1InitialBbox={image1Effective?.seal_bbox || sealDetectionResult?.bbox || null}
+                image1InitialCenter={image1Effective?.seal_center || sealDetectionResult?.center || null}
+                image2InitialBbox={sealDetectionResult2?.bbox || uploadImage2Mutation.data?.seal_bbox || null}
+                image2InitialCenter={sealDetectionResult2?.center || uploadImage2Mutation.data?.seal_center || null}
+                onConfirm={handleBatchConfirm}
+                onCancel={handleBatchCancel}
+              />
+            )}
           </DialogContent>
         </Dialog>
       )}

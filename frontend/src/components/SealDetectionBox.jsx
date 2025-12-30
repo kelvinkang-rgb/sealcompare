@@ -9,6 +9,9 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
   const [imageUrl, setImageUrl] = useState(null)
   const [bbox, setBbox] = useState(initialBbox || null)
   const [center, setCenter] = useState(initialCenter || null)
+  // 重要：避免「使用者剛改完輸入框就立刻按確認」時，React state 尚未 flush 導致保存舊 bbox
+  const bboxRef = useRef(initialBbox || null)
+  const centerRef = useRef(initialCenter || null)
   const [scale, setScale] = useState(1)
   const [isDragging, setIsDragging] = useState(false)
   const [dragType, setDragType] = useState(null) // 'move', 'resize-nw', 'resize-ne', 'resize-sw', 'resize-se', etc.
@@ -16,6 +19,25 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
   const [hoverType, setHoverType] = useState(null) // 滑鼠懸停時的類型
   const dragStateRef = useRef({ isDragging: false, dragType: null, dragStart: null, scale: 1, imageSize: { width: 0, height: 0 } })
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
+
+  // 當父層（例如重新打開 Dialog、或保存後 refetch）帶來新的 initialBbox/initialCenter 時，
+  // 必須刷新內部 state；否則會維持舊值，造成「保存成功但重開仍顯示舊 bbox」。
+  // 這裡只在 props 有變更時同步，避免影響使用者正在編輯的互動（編輯中不會改 props）。
+  useEffect(() => {
+    if (!initialBbox) return
+    bboxRef.current = initialBbox
+    setBbox(initialBbox)
+
+    if (initialCenter) {
+      centerRef.current = initialCenter
+      setCenter(initialCenter)
+    } else {
+      updateCenter(initialBbox)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageId, initialBbox, initialCenter])
 
   // 載入圖片
   useEffect(() => {
@@ -227,6 +249,7 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
     newBbox.width = Math.min(newBbox.width, state.imageSize.width / state.scale - newBbox.x)
     newBbox.height = Math.min(newBbox.height, state.imageSize.height / state.scale - newBbox.y)
 
+    bboxRef.current = newBbox
     setBbox(newBbox)
     updateCenter(newBbox)
   }, [])
@@ -299,11 +322,13 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
 
   // 更新中心點
   const updateCenter = (newBbox) => {
-    setCenter({
+    const nextCenter = {
       center_x: newBbox.x + newBbox.width / 2,
       center_y: newBbox.y + newBbox.height / 2,
       radius: Math.sqrt(newBbox.width ** 2 + newBbox.height ** 2) / 2
-    })
+    }
+    centerRef.current = nextCenter
+    setCenter(nextCenter)
   }
 
   // 處理數值輸入
@@ -319,23 +344,32 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
       newBbox.height = Math.min(newBbox.height, imageSize.height / scale - newBbox.y)
     }
     
+    bboxRef.current = newBbox
     setBbox(newBbox)
     updateCenter(newBbox)
   }
 
   // 處理確認
-  const handleConfirm = () => {
-    if (onConfirm && bbox) {
+  const handleConfirm = async () => {
+    const currentBbox = bboxRef.current
+    const currentCenter = centerRef.current
+    if (!onConfirm || !currentBbox) return
+    if (isSaving) return
+
+    setIsSaving(true)
+    setSaveError(null)
+
+    try {
       // 確保 bbox 的值是整數
       const normalizedBbox = {
-        x: Math.round(bbox.x),
-        y: Math.round(bbox.y),
-        width: Math.round(bbox.width),
-        height: Math.round(bbox.height)
+        x: Math.round(currentBbox.x),
+        y: Math.round(currentBbox.y),
+        width: Math.round(currentBbox.width),
+        height: Math.round(currentBbox.height)
       }
       
       // 計算或使用現有的 center
-      const normalizedCenter = center || {
+      const normalizedCenter = currentCenter || {
         center_x: Math.round(normalizedBbox.x + normalizedBbox.width / 2),
         center_y: Math.round(normalizedBbox.y + normalizedBbox.height / 2),
         radius: Math.sqrt(normalizedBbox.width ** 2 + normalizedBbox.height ** 2) / 2
@@ -348,10 +382,16 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
         radius: typeof normalizedCenter.radius === 'number' ? normalizedCenter.radius : Math.sqrt(normalizedBbox.width ** 2 + normalizedBbox.height ** 2) / 2
       }
       
-      onConfirm({ 
+      // 允許父層回傳 Promise，確保保存 + refetch 完成後才讓使用者繼續操作
+      await Promise.resolve(onConfirm({ 
         bbox: normalizedBbox, 
         center: finalCenter
-      })
+      }))
+    } catch (e) {
+      setSaveError(e?.response?.data?.detail || e?.message || '保存失敗，請重試')
+      throw e
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -390,8 +430,10 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
           onLoad={() => {
             setImageLoaded(true)
             if (initialBbox) {
+              bboxRef.current = initialBbox
               setBbox(initialBbox)
               if (initialCenter) {
+                centerRef.current = initialCenter
                 setCenter(initialCenter)
               } else {
                 updateCenter(initialBbox)
@@ -406,6 +448,7 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
                   width: Math.round(img.width * 0.3),
                   height: Math.round(img.height * 0.3)
                 }
+                bboxRef.current = defaultBbox
                 setBbox(defaultBbox)
                 updateCenter(defaultBbox)
               }
@@ -447,14 +490,20 @@ function SealDetectionBox({ imageId, initialBbox, initialCenter, onConfirm, onCa
         </Box>
       )}
 
+      {saveError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {saveError}
+        </Alert>
+      )}
+
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
         {showCancelButton && onCancel && (
-          <Button variant="outlined" onClick={onCancel}>
+          <Button variant="outlined" onClick={onCancel} disabled={isSaving}>
             取消
           </Button>
         )}
-        <Button variant="contained" onClick={handleConfirm}>
-          確認
+        <Button variant="contained" onClick={handleConfirm} disabled={isSaving || !bbox}>
+          {isSaving ? '保存中...' : '確認'}
         </Button>
       </Box>
     </Paper>

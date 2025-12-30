@@ -17,6 +17,7 @@ from app.models import Image, MultiSealComparisonTask, ComparisonStatus
 from app.schemas import ImageCreate, ImageResponse
 from app.utils.image_utils import save_uploaded_file, get_file_size, delete_file
 from app.utils.seal_detector import detect_seal_location, detect_multiple_seals, detect_seals_with_rotation_matching
+from app.utils.pdf_utils import render_pdf_to_png_pages
 import sys
 from pathlib import Path as PathLib
 core_path = PathLib(__file__).parent.parent.parent / "core"
@@ -68,26 +69,65 @@ class ImageService:
         """
         # 保存文件
         file_path, filename = save_uploaded_file(upload_file, self.upload_dir)
-        
-        # 獲取文件信息
         file_size = get_file_size(file_path)
-        
-        # 檢測 MIME 類型
         mime_type = upload_file.content_type or "application/octet-stream"
-        
-        # 創建資料庫記錄
+        original_filename = upload_file.filename or filename
+
+        is_pdf = (mime_type == "application/pdf") or (Path(original_filename).suffix.lower() == ".pdf")
+
+        # 1) 建立 PDF Image 或一般 Image
         db_image = Image(
-            filename=upload_file.filename or filename,
+            filename=original_filename,
             file_path=str(file_path),
             file_size=file_size,
-            mime_type=mime_type
+            mime_type=mime_type,
+            is_pdf=bool(is_pdf),
         )
-        
         self.db.add(db_image)
         self.db.commit()
         self.db.refresh(db_image)
-        
+
+        # 2) PDF：拆頁轉成 PNG，建立 page Image rows
+        if is_pdf:
+            try:
+                pages = render_pdf_to_png_pages(
+                    Path(file_path),
+                    self.upload_dir,
+                    dpi=300,
+                    filename_stem=Path(original_filename).stem,
+                )
+                db_image.pdf_page_count = len(pages)
+                self.db.commit()
+                self.db.refresh(db_image)
+
+                page_images = []
+                for p in pages:
+                    page_img = Image(
+                        filename=p.filename,
+                        file_path=str(p.file_path),
+                        file_size=get_file_size(p.file_path),
+                        mime_type="image/png",
+                        is_pdf=False,
+                        source_pdf_id=db_image.id,
+                        page_index=p.page_index,
+                    )
+                    self.db.add(page_img)
+                    page_images.append(page_img)
+                self.db.commit()
+            except Exception as e:
+                logger.error(f"PDF 拆頁失敗: {e}")
+                raise
+
         return db_image
+
+    def get_pdf_pages(self, pdf_image_id: UUID) -> List[Image]:
+        """取得 PDF 的分頁圖像列表（依 page_index 排序）"""
+        return (
+            self.db.query(Image)
+            .filter(Image.source_pdf_id == pdf_image_id)
+            .order_by(Image.page_index.asc())
+            .all()
+        )
     
     def get_image(self, image_id: UUID) -> Optional[Image]:
         """
