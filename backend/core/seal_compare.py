@@ -82,17 +82,30 @@ class SealComparator:
         else:
             gray = image.copy()
         timing['step1_convert_to_gray'] = time.time() - step1_start
+
+        # 陰影/摺痕抑制：低頻光照校正（讓背景更均勻，避免陰影被 OTSU 當作前景）
+        shade_start = time.time()
+        corrected_gray = gray
+        try:
+            # kernel 尺寸隨影像大小動態調整（取較小邊的 1/12，並強制為奇數且至少 31）
+            ksize = max(31, int(min(gray.shape) / 12) | 1)
+            kernel_bg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+            background = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel_bg)
+            corrected_gray = cv2.addWeighted(gray, 1.0, background, -1.0, 255.0)
+        except Exception:
+            corrected_gray = gray
+        timing['step1b_shading_correction'] = time.time() - shade_start
         
-        h, w = gray.shape
+        h, w = corrected_gray.shape
         
         # 步驟2：檢測背景顏色（分析圖像邊緣）
         step2_start = time.time()
         edge_width = max(5, min(h, w) // 20)
         edge_pixels = []
-        edge_pixels.extend(gray[0:edge_width, :].flatten())
-        edge_pixels.extend(gray[h-edge_width:h, :].flatten())
-        edge_pixels.extend(gray[:, 0:edge_width].flatten())
-        edge_pixels.extend(gray[:, w-edge_width:w].flatten())
+        edge_pixels.extend(corrected_gray[0:edge_width, :].flatten())
+        edge_pixels.extend(corrected_gray[h-edge_width:h, :].flatten())
+        edge_pixels.extend(corrected_gray[:, 0:edge_width].flatten())
+        edge_pixels.extend(corrected_gray[:, w-edge_width:w].flatten())
         
         # 計算背景顏色的中位數和標準差
         edge_pixels_array = np.array(edge_pixels)
@@ -106,13 +119,37 @@ class SealComparator:
         
         # 步驟3：OTSU 二值化
         step3_start = time.time()
-        _, binary_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        _, binary_otsu = cv2.threshold(corrected_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         timing['step3_otsu_threshold'] = time.time() - step3_start
+
+        # 線條型雜訊抑制：移除細長且面積小的連通元件（常見於印刷黑線/邊框/掃描雜線）
+        line_start = time.time()
+        try:
+            fg = (binary_otsu > 0).astype(np.uint8)
+            n, labels, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
+            if n > 2:
+                areas = stats[1:, cv2.CC_STAT_AREA]
+                max_area = int(areas.max()) if areas.size else 0
+                cleaned = fg.copy()
+                for i in range(1, n):
+                    w_i = int(stats[i, cv2.CC_STAT_WIDTH])
+                    h_i = int(stats[i, cv2.CC_STAT_HEIGHT])
+                    area = int(stats[i, cv2.CC_STAT_AREA])
+                    if w_i <= 0 or h_i <= 0:
+                        continue
+                    aspect = max(w_i, h_i) / max(1, min(w_i, h_i))
+                    # 過濾條件：細長（高長寬比）+ 面積相對小
+                    if max_area > 0 and aspect >= 8.0 and area <= max(120, int(max_area * 0.02)):
+                        cleaned[labels == i] = 0
+                binary_otsu = (cleaned * 255).astype(np.uint8)
+        except Exception:
+            pass
+        timing['step3b_remove_thin_lines'] = time.time() - line_start
         
         # 步驟4：結合背景顏色檢測和二值化結果
         step4_start = time.time()
         # 創建背景遮罩：接近背景顏色的像素
-        bg_mask_color = (gray >= bg_threshold_low) & (gray <= bg_threshold_high)
+        bg_mask_color = (corrected_gray >= bg_threshold_low) & (corrected_gray <= bg_threshold_high)
         
         # 結合 OTSU 結果：OTSU 的前景區域（值為255）應該保留
         # OTSU 的前景是255，背景是0，所以背景遮罩應該是 OTSU 背景（0）且顏色接近背景
@@ -144,7 +181,39 @@ class SealComparator:
         timing['step6_contour_detection'] = time.time() - step6_start
         
         if len(contours) == 0:
-            # 如果沒有找到輪廓，返回原圖
+            # 如果沒有找到輪廓（常見於「已裁切的小印鑑圖」），不要直接返回；
+            # 改用紅章分割/簡易背景移除作為 fallback，避免黑線/摺痕殘留。
+            if len(image.shape) == 3:
+                try:
+                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
+                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
+                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
+                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
+                    mask1 = cv2.inRange(hsv, lower1, upper1)
+                    mask2 = cv2.inRange(hsv, lower2, upper2)
+                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
+                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+                    a = lab[:, :, 1]
+                    red_mask_lab = (a > 150).astype(np.uint8) * 255
+                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+                    k = 3 if min(gray.shape) < 220 else 5
+                    kernel_red = np.ones((k, k), np.uint8)
+                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_red, iterations=2)
+                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_red, iterations=1)
+                    dil = cv2.dilate(red_mask, kernel_red, iterations=1)
+                    near_red = (dil > 0) & (corrected_gray < 245)
+                    red_mask = np.where(near_red, 255, red_mask).astype(np.uint8)
+                    if float(np.mean(red_mask > 0)) >= 0.008:
+                        result = image.copy()
+                        result[red_mask == 0] = [255, 255, 255]
+                        timing['step6_fallback_red_seal_segmentation'] = 0.0
+                        if return_timing and timing:
+                            timing['remove_background_total'] = sum(v for k, v in timing.items() if k != 'remove_background_total')
+                        return result, timing
+                except Exception:
+                    pass
+
             return image, timing
         
         # 步驟7：找到最大輪廓並計算邊界框
@@ -156,7 +225,38 @@ class SealComparator:
         contour_area = cv2.contourArea(largest_contour)
         min_area = (h * w) * 0.01
         if contour_area < min_area:
-            # 輪廓太小，可能是噪點，返回原圖
+            # 輪廓太小（可能是已裁切印鑑或噪點），同樣嘗試 fallback 去背景
+            if len(image.shape) == 3:
+                try:
+                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
+                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
+                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
+                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
+                    mask1 = cv2.inRange(hsv, lower1, upper1)
+                    mask2 = cv2.inRange(hsv, lower2, upper2)
+                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
+                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+                    a = lab[:, :, 1]
+                    red_mask_lab = (a > 150).astype(np.uint8) * 255
+                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+                    k = 3 if min(gray.shape) < 220 else 5
+                    kernel_red = np.ones((k, k), np.uint8)
+                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_red, iterations=2)
+                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_red, iterations=1)
+                    dil = cv2.dilate(red_mask, kernel_red, iterations=1)
+                    near_red = (dil > 0) & (corrected_gray < 245)
+                    red_mask = np.where(near_red, 255, red_mask).astype(np.uint8)
+                    if float(np.mean(red_mask > 0)) >= 0.008:
+                        result = image.copy()
+                        result[red_mask == 0] = [255, 255, 255]
+                        timing['step7_fallback_red_seal_segmentation'] = 0.0
+                        if return_timing and timing:
+                            timing['remove_background_total'] = sum(v for k, v in timing.items() if k != 'remove_background_total')
+                        return result, timing
+                except Exception:
+                    pass
+
             return image, timing
         
         # 計算邊界框
@@ -172,11 +272,11 @@ class SealComparator:
         x = max(0, x - margin)
         y = max(0, y - margin)
         # 確保不會超出圖像邊界
-        w = min(w + 2 * margin, gray.shape[1] - x)
-        h = min(h + 2 * margin, gray.shape[0] - y)
+        w = min(w + 2 * margin, corrected_gray.shape[1] - x)
+        h = min(h + 2 * margin, corrected_gray.shape[0] - y)
         
         # 再次確保邊界框有效
-        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > gray.shape[1] or y + h > gray.shape[0]:
+        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > corrected_gray.shape[1] or y + h > corrected_gray.shape[0]:
             return image, timing
         timing['step7_calculate_bbox'] = time.time() - step7_start
         
@@ -201,6 +301,70 @@ class SealComparator:
         # 在裁切後的圖像上重新檢測背景並移除
         if cropped.size == 0:
             return image, timing
+
+        # === 紅章優先去背景（對「黑線/摺痕陰影」特別有效）===
+        # 若裁切後圖像存在足夠的紅色像素，直接以紅色前景 mask 作為印鑑，
+        # 將非紅色區域全部視為背景並設為白色，避免黑線/陰影被保留。
+        if len(cropped.shape) == 3:
+            redseg_start = time.time()
+            try:
+                hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
+                # HSV 紅色兩段（hue 0-10, 170-180）
+                lower1 = np.array([0, 50, 40], dtype=np.uint8)
+                upper1 = np.array([10, 255, 255], dtype=np.uint8)
+                lower2 = np.array([170, 50, 40], dtype=np.uint8)
+                upper2 = np.array([180, 255, 255], dtype=np.uint8)
+                mask1 = cv2.inRange(hsv, lower1, upper1)
+                mask2 = cv2.inRange(hsv, lower2, upper2)
+                red_mask_hsv = cv2.bitwise_or(mask1, mask2)
+
+                # Lab 的 a-channel：紅色偏向 a > 128（越紅越高）
+                lab = cv2.cvtColor(cropped, cv2.COLOR_BGR2LAB)
+                a = lab[:, :, 1]
+                red_mask_lab = (a > 150).astype(np.uint8) * 255
+
+                red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+
+                # 形態學：補洞 + 去噪
+                k = 3 if min(cropped_gray.shape) < 220 else 5
+                kernel_red = np.ones((k, k), np.uint8)
+                red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_red, iterations=2)
+                red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_red, iterations=1)
+
+                # 避免紅章內部陰影造成破洞：把「靠近紅章」且非高亮背景的暗像素也納入
+                dil = cv2.dilate(red_mask, kernel_red, iterations=1)
+                near_red = (dil > 0) & (cropped_gray < 245)
+                red_mask = np.where(near_red, 255, red_mask).astype(np.uint8)
+
+                # 過濾小型紅噪點（保留主要連通元件）
+                num_labels, labels, stats, _ = cv2.connectedComponentsWithStats((red_mask > 0).astype(np.uint8), connectivity=8)
+                if num_labels > 1:
+                    areas = stats[1:, cv2.CC_STAT_AREA]
+                    max_area = int(areas.max()) if areas.size else 0
+                    keep = np.zeros_like(red_mask, dtype=np.uint8)
+                    # 保留面積接近最大者（避免保留散落小紅點）
+                    for i in range(1, num_labels):
+                        area = int(stats[i, cv2.CC_STAT_AREA])
+                        if max_area > 0 and area >= max(80, int(max_area * 0.02)):
+                            keep[labels == i] = 255
+                    red_mask = keep
+
+                red_ratio = float(np.mean(red_mask > 0))
+                # 紅色比例太低則視為非紅章，走 fallback
+                if red_ratio >= 0.008:
+                    result = cropped.copy()
+                    result[red_mask == 0] = [255, 255, 255]
+                    timing['step9_red_seal_segmentation'] = time.time() - redseg_start
+                    timing['step9_remove_bg_final'] = time.time() - step9_start
+
+                    # 計算總時間（僅在需要時計算）
+                    if return_timing and timing:
+                        timing['remove_background_total'] = sum(v for k, v in timing.items() if k != 'remove_background_total')
+
+                    return result, timing
+            except Exception:
+                # 若紅章分割失敗，退回原本灰階背景移除邏輯
+                pass
         
         edge_width_crop = max(3, min(h, w) // 30)
         edge_pixels_crop = []
