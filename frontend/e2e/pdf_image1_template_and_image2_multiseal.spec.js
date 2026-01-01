@@ -25,9 +25,11 @@ test('PDF：圖像1 可跳頁預覽並手動框選；圖像2 可逐頁編輯多�
 
   // 圖像1：上傳 PDF → 會自動跳到建議頁並打開印鑑框選對話框
   await page.setInputFiles('#image1-upload', pdfPath)
+  // 同步事實：等待後端完成 detect-seal（避免直接等 dialog 導致 flaky）
+  await page.waitForResponse((r) => r.url().includes('/detect-seal') && r.request().method() === 'POST' && r.status() === 200, { timeout: 120_000 })
 
   const image1Dialog = page.getByRole('dialog').filter({ hasText: '調整圖像1印鑑位置' })
-  await expect(image1Dialog).toBeVisible()
+  await expect(image1Dialog).toBeVisible({ timeout: 120_000 })
   // 調整 bbox（用數值輸入避免拖曳不穩定），確認後主畫面預覽應反映（以「再次打開」的初始值驗證）
   const xInput = image1Dialog.getByLabel('X 位置')
   const oldX = Number(await xInput.inputValue())

@@ -1070,7 +1070,7 @@ function MultiSealComparisonResults({
 
                                 const formatSeconds = (v) => {
                                   const n = typeof v === 'number' ? v : 0
-                                  return `${n.toFixed(2)} 秒`
+                                  return `${n.toFixed(3)} 秒`
                                 }
 
                                 const formatPercent = (part, total) => {
@@ -1098,17 +1098,21 @@ function MultiSealComparisonResults({
                                 // === alignment_stages（依 seal_compare.py 結構化） ===
                                 const bgStepDefs = [
                                   ['step1_convert_to_gray', '轉換灰度'],
+                                  ['step1b_shading_correction', '陰影/摺痕抑制（光照校正）'],
                                   ['step2_detect_bg_color', '偵測背景色'],
                                   ['step3_otsu_threshold', 'OTSU二值化'],
+                                  ['step3b_remove_thin_lines', '線條型雜訊抑制'],
                                   ['step4_combine_masks', '結合遮罩'],
-                                  ['step5_morphology_bg', '形態學處理背景'],
                                   ['step6_contour_detection', '輪廓偵測'],
+                                  ['step6_fallback_red_seal_segmentation', 'fallback：紅章分割（無輪廓）'],
                                   ['step7_calculate_bbox', '計算邊界框'],
+                                  ['step7_fallback_red_seal_segmentation', 'fallback：紅章分割（輪廓太小）'],
                                   ['step8_crop_image', '裁切圖像'],
                                   ['step9_remove_bg_final', '最終移除背景'],
                                 ]
 
                                 const stageDefs = [
+                                  ['stage12_joint_coarse_total', '階段1+2：joint 粗搜尋（總計）'],
                                   ['stage1_translation_coarse', '階段1：平移粗調'],
                                   ['stage2_rotation_coarse', '階段2：旋轉粗調'],
                                   ['stage3_translation_fine', '階段3：平移細調'],
@@ -1154,7 +1158,7 @@ function MultiSealComparisonResults({
                                     {timing.total !== undefined && (
                                       <TableRow>
                                         <TableCell colSpan={2} sx={{ backgroundColor: 'primary.light', fontWeight: 'bold', color: 'primary.contrastText' }}>
-                                          總時間: {typeof timing.total === 'number' ? timing.total.toFixed(2) : '0.00'} 秒
+                                          總時間: {typeof timing.total === 'number' ? timing.total.toFixed(3) : '0.000'} 秒
                                         </TableCell>
                                       </TableRow>
                                     )}

@@ -35,6 +35,8 @@ build/
 # Logs
 logs/
 *.log
+*_logs.txt
+backend_logs.txt
 
 # Database
 *.db
@@ -48,7 +50,12 @@ backend/logs/
 # Frontend
 frontend/dist/
 frontend/.vite/
+frontend/test-results/
 
 # Docker
 .dockerignore
+
+# Debug/Visualization artifacts
+backend/core/threshold_visualization/*.png
+backend/threshold_visualization/
 

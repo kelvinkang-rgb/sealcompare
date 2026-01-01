@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 import hashlib
 
-from core.ink_segmentation import select_ink_color_and_mask
-
 
 class SealComparator:
     """印鑑比對器"""
@@ -161,25 +159,13 @@ class SealComparator:
         bg_mask = bg_mask_color & bg_mask_otsu
         timing['step4_combine_masks'] = time.time() - step4_start
         
-        # 步驟5：形態學操作（去除小的噪點）
-        step5_start = time.time()
-        kernel = np.ones((3, 3), np.uint8)
-        bg_mask = cv2.morphologyEx(bg_mask.astype(np.uint8) * 255, cv2.MORPH_CLOSE, kernel, iterations=2)
-        bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        bg_mask = bg_mask > 0
-        timing['step5_morphology_bg'] = time.time() - step5_start
-        
         # 步驟6：輪廓檢測找到實際內容的邊界框
         step6_start = time.time()
         # 創建前景遮罩（非背景區域）
         foreground_mask = ~bg_mask
         
-        # 形態學操作優化前景遮罩
-        foreground_mask = cv2.morphologyEx(foreground_mask.astype(np.uint8) * 255, cv2.MORPH_CLOSE, kernel, iterations=3)
-        foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_OPEN, kernel, iterations=2)
-        
         # 找到輪廓
-        contours, _ = cv2.findContours(foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(foreground_mask.astype(np.uint8) * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         timing['step6_contour_detection'] = time.time() - step6_start
         
         if len(contours) == 0:
@@ -187,14 +173,23 @@ class SealComparator:
             # 改用紅章分割/簡易背景移除作為 fallback，避免黑線/摺痕殘留。
             if len(image.shape) == 3:
                 try:
-                    seg_start = time.time()
-                    seg = select_ink_color_and_mask(image, min_ratio=0.004)
-                    if seg.color is not None:
+                    fallback_start = time.time()
+                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
+                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
+                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
+                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
+                    mask1 = cv2.inRange(hsv, lower1, upper1)
+                    mask2 = cv2.inRange(hsv, lower2, upper2)
+                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
+                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+                    a = lab[:, :, 1]
+                    red_mask_lab = (a > 150).astype(np.uint8) * 255
+                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+                    if float(np.mean(red_mask > 0)) >= 0.008:
                         result = image.copy()
-                        result[seg.mask_u8 == 0] = [255, 255, 255]
-                        # 向後相容：保留舊 key（即使現在可能是 blue）
-                        timing['step6_fallback_red_seal_segmentation'] = time.time() - seg_start
-                        timing['step6_fallback_ink_segmentation'] = time.time() - seg_start
+                        result[red_mask == 0] = [255, 255, 255]
+                        timing['step6_fallback_red_seal_segmentation'] = time.time() - fallback_start
                         if return_timing and timing:
                             timing['remove_background_total'] = sum(v for k, v in timing.items() if k != 'remove_background_total')
                         return result, timing
@@ -215,14 +210,23 @@ class SealComparator:
             # 輪廓太小（可能是已裁切印鑑或噪點），同樣嘗試 fallback 去背景
             if len(image.shape) == 3:
                 try:
-                    seg_start = time.time()
-                    seg = select_ink_color_and_mask(image, min_ratio=0.004)
-                    if seg.color is not None:
+                    fallback_start = time.time()
+                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
+                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
+                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
+                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
+                    mask1 = cv2.inRange(hsv, lower1, upper1)
+                    mask2 = cv2.inRange(hsv, lower2, upper2)
+                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
+                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+                    a = lab[:, :, 1]
+                    red_mask_lab = (a > 150).astype(np.uint8) * 255
+                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+                    if float(np.mean(red_mask > 0)) >= 0.008:
                         result = image.copy()
-                        result[seg.mask_u8 == 0] = [255, 255, 255]
-                        # 向後相容：保留舊 key（即使現在可能是 blue）
-                        timing['step7_fallback_red_seal_segmentation'] = time.time() - seg_start
-                        timing['step7_fallback_ink_segmentation'] = time.time() - seg_start
+                        result[red_mask == 0] = [255, 255, 255]
+                        timing['step7_fallback_red_seal_segmentation'] = time.time() - fallback_start
                         if return_timing and timing:
                             timing['remove_background_total'] = sum(v for k, v in timing.items() if k != 'remove_background_total')
                         return result, timing
@@ -274,19 +278,46 @@ class SealComparator:
         if cropped.size == 0:
             return image, timing
 
-        # === 印泥（紅/藍）優先去背景（對「黑線/摺痕陰影」特別有效）===
-        # 以「相對背景的色偏」抓淡紅/淡藍，並自動判別紅/藍；
-        # 若存在足夠的 ink 前景 mask，將非 ink 區域全部視為背景並設為白色，避免黑線/陰影被保留。
+        # === 紅章優先去背景（對「黑線/摺痕陰影」特別有效）===
+        # 若裁切後圖像存在足夠的紅色像素，直接以紅色前景 mask 作為印鑑，
+        # 將非紅色區域全部視為背景並設為白色，避免黑線/陰影被保留。
         if len(cropped.shape) == 3:
-            inkseg_start = time.time()
             try:
-                seg = select_ink_color_and_mask(cropped, min_ratio=0.004)
-                if seg.color is not None:
+                hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
+                # HSV 紅色兩段（hue 0-10, 170-180）
+                lower1 = np.array([0, 50, 40], dtype=np.uint8)
+                upper1 = np.array([10, 255, 255], dtype=np.uint8)
+                lower2 = np.array([170, 50, 40], dtype=np.uint8)
+                upper2 = np.array([180, 255, 255], dtype=np.uint8)
+                mask1 = cv2.inRange(hsv, lower1, upper1)
+                mask2 = cv2.inRange(hsv, lower2, upper2)
+                red_mask_hsv = cv2.bitwise_or(mask1, mask2)
+
+                # Lab 的 a-channel：紅色偏向 a > 128（越紅越高）
+                lab = cv2.cvtColor(cropped, cv2.COLOR_BGR2LAB)
+                a = lab[:, :, 1]
+                red_mask_lab = (a > 150).astype(np.uint8) * 255
+
+                red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+
+                # 過濾小型紅噪點（保留主要連通元件）
+                num_labels, labels, stats, _ = cv2.connectedComponentsWithStats((red_mask > 0).astype(np.uint8), connectivity=8)
+                if num_labels > 1:
+                    areas = stats[1:, cv2.CC_STAT_AREA]
+                    max_area = int(areas.max()) if areas.size else 0
+                    keep = np.zeros_like(red_mask, dtype=np.uint8)
+                    # 保留面積接近最大者（避免保留散落小紅點）
+                    for i in range(1, num_labels):
+                        area = int(stats[i, cv2.CC_STAT_AREA])
+                        if max_area > 0 and area >= max(80, int(max_area * 0.02)):
+                            keep[labels == i] = 255
+                    red_mask = keep
+
+                red_ratio = float(np.mean(red_mask > 0))
+                # 紅色比例太低則視為非紅章，走 fallback
+                if red_ratio >= 0.008:
                     result = cropped.copy()
-                    result[seg.mask_u8 == 0] = [255, 255, 255]
-                    # 向後相容：保留舊 key（即使現在可能是 blue）
-                    timing['step9_red_seal_segmentation'] = time.time() - inkseg_start
-                    timing['step9_ink_segmentation'] = time.time() - inkseg_start
+                    result[red_mask == 0] = [255, 255, 255]
                     timing['step9_remove_bg_final'] = time.time() - step9_start
 
                     # 計算總時間（僅在需要時計算）

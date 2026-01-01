@@ -492,87 +492,93 @@ def compare_image1_with_seals(
             # 定義回調函數，當每個印鑑比對完成時立即更新任務記錄
             def update_task_with_result(result: Dict, current_index: int, total_count: int):
                 """回調函數：當每個印鑑比對完成時更新任務記錄（線程安全）"""
+                # 為每個回調創建獨立的 session，避免多線程並發衝突
+                callback_db = SessionLocal()
                 max_retries = 3
                 retry_count = 0
                 
-                while retry_count < max_retries:
-                    try:
-                        # 使用 with_for_update() 鎖定任務記錄，確保線程安全
-                        # 這會阻止其他線程同時讀取和修改同一條記錄
-                        task = db_task.query(MultiSealComparisonTask).filter(
-                            MultiSealComparisonTask.task_uid == task_uid_str
-                        ).with_for_update().first()
-                        
-                        if not task:
-                            logger.warning(f"任務不存在，無法更新: {task_uid_str}")
-                            return
-                        
-                        # 轉換結果為 JSON 格式
-                        result_json = {
-                            'seal_index': result['seal_index'],
-                            'seal_image_id': str(result['seal_image_id']),
-                            'similarity': result['similarity'],
-                            'is_match': result['is_match'],
-                            'overlay1_path': result['overlay1_path'],
-                            'overlay2_path': result['overlay2_path'],
-                            'heatmap_path': result['heatmap_path'],
-                            'overlap_mask_path': result.get('overlap_mask_path'),
-                            'pixel_diff_mask_path': result.get('pixel_diff_mask_path'),
-                            'diff_mask_2_only_path': result.get('diff_mask_2_only_path'),
-                            'diff_mask_1_only_path': result.get('diff_mask_1_only_path'),
-                            'gray_diff_path': result.get('gray_diff_path'),
-                            'mask_statistics': result.get('mask_statistics'),
-                            'mask_based_similarity': result.get('mask_based_similarity'),
-                            'structure_similarity': result.get('structure_similarity'),
-                            'alignment_metrics': result.get('alignment_metrics'),
-                            'input_image1_path': result.get('input_image1_path'),
-                            'input_image2_path': result.get('input_image2_path'),
-                            'error': result['error'],
-                            'overlay_error': result.get('overlay_error'),
-                            'timing': result.get('timing')  # 添加時間追蹤數據
-                        }
-                        
-                        # 獲取當前結果列表（在鎖定狀態下讀取，確保是最新數據）
-                        current_results = task.results or []
-                        
-                        # 使用字典追蹤已存在的結果（以 seal_index 為鍵），提高合併效率
-                        results_dict = {r.get('seal_index'): r for r in current_results}
-                        
-                        # 更新或添加新結果
-                        results_dict[result['seal_index']] = result_json
-                        
-                        # 轉換回列表並按 seal_index 排序
-                        current_results = [results_dict[key] for key in sorted(results_dict.keys())]
-                        
-                        # 計算進度和成功數量
-                        completed_count = len(current_results)
-                        success_count = sum(1 for r in current_results if r.get('error') is None)
-                        progress = 10.0 + (completed_count / total_count) * 80.0  # 10% 到 90%
-                        
-                        # 更新任務記錄
-                        task.results = current_results
-                        task.progress = progress
-                        task.progress_message = f"已完成 {completed_count}/{total_count} 個印鑑比對（成功: {success_count}）"
-                        task.success_count = success_count
-                        db_task.commit()
-                        
-                        logger.info(f"任務更新: {task_uid_str}, 進度: {progress:.1f}%, 已完成: {completed_count}/{total_count}, 成功: {success_count}")
-                        return  # 成功，退出重試循環
-                        
-                    except Exception as e:
-                        retry_count += 1
-                        db_task.rollback()
-                        
-                        if retry_count < max_retries:
-                            # 等待一小段時間後重試（指數退避）
-                            import time
-                            wait_time = 0.1 * (2 ** (retry_count - 1))
-                            logger.warning(f"更新任務記錄時出錯（重試 {retry_count}/{max_retries}）: {e}, 等待 {wait_time:.2f} 秒後重試")
-                            time.sleep(wait_time)
-                        else:
-                            logger.error(f"更新任務記錄時出錯（已重試 {max_retries} 次）: {e}")
-                            import traceback
-                            logger.error(f"錯誤堆疊:\n{traceback.format_exc()}")
+                try:
+                    while retry_count < max_retries:
+                        try:
+                            # 使用 with_for_update() 鎖定任務記錄，確保線程安全
+                            # 這會阻止其他線程同時讀取和修改同一條記錄
+                            task = callback_db.query(MultiSealComparisonTask).filter(
+                                MultiSealComparisonTask.task_uid == task_uid_str
+                            ).with_for_update().first()
+                            
+                            if not task:
+                                logger.warning(f"任務不存在，無法更新: {task_uid_str}")
+                                return
+                            
+                            # 轉換結果為 JSON 格式
+                            result_json = {
+                                'seal_index': result['seal_index'],
+                                'seal_image_id': str(result['seal_image_id']),
+                                'similarity': result['similarity'],
+                                'is_match': result['is_match'],
+                                'overlay1_path': result['overlay1_path'],
+                                'overlay2_path': result['overlay2_path'],
+                                'heatmap_path': result['heatmap_path'],
+                                'overlap_mask_path': result.get('overlap_mask_path'),
+                                'pixel_diff_mask_path': result.get('pixel_diff_mask_path'),
+                                'diff_mask_2_only_path': result.get('diff_mask_2_only_path'),
+                                'diff_mask_1_only_path': result.get('diff_mask_1_only_path'),
+                                'gray_diff_path': result.get('gray_diff_path'),
+                                'mask_statistics': result.get('mask_statistics'),
+                                'mask_based_similarity': result.get('mask_based_similarity'),
+                                'structure_similarity': result.get('structure_similarity'),
+                                'alignment_metrics': result.get('alignment_metrics'),
+                                'input_image1_path': result.get('input_image1_path'),
+                                'input_image2_path': result.get('input_image2_path'),
+                                'error': result['error'],
+                                'overlay_error': result.get('overlay_error'),
+                                'timing': result.get('timing')  # 添加時間追蹤數據
+                            }
+                            
+                            # 獲取當前結果列表（在鎖定狀態下讀取，確保是最新數據）
+                            current_results = task.results or []
+                            
+                            # 使用字典追蹤已存在的結果（以 seal_index 為鍵），提高合併效率
+                            results_dict = {r.get('seal_index'): r for r in current_results}
+                            
+                            # 更新或添加新結果
+                            results_dict[result['seal_index']] = result_json
+                            
+                            # 轉換回列表並按 seal_index 排序
+                            current_results = [results_dict[key] for key in sorted(results_dict.keys())]
+                            
+                            # 計算進度和成功數量
+                            completed_count = len(current_results)
+                            success_count = sum(1 for r in current_results if r.get('error') is None)
+                            progress = 10.0 + (completed_count / total_count) * 80.0  # 10% 到 90%
+                            
+                            # 更新任務記錄
+                            task.results = current_results
+                            task.progress = progress
+                            task.progress_message = f"已完成 {completed_count}/{total_count} 個印鑑比對（成功: {success_count}）"
+                            task.success_count = success_count
+                            callback_db.commit()
+                            
+                            logger.info(f"任務更新: {task_uid_str}, 進度: {progress:.1f}%, 已完成: {completed_count}/{total_count}, 成功: {success_count}")
+                            return  # 成功，退出重試循環
+                            
+                        except Exception as e:
+                            retry_count += 1
+                            callback_db.rollback()
+                            
+                            if retry_count < max_retries:
+                                # 等待一小段時間後重試（指數退避）
+                                import time
+                                wait_time = 0.1 * (2 ** (retry_count - 1))
+                                logger.warning(f"更新任務記錄時出錯（重試 {retry_count}/{max_retries}）: {e}, 等待 {wait_time:.2f} 秒後重試")
+                                time.sleep(wait_time)
+                            else:
+                                logger.error(f"更新任務記錄時出錯（已重試 {max_retries} 次）: {e}")
+                                import traceback
+                                logger.error(f"錯誤堆疊:\n{traceback.format_exc()}")
+                finally:
+                    # 確保 session 被正確關閉
+                    callback_db.close()
             
             # 執行比對，傳入回調函數
             results_data = image_service.compare_image1_with_seals(

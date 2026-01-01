@@ -1913,32 +1913,80 @@ function MultiSealTest() {
             <Typography variant="h6" gutterBottom>
               任務時間統計
             </Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={4}>
-                <Typography variant="body2" color="text.secondary">
-                  總時間
-                </Typography>
-                <Typography variant="h6">
-                  {polledTaskResult.task_timing.total_time?.toFixed(2) || '0.00'} 秒
-                </Typography>
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <Typography variant="body2" color="text.secondary">
-                  並行處理時間
-                </Typography>
-                <Typography variant="h6">
-                  {polledTaskResult.task_timing.parallel_processing_time?.toFixed(2) || '0.00'} 秒
-                </Typography>
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <Typography variant="body2" color="text.secondary">
-                  平均每個印鑑時間
-                </Typography>
-                <Typography variant="h6">
-                  {polledTaskResult.task_timing.average_seal_time?.toFixed(2) || '0.00'} 秒
-                </Typography>
-              </Grid>
-            </Grid>
+            {(() => {
+              const timing = polledTaskResult?.task_timing || {}
+              const fmt = (v) => `${(typeof v === 'number' ? v : 0).toFixed(3)} 秒`
+
+              const primaryDefs = [
+                ['total_time', '總時間（服務層）'],
+                ['parallel_processing_time', '並行處理時間（比對階段）'],
+                ['average_seal_time', '平均每個印鑑時間（比對階段）'],
+                ['avg_seal_total_time', '平均每顆印鑑總時間（results.timing.total）'],
+              ]
+
+              const avgStepDefs = [
+                ['avg_load_images', '平均：載入圖像'],
+                ['avg_remove_bg_image1', '平均：圖像1 去背景'],
+                ['avg_remove_bg_align_image2', '平均：圖像2 去背景+對齊'],
+                ['avg_save_aligned_images', '平均：保存對齊圖像'],
+                ['avg_similarity_calculation', '平均：相似度計算'],
+                ['avg_save_corrected_images', '平均：保存校正圖像'],
+                ['avg_create_overlay', '平均：生成疊圖'],
+                ['avg_calculate_mask_stats', '平均：計算 Mask 統計'],
+                ['avg_create_heatmap', '平均：生成熱力圖'],
+              ]
+
+              const knownKeys = new Set([...primaryDefs, ...avgStepDefs].map(([k]) => k))
+              const otherEntries = Object.entries(timing).filter(([k]) => !knownKeys.has(k))
+
+              const renderGrid = (defs) => (
+                <Grid container spacing={2}>
+                  {defs.map(([k, label]) => (
+                    <Grid key={k} item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" color="text.secondary">
+                        {label}
+                      </Typography>
+                      <Typography variant="h6">
+                        {timing[k] !== undefined ? fmt(timing[k]) : '—'}
+                      </Typography>
+                    </Grid>
+                  ))}
+                </Grid>
+              )
+
+              return (
+                <Box>
+                  {renderGrid(primaryDefs)}
+
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                      平均步驟時間（僅統計成功的印鑑）
+                    </Typography>
+                    {renderGrid(avgStepDefs)}
+                  </Box>
+
+                  {otherEntries.length > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                        其他（task_timing）
+                      </Typography>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                        {otherEntries.map(([k, v]) => (
+                          <Box key={k} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
+                            <Typography variant="body2" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                              {k}
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                              {typeof v === 'number' ? fmt(v) : JSON.stringify(v)}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+                </Box>
+              )
+            })()}
           </Paper>
         </Box>
       )}
