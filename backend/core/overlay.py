@@ -9,6 +9,180 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
 
+def _calculate_structure_similarity_core(
+    img1: np.ndarray,
+    img2: np.ndarray,
+    clahe_clip_limit: float = 2.0,
+    clahe_tile_grid_size: Tuple[int, int] = (8, 8),
+    canny_threshold1: int = 60,
+    canny_threshold2: int = 160,
+    edge_dilate_radius: int = 1,
+    edge_f1_power: float = 3.0,
+    min_iou_for_penalty: float = 0.10,
+) -> float:
+    """
+    與 calculate_structure_similarity 相同演算法的「in-memory 核心」。
+    請勿在此函式內做任何檔案讀寫或路徑處理，確保可在對齊流程中低摩擦呼叫。
+    """
+    # 允許灰階輸入：轉成 BGR（保持與原本路徑版一致的處理路徑）
+    if img1.ndim == 2:
+        img1 = cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR)
+    if img2.ndim == 2:
+        img2 = cv2.cvtColor(img2, cv2.COLOR_GRAY2BGR)
+
+    if img1 is None or img2 is None or img1.size == 0 or img2.size == 0:
+        return 0.0
+
+    # pad to same canvas size (top-left align, consistent with overlay)
+    h1, w1 = img1.shape[:2]
+    h2, w2 = img2.shape[:2]
+    max_h = max(h1, h2)
+    max_w = max(w1, w2)
+    if (h1, w1) != (max_h, max_w):
+        canvas1 = np.ones((max_h, max_w, 3), dtype=np.uint8) * 255
+        canvas1[:h1, :w1] = img1
+        img1 = canvas1
+    if (h2, w2) != (max_h, max_w):
+        canvas2 = np.ones((max_h, max_w, 3), dtype=np.uint8) * 255
+        canvas2[:h2, :w2] = img2
+        img2 = canvas2
+
+    def foreground_mask(img: np.ndarray) -> np.ndarray:
+        """使用邊緣背景色估計得到前景(印章) mask。輸出 bool mask。"""
+        h, w = img.shape[:2]
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        edge_width = max(5, min(h, w) // 30)
+        edge_pixels = []
+        edge_pixels.extend(img[0:edge_width, :].reshape(-1, 3).tolist())
+        edge_pixels.extend(img[h-edge_width:h, :].reshape(-1, 3).tolist())
+        edge_pixels.extend(img[:, 0:edge_width].reshape(-1, 3).tolist())
+        edge_pixels.extend(img[:, w-edge_width:w].reshape(-1, 3).tolist())
+
+        edge_colors = np.array(edge_pixels, dtype=np.float32)
+        bg_color = np.median(edge_colors, axis=0).astype(np.uint8)
+
+        img_float = img.astype(np.float32)
+        bg_float = bg_color.astype(np.float32)
+        color_diff = np.sqrt(np.sum((img_float - bg_float) ** 2, axis=2))
+
+        edge_std = np.std(edge_colors, axis=0).mean()
+        thr = max(15, min(40, edge_std * 2))
+        bg_mask = color_diff < thr
+
+        mean_brightness = float(np.mean(gray))
+        if mean_brightness > 200:
+            _, bright_bg = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+            bg_mask = bg_mask | (bright_bg > 0)
+        elif mean_brightness < 50:
+            _, dark_bg = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY_INV)
+            bg_mask = bg_mask | (dark_bg > 0)
+
+        fg = ~bg_mask
+        return fg
+
+    def to_gray(img: np.ndarray) -> np.ndarray:
+        if img.ndim == 2:
+            return img
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # masks used for ROI restriction and geometry penalty
+    m1 = foreground_mask(img1)
+    m2 = foreground_mask(img2)
+    union = m1 | m2
+    inter = m1 & m2
+    union_cnt = int(np.sum(union))
+    if union_cnt == 0:
+        return 0.0
+    iou = float(np.sum(inter)) / float(union_cnt)
+
+    # CLAHE normalization (reduce ink depth / illumination effect)
+    g1 = to_gray(img1)
+    g2 = to_gray(img2)
+    clahe = cv2.createCLAHE(clipLimit=float(clahe_clip_limit), tileGridSize=clahe_tile_grid_size)
+    g1n = clahe.apply(g1)
+    g2n = clahe.apply(g2)
+
+    # Edge extraction; restrict to union ROI to avoid background noise
+    g1n_roi = g1n.copy()
+    g2n_roi = g2n.copy()
+    g1n_roi[~union] = 255
+    g2n_roi[~union] = 255
+    e1 = cv2.Canny(g1n_roi, canny_threshold1, canny_threshold2) > 0
+    e2 = cv2.Canny(g2n_roi, canny_threshold1, canny_threshold2) > 0
+
+    e1_cnt = int(np.sum(e1))
+    e2_cnt = int(np.sum(e2))
+    if e1_cnt == 0 or e2_cnt == 0:
+        return 0.0
+
+    r = max(0, int(edge_dilate_radius))
+    if r > 0:
+        k = 2 * r + 1
+        kernel = np.ones((k, k), np.uint8)
+        e1_d = cv2.dilate(e1.astype(np.uint8) * 255, kernel, iterations=1) > 0
+        e2_d = cv2.dilate(e2.astype(np.uint8) * 255, kernel, iterations=1) > 0
+    else:
+        e1_d = e1
+        e2_d = e2
+
+    # symmetric matching with tolerance
+    match1 = e1 & e2_d
+    match2 = e2 & e1_d
+    recall = float(np.sum(match1)) / float(e1_cnt)
+    precision = float(np.sum(match2)) / float(e2_cnt)
+    if precision + recall == 0:
+        edge_f1 = 0.0
+    else:
+        edge_f1 = 2.0 * precision * recall / (precision + recall)
+
+    # conservative geometry penalty to reduce false positives
+    if iou < float(min_iou_for_penalty):
+        penalty = 0.0
+    else:
+        # sqrt keeps high overlap close to 1, but punishes mediocre overlap
+        penalty = float(np.sqrt(iou))
+
+    # 對假陽性更保守：把 edge_f1 做次方壓縮，讓「略像」的分數下降更快
+    pow_k = max(1.0, float(edge_f1_power))
+    sim = float((edge_f1 ** pow_k) * penalty)
+    return float(max(0.0, min(1.0, sim)))
+
+
+def calculate_structure_similarity_from_images(
+    img1: np.ndarray,
+    img2: np.ndarray,
+    clahe_clip_limit: float = 2.0,
+    clahe_tile_grid_size: Tuple[int, int] = (8, 8),
+    canny_threshold1: int = 60,
+    canny_threshold2: int = 160,
+    edge_dilate_radius: int = 1,
+    edge_f1_power: float = 3.0,
+    min_iou_for_penalty: float = 0.10,
+) -> float:
+    """
+    與 calculate_structure_similarity(path, path) 相同演算法，但輸入為 np.ndarray（in-memory）。
+    用途：對齊 wrapper 需要在不寫檔的情況下用 structure_similarity 進行 gating。
+    """
+    try:
+        return _calculate_structure_similarity_core(
+            img1,
+            img2,
+            clahe_clip_limit=clahe_clip_limit,
+            clahe_tile_grid_size=clahe_tile_grid_size,
+            canny_threshold1=canny_threshold1,
+            canny_threshold2=canny_threshold2,
+            edge_dilate_radius=edge_dilate_radius,
+            edge_f1_power=edge_f1_power,
+            min_iou_for_penalty=min_iou_for_penalty,
+        )
+    except Exception as e:
+        print(f"錯誤：計算structure_similarity(in-memory)失敗: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0.0
+
+
 def calculate_structure_similarity(
     image1_path: str,
     image2_path: str,
@@ -50,120 +224,17 @@ def calculate_structure_similarity(
         if img1 is None or img2 is None:
             return 0.0
 
-        # pad to same canvas size (top-left align, consistent with overlay)
-        h1, w1 = img1.shape[:2]
-        h2, w2 = img2.shape[:2]
-        max_h = max(h1, h2)
-        max_w = max(w1, w2)
-        if (h1, w1) != (max_h, max_w):
-            canvas1 = np.ones((max_h, max_w, 3), dtype=np.uint8) * 255
-            canvas1[:h1, :w1] = img1
-            img1 = canvas1
-        if (h2, w2) != (max_h, max_w):
-            canvas2 = np.ones((max_h, max_w, 3), dtype=np.uint8) * 255
-            canvas2[:h2, :w2] = img2
-            img2 = canvas2
-
-        def foreground_mask(img: np.ndarray) -> np.ndarray:
-            """使用邊緣背景色估計得到前景(印章) mask。輸出 bool mask。"""
-            h, w = img.shape[:2]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            edge_width = max(5, min(h, w) // 30)
-            edge_pixels = []
-            edge_pixels.extend(img[0:edge_width, :].reshape(-1, 3).tolist())
-            edge_pixels.extend(img[h-edge_width:h, :].reshape(-1, 3).tolist())
-            edge_pixels.extend(img[:, 0:edge_width].reshape(-1, 3).tolist())
-            edge_pixels.extend(img[:, w-edge_width:w].reshape(-1, 3).tolist())
-
-            edge_colors = np.array(edge_pixels, dtype=np.float32)
-            bg_color = np.median(edge_colors, axis=0).astype(np.uint8)
-
-            img_float = img.astype(np.float32)
-            bg_float = bg_color.astype(np.float32)
-            color_diff = np.sqrt(np.sum((img_float - bg_float) ** 2, axis=2))
-
-            edge_std = np.std(edge_colors, axis=0).mean()
-            thr = max(15, min(40, edge_std * 2))
-            bg_mask = color_diff < thr
-
-            mean_brightness = float(np.mean(gray))
-            if mean_brightness > 200:
-                _, bright_bg = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-                bg_mask = bg_mask | (bright_bg > 0)
-            elif mean_brightness < 50:
-                _, dark_bg = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY_INV)
-                bg_mask = bg_mask | (dark_bg > 0)
-
-            fg = ~bg_mask
-            return fg
-
-        def to_gray(img: np.ndarray) -> np.ndarray:
-            if img.ndim == 2:
-                return img
-            return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # masks used for ROI restriction and geometry penalty
-        m1 = foreground_mask(img1)
-        m2 = foreground_mask(img2)
-        union = m1 | m2
-        inter = m1 & m2
-        union_cnt = int(np.sum(union))
-        if union_cnt == 0:
-            return 0.0
-        iou = float(np.sum(inter)) / float(union_cnt)
-
-        # CLAHE normalization (reduce ink depth / illumination effect)
-        g1 = to_gray(img1)
-        g2 = to_gray(img2)
-        clahe = cv2.createCLAHE(clipLimit=float(clahe_clip_limit), tileGridSize=clahe_tile_grid_size)
-        g1n = clahe.apply(g1)
-        g2n = clahe.apply(g2)
-
-        # Edge extraction; restrict to union ROI to avoid background noise
-        g1n_roi = g1n.copy()
-        g2n_roi = g2n.copy()
-        g1n_roi[~union] = 255
-        g2n_roi[~union] = 255
-        e1 = cv2.Canny(g1n_roi, canny_threshold1, canny_threshold2) > 0
-        e2 = cv2.Canny(g2n_roi, canny_threshold1, canny_threshold2) > 0
-
-        e1_cnt = int(np.sum(e1))
-        e2_cnt = int(np.sum(e2))
-        if e1_cnt == 0 or e2_cnt == 0:
-            return 0.0
-
-        r = max(0, int(edge_dilate_radius))
-        if r > 0:
-            k = 2 * r + 1
-            kernel = np.ones((k, k), np.uint8)
-            e1_d = cv2.dilate(e1.astype(np.uint8) * 255, kernel, iterations=1) > 0
-            e2_d = cv2.dilate(e2.astype(np.uint8) * 255, kernel, iterations=1) > 0
-        else:
-            e1_d = e1
-            e2_d = e2
-
-        # symmetric matching with tolerance
-        match1 = e1 & e2_d
-        match2 = e2 & e1_d
-        recall = float(np.sum(match1)) / float(e1_cnt)
-        precision = float(np.sum(match2)) / float(e2_cnt)
-        if precision + recall == 0:
-            edge_f1 = 0.0
-        else:
-            edge_f1 = 2.0 * precision * recall / (precision + recall)
-
-        # conservative geometry penalty to reduce false positives
-        if iou < float(min_iou_for_penalty):
-            penalty = 0.0
-        else:
-            # sqrt keeps high overlap close to 1, but punishes mediocre overlap
-            penalty = float(np.sqrt(iou))
-
-        # 對假陽性更保守：把 edge_f1 做次方壓縮，讓「略像」的分數下降更快
-        pow_k = max(1.0, float(edge_f1_power))
-        sim = float((edge_f1 ** pow_k) * penalty)
-        return float(max(0.0, min(1.0, sim)))
+        return _calculate_structure_similarity_core(
+            img1,
+            img2,
+            clahe_clip_limit=clahe_clip_limit,
+            clahe_tile_grid_size=clahe_tile_grid_size,
+            canny_threshold1=canny_threshold1,
+            canny_threshold2=canny_threshold2,
+            edge_dilate_radius=edge_dilate_radius,
+            edge_f1_power=edge_f1_power,
+            min_iou_for_penalty=min_iou_for_penalty,
+        )
 
     except Exception as e:
         print(f"錯誤：計算structure_similarity失敗: {e}")

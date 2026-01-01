@@ -8,6 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 import hashlib
+from core.overlay import calculate_structure_similarity_from_images
 
 
 class SealComparator:
@@ -421,6 +422,38 @@ class SealComparator:
             rotation_range=rotation_range,
             translation_range=translation_range
         )
+
+        # === 右角候選 skip 規則：只要 base=0 的 structure_similarity >= 本次 threshold，就不跑 90/180/270 ===
+        # 注意：threshold 來自本次請求（ImageService 建 comparator 時傳入），不是 frontend.yml 的初始值本身。
+        struct_start = time.time()
+        try:
+            struct_sim = float(calculate_structure_similarity_from_images(image1, base0_aligned))
+        except Exception:
+            struct_sim = 0.0
+        struct_cost = float(time.time() - struct_start)
+
+        try:
+            threshold_now = float(self.threshold)
+        except Exception:
+            threshold_now = 0.5
+
+        if struct_sim >= threshold_now:
+            out_metrics = dict(base0_metrics) if isinstance(base0_metrics, dict) else {}
+            out_metrics['right_angle_candidates_skipped_by_structure_similarity'] = True
+            out_metrics['right_angle_skip_structure_similarity'] = float(struct_sim)
+            out_metrics['right_angle_skip_threshold'] = float(threshold_now)
+            out_metrics['right_angle_skip_structure_similarity_seconds'] = float(struct_cost)
+
+            # 保持 schema 穩定（UI 可顯示「右角候選額外耗時」時，這裡應為 0）
+            out_metrics['right_angle_fallback_used'] = False
+            out_metrics['right_angle_base_rotation'] = 0
+            out_metrics['right_angle_candidates_tried'] = [0]
+            out_metrics['right_angle_candidates_eval_time_total'] = 0.0
+            out_metrics['right_angle_fallback_time'] = 0.0
+            out_metrics['right_angle_adopted_candidate_time'] = 0.0
+            out_metrics['right_angle_extra_overhead_time'] = 0.0
+
+            return base0_aligned, base0_angle, base0_offset, base0_sim, out_metrics, base0_timing
 
         # 右角旋轉 fallback gating：相似度已很高則不再嘗試，避免額外耗時
         # 注意：這裡故意使用較高門檻，避免 base=0 尚可但仍可被更佳右角解「明顯改善」的情況被跳過。
