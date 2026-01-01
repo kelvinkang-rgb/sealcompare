@@ -20,10 +20,21 @@ const formatCount = (v) => {
   return `${n.toFixed(0)} 次`
 }
 
-export default function TimingDetailsTable({ timing }) {
-  const rows = useMemo(() => buildTimingLeafRows(timing), [timing])
+export default function TimingDetailsTable({ timing, alignmentMetrics }) {
+  // 額外：把右角候選的「純額外耗時」注入到 timing，方便用同一張表顯示（秒）
+  const timingWithExtras = useMemo(() => {
+    const t = timing && typeof timing === 'object' ? timing : {}
+    const m = alignmentMetrics && typeof alignmentMetrics === 'object' ? alignmentMetrics : {}
+    const extra = m?.right_angle_extra_overhead_time
+    if (typeof extra === 'number' && Number.isFinite(extra) && extra > 0) {
+      return { ...t, right_angle_extra_overhead_time: extra }
+    }
+    return t
+  }, [timing, alignmentMetrics])
+
+  const rows = useMemo(() => buildTimingLeafRows(timingWithExtras), [timingWithExtras])
   const overallTotal = useMemo(() => sumSeconds(rows), [rows])
-  const countRows = useMemo(() => buildTimingCountRows(timing), [timing])
+  const countRows = useMemo(() => buildTimingCountRows(timingWithExtras), [timingWithExtras])
 
   const rowsByGroup = useMemo(() => {
     const m = new Map()

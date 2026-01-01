@@ -34,6 +34,10 @@ const TASK_LEAF_DEFS = [
   ['create_heatmap', '生成熱力圖'],
 ]
 
+const RIGHT_ANGLE_EXTRA_DEFS = [
+  ['right_angle_extra_overhead_time', '右角候選額外耗時（不含採用候選）'],
+]
+
 const PARENT_KEYS = new Set([
   // 任務級父層
   'total',
@@ -117,6 +121,13 @@ export function buildTimingLeafRows(timing) {
     if (isFiniteNumber(v)) rows.push({ key: k, label, seconds: v, group: 'task', order: i })
   }
 
+  // 1b) 右角候選：只顯示「純額外耗時」（避免與採用候選的對齊階段重複計算）
+  for (let i = 0; i < RIGHT_ANGLE_EXTRA_DEFS.length; i++) {
+    const [k, label] = RIGHT_ANGLE_EXTRA_DEFS[i]
+    const v = t?.[k]
+    if (isFiniteNumber(v)) rows.push({ key: k, label, seconds: v, group: 'right_angle_candidates', order: i })
+  }
+
   // 2) 圖像1去背景 steps：從 image1_background_stages 取 leaf（不顯示 remove_background_total）
   const img1 = t?.image1_background_stages
   if (img1 && typeof img1 === 'object') {
@@ -171,6 +182,7 @@ export function buildTimingLeafRows(timing) {
     if (PARENT_KEYS.has(k)) continue
     if (k === 'alignment_stages' || k === 'image1_background_stages') continue
     if (TASK_LABELS.has(k)) continue
+    if (k === 'right_angle_extra_overhead_time') continue
     if (!isSecondsLeafKey(k)) continue
     if (isFiniteNumber(v)) rows.push({ key: k, label: k, seconds: v, group: 'other', order: 20000 })
   }
@@ -237,6 +249,7 @@ export const TIMING_GROUPS = [
   { id: 'image1_remove_bg_steps', label: '圖像1去背景（葉節點）' },
   { id: 'image2_remove_bg_steps', label: '圖像2去背景（葉節點）' },
   { id: 'alignment_steps', label: '對齊（葉節點）' },
+  { id: 'right_angle_candidates', label: '右角候選（額外耗時）' },
   { id: 'other', label: '其他（葉節點）' },
 ]
 

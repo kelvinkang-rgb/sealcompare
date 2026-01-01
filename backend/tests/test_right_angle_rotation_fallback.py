@@ -58,6 +58,7 @@ def test_align_right_angle_rotation_fallback_picks_correct_base():
         assert isinstance(metrics, dict)
         assert metrics.get("right_angle_fallback_used") is True
         assert metrics.get("right_angle_base_rotation") == expected_base
+        assert metrics.get("right_angle_candidate_mode") == "stage45_only"
 
         # 這個測試圖是同一張圖右角旋轉後再對齊，理論上應該能得到很高相似度
         assert float(sim) >= 0.85

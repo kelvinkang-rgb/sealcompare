@@ -1037,7 +1037,7 @@ function MultiSealComparisonResults({
                         </Typography>
                       </AccordionSummary>
                       <AccordionDetails>
-                        <TimingDetailsTable timing={result.timing} />
+                        <TimingDetailsTable timing={result.timing} alignmentMetrics={result.alignment_metrics} />
                       </AccordionDetails>
                     </Accordion>
                   </Box>
