@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from app.config import settings
 from app.database import engine, Base
-from app.api import images, comparisons, visualizations, statistics
+from app.api import images
 from app.exceptions import (
     ImageNotFoundError,
     ImageFileNotFoundError,
@@ -19,8 +19,6 @@ from app.exceptions import (
     ImageNotMarkedError,
     ImageReadError,
     CropAreaTooSmallError,
-    ComparisonNotFoundError,
-    VisualizationNotFoundError,
     MultiSealComparisonTaskNotFoundError
 )
 
@@ -31,28 +29,6 @@ Base.metadata.create_all(bind=engine)
 def add_missing_columns():
     """添加缺失的欄位到現有表"""
     with engine.connect() as conn:
-        # 檢查並添加 deleted_at 欄位
-        try:
-            conn.execute(text("""
-                ALTER TABLE comparisons 
-                ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP
-            """))
-            conn.commit()
-        except Exception as e:
-            print(f"添加 deleted_at 欄位時出錯（可能已存在）: {e}")
-            conn.rollback()
-        
-        # 檢查並添加 notes 欄位
-        try:
-            conn.execute(text("""
-                ALTER TABLE comparisons 
-                ADD COLUMN IF NOT EXISTS notes VARCHAR(500)
-            """))
-            conn.commit()
-        except Exception as e:
-            print(f"添加 notes 欄位時出錯（可能已存在）: {e}")
-            conn.rollback()
-        
         # 檢查並添加印鑑檢測相關欄位到 images 表
         try:
             conn.execute(text("""
@@ -213,9 +189,6 @@ app.add_middleware(
 
 # 註冊路由
 app.include_router(images.router, prefix=settings.API_V1_PREFIX)
-app.include_router(comparisons.router, prefix=settings.API_V1_PREFIX)
-app.include_router(visualizations.router, prefix=settings.API_V1_PREFIX)
-app.include_router(statistics.router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/")
@@ -313,24 +286,6 @@ async def crop_area_too_small_handler(request: Request, exc: CropAreaTooSmallErr
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content={"detail": str(exc) or "裁切區域太小"}
-    )
-
-
-@app.exception_handler(ComparisonNotFoundError)
-async def comparison_not_found_handler(request: Request, exc: ComparisonNotFoundError):
-    """比對記錄不存在異常處理器"""
-    return JSONResponse(
-        status_code=status.HTTP_404_NOT_FOUND,
-        content={"detail": str(exc) or "比對記錄不存在"}
-    )
-
-
-@app.exception_handler(VisualizationNotFoundError)
-async def visualization_not_found_handler(request: Request, exc: VisualizationNotFoundError):
-    """視覺化記錄不存在異常處理器"""
-    return JSONResponse(
-        status_code=status.HTTP_404_NOT_FOUND,
-        content={"detail": str(exc) or "視覺化記錄不存在"}
     )
 
 

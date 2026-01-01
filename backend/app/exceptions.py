@@ -49,16 +49,6 @@ class CropAreaTooSmallError(Exception):
     pass
 
 
-class ComparisonNotFoundError(Exception):
-    """比對記錄不存在異常"""
-    pass
-
-
-class VisualizationNotFoundError(Exception):
-    """視覺化記錄不存在異常"""
-    pass
-
-
 class MultiSealComparisonTaskNotFoundError(Exception):
     """多印鑑比對任務不存在異常"""
     pass
