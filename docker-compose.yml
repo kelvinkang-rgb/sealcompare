@@ -71,12 +71,12 @@ services:
         VITE_FEATURE_IMAGE_PREVIEW_DIALOG: "true"
         # UI 元素開關配置（true = 顯示，false = 隱藏）
         VITE_FEATURE_MASK_STATISTICS: "false"
-        VITE_FEATURE_TIMING_DETAILS: "false"
+        VITE_FEATURE_TIMING_DETAILS: "true"
         VITE_FEATURE_TASK_TIMING_STATISTICS: "false"
         VITE_FEATURE_ADVANCED_SETTINGS: "true"
         VITE_FEATURE_MAX_SEALS_SETTING: "true"
         VITE_FEATURE_THRESHOLD_SETTING: "false"
-        VITE_FEATURE_MASK_WEIGHTS_SETTING: "false"
+        VITE_FEATURE_MASK_WEIGHTS_SETTING: "true"
         VITE_FEATURE_ALIGNMENT_TIMING_DETAILS: "true"
     container_name: sealcompare-frontend
     ports:

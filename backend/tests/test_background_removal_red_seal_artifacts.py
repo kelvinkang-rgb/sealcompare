@@ -22,19 +22,38 @@ def _border_pixels(gray: np.ndarray, edge_width: int) -> np.ndarray:
 
 
 def _red_mask_bgr(img_bgr: np.ndarray) -> np.ndarray:
-    """回傳 uint8 mask (0/255)；與演算法一致的 HSV+Lab 紅章偵測。"""
+    """
+    回傳 uint8 mask (0/255)；用「相對背景的色偏」當 proxy，避免淡紅因固定閾值而漏掉。
+    這裡的 proxy 目標是：標記『看起來像紅印泥』的像素，供「保留率」檢查。
+    """
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+    # 背景估計：用邊緣像素的 Lab 中位數（抗噪）
+    h, w = img_bgr.shape[:2]
+    ew = max(3, min(h, w) // 30)
+    edges = np.concatenate([
+        img_bgr[:ew, :, :].reshape(-1, 3),
+        img_bgr[-ew:, :, :].reshape(-1, 3),
+        img_bgr[:, :ew, :].reshape(-1, 3),
+        img_bgr[:, -ew:, :].reshape(-1, 3),
+    ], axis=0)
+    edges_lab = cv2.cvtColor(edges.reshape(-1, 1, 3), cv2.COLOR_BGR2LAB).reshape(-1, 3)
+    bg_a = int(np.median(edges_lab[:, 1]))
+
+    # HSV（寬鬆）+ Lab delta_a（核心）
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    lower1 = np.array([0, 50, 40], dtype=np.uint8)
-    upper1 = np.array([10, 255, 255], dtype=np.uint8)
-    lower2 = np.array([170, 50, 40], dtype=np.uint8)
-    upper2 = np.array([180, 255, 255], dtype=np.uint8)
+    lower1 = np.array([0, 10, 20], dtype=np.uint8)
+    upper1 = np.array([15, 255, 255], dtype=np.uint8)
+    lower2 = np.array([165, 10, 20], dtype=np.uint8)
+    upper2 = np.array([179, 255, 255], dtype=np.uint8)
     m1 = cv2.inRange(hsv, lower1, upper1)
     m2 = cv2.inRange(hsv, lower2, upper2)
     red_hsv = cv2.bitwise_or(m1, m2)
 
     lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
-    a = lab[:, :, 1]
-    red_lab = (a > 150).astype(np.uint8) * 255
+    a = lab[:, :, 1].astype(np.int16)
+    delta_a = a - bg_a
+    red_lab = ((delta_a >= 8) & (gray < 252)).astype(np.uint8) * 255
 
     return cv2.bitwise_or(red_hsv, red_lab)
 

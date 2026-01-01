@@ -147,6 +147,14 @@ test('PDF：全頁比對完成後必須在 UI 顯示摘要與頁級結果', asyn
 
   // PDF 全頁應顯示 histogram，且可點擊區間回寫篩選（顯示已套用區間）
   await expect(page.getByText('Mask相似度分布統計')).toBeVisible({ timeout: 120_000 })
+  // 需求：UI 位置對調後，Histogram 應該在「全頁共用篩選器」上方（避免只改 CSS 造成視覺與 DOM 不一致）
+  const histogramTitle = page.getByText('Mask相似度分布統計').first()
+  const filterSearch = page.getByTestId('pdf-global-filter-search').first()
+  const histogramBox = await histogramTitle.boundingBox()
+  const filterBox = await filterSearch.boundingBox()
+  expect(histogramBox, 'histogram title should have bounding box').toBeTruthy()
+  expect(filterBox, 'pdf global filter search should have bounding box').toBeTruthy()
+  expect(histogramBox.y).toBeLessThan(filterBox.y)
   const firstBar = page.locator('.recharts-bar-rectangle').first()
   await expect(firstBar).toBeVisible({ timeout: 120_000 })
   await firstBar.click({ force: true })

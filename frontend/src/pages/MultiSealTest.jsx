@@ -2096,8 +2096,22 @@ function MultiSealTest() {
             </Alert>
           )}
 
+          {/* PDF Histogram（全頁合併） */}
+          {showSimilarityHistogram && (() => {
+            const rawPages = Array.isArray(pdfComparisonResults) ? pdfComparisonResults : []
+            const allResults = rawPages.flatMap(p => Array.isArray(p?.results) ? p.results : [])
+            if (!allResults || allResults.length === 0) return null
+            return (
+              <SimilarityHistogram
+                results={allResults}
+                selectedRange={pdfGlobalFilter.similarityRange}
+                onRangeSelect={(range) => setPdfGlobalFilter((prev) => ({ ...prev, similarityRange: range }))}
+              />
+            )
+          })()}
+
           {/* PDF 全頁共用篩選器（只顯示一套） */}
-          <Paper sx={{ p: 2, mb: 2 }}>
+          <Paper sx={{ p: 2, mt: 2, mb: 2 }}>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <TextField
                 size="small"
@@ -2112,9 +2126,9 @@ function MultiSealTest() {
               />
 
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <TextField
-              size="small"
-              type="number"
+                <TextField
+                  size="small"
+                  type="number"
                   placeholder="最小%"
                   value={pdfGlobalFilter.minSimilarity}
                   onChange={(e) => {
@@ -2130,9 +2144,9 @@ function MultiSealTest() {
                 <Typography variant="body2" color="text.secondary">
                   ~
                 </Typography>
-            <TextField
-              size="small"
-              type="number"
+                <TextField
+                  size="small"
+                  type="number"
                   placeholder="最大%"
                   value={pdfGlobalFilter.maxSimilarity}
                   onChange={(e) => {
@@ -2144,8 +2158,8 @@ function MultiSealTest() {
                   inputProps={{ min: 0, max: 100, step: 0.1 }}
                   sx={{ width: 110 }}
                   label="最大相似度"
-            />
-          </Box>
+                />
+              </Box>
 
               <FormControl size="small" sx={{ minWidth: 150 }}>
                 <InputLabel>匹配狀態</InputLabel>
@@ -2175,20 +2189,6 @@ function MultiSealTest() {
               </FormControl>
             </Stack>
           </Paper>
-
-          {/* PDF Histogram（全頁合併） */}
-          {showSimilarityHistogram && (() => {
-            const rawPages = Array.isArray(pdfComparisonResults) ? pdfComparisonResults : []
-            const allResults = rawPages.flatMap(p => Array.isArray(p?.results) ? p.results : [])
-            if (!allResults || allResults.length === 0) return null
-            return (
-              <SimilarityHistogram
-                results={allResults}
-                selectedRange={pdfGlobalFilter.similarityRange}
-                onRangeSelect={(range) => setPdfGlobalFilter((prev) => ({ ...prev, similarityRange: range }))}
-              />
-            )
-          })()}
 
           {(() => {
             const pagesTotalRaw =

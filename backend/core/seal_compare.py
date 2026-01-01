@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 import hashlib
 
+from core.ink_segmentation import select_ink_color_and_mask
+
 
 class SealComparator:
     """印鑑比對器"""
@@ -185,29 +187,14 @@ class SealComparator:
             # 改用紅章分割/簡易背景移除作為 fallback，避免黑線/摺痕殘留。
             if len(image.shape) == 3:
                 try:
-                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
-                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
-                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
-                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
-                    mask1 = cv2.inRange(hsv, lower1, upper1)
-                    mask2 = cv2.inRange(hsv, lower2, upper2)
-                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
-                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-                    a = lab[:, :, 1]
-                    red_mask_lab = (a > 150).astype(np.uint8) * 255
-                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
-                    k = 3 if min(gray.shape) < 220 else 5
-                    kernel_red = np.ones((k, k), np.uint8)
-                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_red, iterations=2)
-                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_red, iterations=1)
-                    dil = cv2.dilate(red_mask, kernel_red, iterations=1)
-                    near_red = (dil > 0) & (corrected_gray < 245)
-                    red_mask = np.where(near_red, 255, red_mask).astype(np.uint8)
-                    if float(np.mean(red_mask > 0)) >= 0.008:
+                    seg_start = time.time()
+                    seg = select_ink_color_and_mask(image, min_ratio=0.004)
+                    if seg.color is not None:
                         result = image.copy()
-                        result[red_mask == 0] = [255, 255, 255]
-                        timing['step6_fallback_red_seal_segmentation'] = 0.0
+                        result[seg.mask_u8 == 0] = [255, 255, 255]
+                        # 向後相容：保留舊 key（即使現在可能是 blue）
+                        timing['step6_fallback_red_seal_segmentation'] = time.time() - seg_start
+                        timing['step6_fallback_ink_segmentation'] = time.time() - seg_start
                         if return_timing and timing:
                             timing['remove_background_total'] = sum(v for k, v in timing.items() if k != 'remove_background_total')
                         return result, timing
@@ -228,29 +215,14 @@ class SealComparator:
             # 輪廓太小（可能是已裁切印鑑或噪點），同樣嘗試 fallback 去背景
             if len(image.shape) == 3:
                 try:
-                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
-                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
-                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
-                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
-                    mask1 = cv2.inRange(hsv, lower1, upper1)
-                    mask2 = cv2.inRange(hsv, lower2, upper2)
-                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
-                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-                    a = lab[:, :, 1]
-                    red_mask_lab = (a > 150).astype(np.uint8) * 255
-                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
-                    k = 3 if min(gray.shape) < 220 else 5
-                    kernel_red = np.ones((k, k), np.uint8)
-                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_red, iterations=2)
-                    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_red, iterations=1)
-                    dil = cv2.dilate(red_mask, kernel_red, iterations=1)
-                    near_red = (dil > 0) & (corrected_gray < 245)
-                    red_mask = np.where(near_red, 255, red_mask).astype(np.uint8)
-                    if float(np.mean(red_mask > 0)) >= 0.008:
+                    seg_start = time.time()
+                    seg = select_ink_color_and_mask(image, min_ratio=0.004)
+                    if seg.color is not None:
                         result = image.copy()
-                        result[red_mask == 0] = [255, 255, 255]
-                        timing['step7_fallback_red_seal_segmentation'] = 0.0
+                        result[seg.mask_u8 == 0] = [255, 255, 255]
+                        # 向後相容：保留舊 key（即使現在可能是 blue）
+                        timing['step7_fallback_red_seal_segmentation'] = time.time() - seg_start
+                        timing['step7_fallback_ink_segmentation'] = time.time() - seg_start
                         if return_timing and timing:
                             timing['remove_background_total'] = sum(v for k, v in timing.items() if k != 'remove_background_total')
                         return result, timing
@@ -302,59 +274,19 @@ class SealComparator:
         if cropped.size == 0:
             return image, timing
 
-        # === 紅章優先去背景（對「黑線/摺痕陰影」特別有效）===
-        # 若裁切後圖像存在足夠的紅色像素，直接以紅色前景 mask 作為印鑑，
-        # 將非紅色區域全部視為背景並設為白色，避免黑線/陰影被保留。
+        # === 印泥（紅/藍）優先去背景（對「黑線/摺痕陰影」特別有效）===
+        # 以「相對背景的色偏」抓淡紅/淡藍，並自動判別紅/藍；
+        # 若存在足夠的 ink 前景 mask，將非 ink 區域全部視為背景並設為白色，避免黑線/陰影被保留。
         if len(cropped.shape) == 3:
-            redseg_start = time.time()
+            inkseg_start = time.time()
             try:
-                hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
-                # HSV 紅色兩段（hue 0-10, 170-180）
-                lower1 = np.array([0, 50, 40], dtype=np.uint8)
-                upper1 = np.array([10, 255, 255], dtype=np.uint8)
-                lower2 = np.array([170, 50, 40], dtype=np.uint8)
-                upper2 = np.array([180, 255, 255], dtype=np.uint8)
-                mask1 = cv2.inRange(hsv, lower1, upper1)
-                mask2 = cv2.inRange(hsv, lower2, upper2)
-                red_mask_hsv = cv2.bitwise_or(mask1, mask2)
-
-                # Lab 的 a-channel：紅色偏向 a > 128（越紅越高）
-                lab = cv2.cvtColor(cropped, cv2.COLOR_BGR2LAB)
-                a = lab[:, :, 1]
-                red_mask_lab = (a > 150).astype(np.uint8) * 255
-
-                red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
-
-                # 形態學：補洞 + 去噪
-                k = 3 if min(cropped_gray.shape) < 220 else 5
-                kernel_red = np.ones((k, k), np.uint8)
-                red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_red, iterations=2)
-                red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_red, iterations=1)
-
-                # 避免紅章內部陰影造成破洞：把「靠近紅章」且非高亮背景的暗像素也納入
-                dil = cv2.dilate(red_mask, kernel_red, iterations=1)
-                near_red = (dil > 0) & (cropped_gray < 245)
-                red_mask = np.where(near_red, 255, red_mask).astype(np.uint8)
-
-                # 過濾小型紅噪點（保留主要連通元件）
-                num_labels, labels, stats, _ = cv2.connectedComponentsWithStats((red_mask > 0).astype(np.uint8), connectivity=8)
-                if num_labels > 1:
-                    areas = stats[1:, cv2.CC_STAT_AREA]
-                    max_area = int(areas.max()) if areas.size else 0
-                    keep = np.zeros_like(red_mask, dtype=np.uint8)
-                    # 保留面積接近最大者（避免保留散落小紅點）
-                    for i in range(1, num_labels):
-                        area = int(stats[i, cv2.CC_STAT_AREA])
-                        if max_area > 0 and area >= max(80, int(max_area * 0.02)):
-                            keep[labels == i] = 255
-                    red_mask = keep
-
-                red_ratio = float(np.mean(red_mask > 0))
-                # 紅色比例太低則視為非紅章，走 fallback
-                if red_ratio >= 0.008:
+                seg = select_ink_color_and_mask(cropped, min_ratio=0.004)
+                if seg.color is not None:
                     result = cropped.copy()
-                    result[red_mask == 0] = [255, 255, 255]
-                    timing['step9_red_seal_segmentation'] = time.time() - redseg_start
+                    result[seg.mask_u8 == 0] = [255, 255, 255]
+                    # 向後相容：保留舊 key（即使現在可能是 blue）
+                    timing['step9_red_seal_segmentation'] = time.time() - inkseg_start
+                    timing['step9_ink_segmentation'] = time.time() - inkseg_start
                     timing['step9_remove_bg_final'] = time.time() - step9_start
 
                     # 計算總時間（僅在需要時計算）
