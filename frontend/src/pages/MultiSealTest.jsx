@@ -19,6 +19,10 @@ import {
   Snackbar,
   TextField,
   MenuItem,
+  Stack,
+  FormControl,
+  InputLabel,
+  Select,
   Slider,
   Accordion,
   AccordionSummary,
@@ -26,7 +30,7 @@ import {
   IconButton,
   Collapse,
 } from '@mui/material'
-import { ExpandMore as ExpandMoreIcon, Settings as SettingsIcon, Error as ErrorIcon, ContentCopy as ContentCopyIcon, ExpandMore, ExpandLess, Info as InfoIcon } from '@mui/icons-material'
+import { ExpandMore as ExpandMoreIcon, Settings as SettingsIcon, Error as ErrorIcon, ContentCopy as ContentCopyIcon, ExpandMore, ExpandLess, Info as InfoIcon, Search as SearchIcon } from '@mui/icons-material'
 import { useMutation } from '@tanstack/react-query'
 import { imageAPI } from '../services/api'
 import ImagePreview from '../components/ImagePreview'
@@ -86,18 +90,30 @@ function MultiSealTest() {
   // PDF 比對任務狀態（image1 第1頁 vs image2 全部頁）
   const [pdfTaskUid, setPdfTaskUid] = useState(null)
   const [pdfTaskStatus, setPdfTaskStatus] = useState(null)
-  // PDF 比對結果：相似度區間篩選（可空）
-  const [pdfSimilarityMin, setPdfSimilarityMin] = useState('')
-  const [pdfSimilarityMax, setPdfSimilarityMax] = useState('')
   // PDF 比對結果數據（處理後的結果，對齊 PNG/JPG 的 comparisonResults 更新策略）
   const [pdfComparisonResults, setPdfComparisonResults] = useState(null)
+  // PDF 全頁共用篩選器（供每頁結果共用）
+  const [pdfGlobalFilter, setPdfGlobalFilter] = useState({
+    searchText: '',
+    matchFilter: 'all', // 'all' | 'match' | 'no-match'
+    sortBy: 'index-asc', // 'index-asc' | 'index-desc' | 'similarity-asc' | 'similarity-desc'
+    minSimilarity: '', // 0-100 (%)
+    maxSimilarity: '', // 0-100 (%)
+    similarityRange: null, // [min,max] 0-1（由 histogram 點選回寫）
+  })
 
   const resetPdfTaskUI = useCallback(() => {
     setPdfTaskUid(null)
     setPdfTaskStatus(null)
-    setPdfSimilarityMin('')
-    setPdfSimilarityMax('')
     setPdfComparisonResults(null)
+    setPdfGlobalFilter({
+      searchText: '',
+      matchFilter: 'all',
+      sortBy: 'index-asc',
+      minSimilarity: '',
+      maxSimilarity: '',
+      similarityRange: null,
+    })
   }, [])
 
   const clamp01 = useCallback((v) => {
@@ -434,6 +450,8 @@ function MultiSealTest() {
       }
       return 1500
     },
+    // E2E/headless 或背景分頁時避免 interval 被暫停，確保 UI 能同步到最終狀態
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
   })
 
@@ -443,6 +461,7 @@ function MultiSealTest() {
     queryKey: ['pdf-task-result', pdfTaskUid],
     queryFn: () => imageAPI.getPdfTaskResult(pdfTaskUid),
     enabled: !!pdfTaskUid,
+    refetchOnMount: 'always',
     refetchInterval: (query) => {
       const resultData = query.state.data
       const status = polledPdfTaskStatus?.status || resultData?.status
@@ -450,22 +469,30 @@ function MultiSealTest() {
       if (status === 'completed' || status === 'failed') {
         return false
       }
-      // 如果任務進行中，定期查詢結果（後端有增量寫入，可以即時顯示部分結果）
-      if (status === 'processing') {
+      // pending/processing：定期查詢結果（後端有增量寫入，可以即時顯示部分結果）
+      if (status === 'pending' || status === 'processing') {
         return 2000 // 每 2 秒查詢一次，獲取增量結果
       }
       // 其他情況（pending）不輪詢
       return false
     },
+    // 同上：避免 background 時 interval 暫停
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
   })
 
   useEffect(() => {
     if (polledPdfTaskStatus) {
       setPdfTaskStatus(polledPdfTaskStatus)
-      // 當任務完成或失敗時，強制觸發結果查詢以確保獲取最終結果
+      // 狀態變化時同步觸發結果查詢：
+      // - pending -> processing：開始拿增量結果
+      // - completed/failed：確保拿到最終結果
+      if (pdfTaskUid) {
       if (polledPdfTaskStatus.status === 'completed' || polledPdfTaskStatus.status === 'failed') {
+          queryClient.refetchQueries({ queryKey: ['pdf-task-result', pdfTaskUid] })
+        } else {
         queryClient.invalidateQueries({ queryKey: ['pdf-task-result', pdfTaskUid] })
+        }
       }
     }
   }, [polledPdfTaskStatus, pdfTaskUid, queryClient])
@@ -483,11 +510,17 @@ function MultiSealTest() {
           ? (pagesDone / pagesTotal) * 100
           : undefined
 
-      setPdfTaskStatus((prev) => ({
+      const isTerminal = (s) => s === 'completed' || s === 'failed'
+      setPdfTaskStatus((prev) => {
+        const prevStatus = prev?.status
+        const nextStatus = polledPdfTaskResult.status
+        return {
         ...(prev || {}),
-        status: polledPdfTaskResult.status,
+          // 避免「已 completed」被結果輪詢的舊 processing 回寫降級
+          status: isTerminal(prevStatus) ? prevStatus : nextStatus,
         progress: progressFromCounts ?? prev?.progress,
-      }))
+        }
+      })
     }
 
     // 2) 結果處理：只顯示已生成疊圖（overlay1/overlay2）或 error 的項目
@@ -1009,7 +1042,20 @@ function MultiSealTest() {
         uniqueRegionPenaltyWeight
       })
       setPdfTaskUid(r.task_uid)
-      setPdfTaskStatus({ status: r.status, progress: r.progress, progress_message: r.progress_message })
+      setPdfTaskStatus({
+        status: r.status,
+        progress: r.progress,
+        progress_message: r.progress_message,
+        pages_total: r.pages_total,
+        pages_done: r.pages_done,
+      })
+      // 立即查一次 status，確保 UI 能立刻進入輪詢/顯示頁數資訊（也避免背景分頁時輪詢延遲）
+      try {
+        const s = await imageAPI.getPdfTaskStatus(r.task_uid)
+        setPdfTaskStatus(s)
+      } catch (err) {
+        console.warn('取得 PDF 任務狀態失敗（將依輪詢再同步）:', err)
+      }
       setSnackbar({ open: true, message: `PDF 全頁比對已開始（UID: ${r.task_uid?.substring(0, 8)}...)`, severity: 'info' })
     } catch (e) {
       console.error(e)
@@ -1528,7 +1574,8 @@ function MultiSealTest() {
                   // 只有「模板頁真的變更」才清除舊的 PDF 全頁比對任務狀態；
                   // 避免同一頁的 refetch/onPageImageLoaded 觸發把剛開始的任務清掉，導致 UI 看不到摘要/結果。
                   const nextTemplateId = pageImg?.id || null
-                  if (pdfTaskUid && String(nextTemplateId) !== String(image1TemplatePageId)) {
+                  const isPdfTaskTerminal = pdfTaskStatus?.status === 'completed' || pdfTaskStatus?.status === 'failed'
+                  if (pdfTaskUid && isPdfTaskTerminal && String(nextTemplateId) !== String(image1TemplatePageId)) {
                     resetPdfTaskUI()
                   }
                   setImage1TemplatePageId(nextTemplateId)
@@ -1662,6 +1709,7 @@ function MultiSealTest() {
                 </Button>
                 <Button
                   variant="contained"
+                  type="button"
                   fullWidth
                   onClick={handlePdfCompare}
                   disabled={!!pdfTaskUid && pdfTaskStatus?.status !== 'completed' && pdfTaskStatus?.status !== 'failed'}
@@ -1943,7 +1991,11 @@ function MultiSealTest() {
           {(() => {
             const statusFromStatus = pdfTaskStatus?.status
             const statusFromResult = polledPdfTaskResult?.status
-            const effectiveStatus = statusFromResult || statusFromStatus || '—'
+            const isTerminal = (s) => s === 'completed' || s === 'failed'
+            const effectiveStatus =
+              isTerminal(statusFromStatus) ? statusFromStatus
+              : isTerminal(statusFromResult) ? statusFromResult
+              : (statusFromResult || statusFromStatus || '—')
 
             const pagesTotalRaw =
               polledPdfTaskResult?.pages_total ?? pdfTaskStatus?.pages_total ?? polledPdfTaskStatus?.pages_total
@@ -1975,14 +2027,14 @@ function MultiSealTest() {
               <Paper sx={{ p: 2 }}>
                 <Typography variant="subtitle1" gutterBottom>
                   PDF 任務摘要
-                </Typography>
+            </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Job: {pdfTaskUid || polledPdfTaskResult?.task_uid || '—'}
-                </Typography>
+                  </Typography>
                 <Typography variant="body2" sx={{ mt: 0.5 }}>
                   狀態：{effectiveStatus}
                   {hasCounts ? `（頁面：${Math.max(0, pagesDone)}/${Math.max(0, pagesTotal)}）` : ''}
-                </Typography>
+                  </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   {`頁面統計：有偵測 ${pagesWithDetected} 頁｜有可顯示結果 ${pagesWithVisibleResults} 頁｜可顯示結果總數 ${visibleResultsCount}｜無偵測原因 ${pagesWithReason} 頁`}
                 </Typography>
@@ -2007,7 +2059,11 @@ function MultiSealTest() {
           {(() => {
             const statusFromStatus = pdfTaskStatus?.status
             const statusFromResult = polledPdfTaskResult?.status
-            const effectiveStatus = statusFromResult || statusFromStatus
+            const isTerminal = (s) => s === 'completed' || s === 'failed'
+            const effectiveStatus =
+              isTerminal(statusFromStatus) ? statusFromStatus
+              : isTerminal(statusFromResult) ? statusFromResult
+              : (statusFromResult || statusFromStatus)
 
             if (effectiveStatus !== 'completed') return null
 
@@ -2015,7 +2071,7 @@ function MultiSealTest() {
               return (
                 <Alert severity="info" sx={{ mt: 2 }}>
                   任務已完成，正在取得最終結果…
-                </Alert>
+          </Alert>
               )
             }
 
@@ -2032,8 +2088,7 @@ function MultiSealTest() {
         </Box>
       )}
 
-      {image2?.is_pdf && pdfComparisonResults &&
-        pdfComparisonResults.length > 0 && (
+      {image2?.is_pdf && pdfTaskUid && (
         <Box sx={{ mt: 4 }}>
           {polledPdfTaskResult?.status === 'processing' && (
             <Alert severity="info" sx={{ mb: 2 }}>
@@ -2041,60 +2096,134 @@ function MultiSealTest() {
             </Alert>
           )}
 
-          <Typography variant="subtitle1" gutterBottom>
-            PDF 比對結果
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Job: {pdfTaskUid || polledPdfTaskResult?.task_uid || '—'}
-          </Typography>
+          {/* PDF 全頁共用篩選器（只顯示一套） */}
+          <Paper sx={{ p: 2, mb: 2 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField
+                size="small"
+                placeholder="搜尋印鑑索引..."
+                value={pdfGlobalFilter.searchText}
+                onChange={(e) => setPdfGlobalFilter((prev) => ({ ...prev, searchText: e.target.value }))}
+                inputProps={{ 'data-testid': 'pdf-global-filter-search' }}
+                InputProps={{
+                  startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+                }}
+                sx={{ flex: 1 }}
+              />
 
-          <Box sx={{ display: 'flex', gap: 2, mt: 2, flexWrap: 'wrap' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <TextField
               size="small"
-              label="相似度下限"
               type="number"
-              inputProps={{ min: 0, max: 1, step: 0.01 }}
-              value={pdfSimilarityMin}
-              onChange={(e) => setPdfSimilarityMin(e.target.value)}
-              sx={{ width: 180 }}
-            />
+                  placeholder="最小%"
+                  value={pdfGlobalFilter.minSimilarity}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (val === '' || (parseFloat(val) >= 0 && parseFloat(val) <= 100)) {
+                      setPdfGlobalFilter((prev) => ({ ...prev, minSimilarity: val }))
+                    }
+                  }}
+                  inputProps={{ min: 0, max: 100, step: 0.1 }}
+                  sx={{ width: 110 }}
+                  label="最小相似度"
+                />
+                <Typography variant="body2" color="text.secondary">
+                  ~
+                </Typography>
             <TextField
               size="small"
-              label="相似度上限"
               type="number"
-              inputProps={{ min: 0, max: 1, step: 0.01 }}
-              value={pdfSimilarityMax}
-              onChange={(e) => setPdfSimilarityMax(e.target.value)}
-              sx={{ width: 180 }}
+                  placeholder="最大%"
+                  value={pdfGlobalFilter.maxSimilarity}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (val === '' || (parseFloat(val) >= 0 && parseFloat(val) <= 100)) {
+                      setPdfGlobalFilter((prev) => ({ ...prev, maxSimilarity: val }))
+                    }
+                  }}
+                  inputProps={{ min: 0, max: 100, step: 0.1 }}
+                  sx={{ width: 110 }}
+                  label="最大相似度"
             />
           </Box>
 
-          {(() => {
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>匹配狀態</InputLabel>
+                <Select
+                  value={pdfGlobalFilter.matchFilter}
+                  label="匹配狀態"
+                  onChange={(e) => setPdfGlobalFilter((prev) => ({ ...prev, matchFilter: e.target.value }))}
+                >
+                  <MenuItem value="all">全部</MenuItem>
+                  <MenuItem value="match">匹配</MenuItem>
+                  <MenuItem value="no-match">不匹配</MenuItem>
+                </Select>
+              </FormControl>
+
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>排序方式</InputLabel>
+                <Select
+                  value={pdfGlobalFilter.sortBy}
+                  label="排序方式"
+                  onChange={(e) => setPdfGlobalFilter((prev) => ({ ...prev, sortBy: e.target.value }))}
+                >
+                  <MenuItem value="index-asc">印鑑索引 ↑</MenuItem>
+                  <MenuItem value="index-desc">印鑑索引 ↓</MenuItem>
+                  <MenuItem value="similarity-asc">相似度 ↑</MenuItem>
+                  <MenuItem value="similarity-desc">相似度 ↓</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
+          </Paper>
+
+          {/* PDF Histogram（全頁合併） */}
+          {showSimilarityHistogram && (() => {
             const rawPages = Array.isArray(pdfComparisonResults) ? pdfComparisonResults : []
-            const pages = [...rawPages].sort((a, b) => (a.page_index || 0) - (b.page_index || 0))
+            const allResults = rawPages.flatMap(p => Array.isArray(p?.results) ? p.results : [])
+            if (!allResults || allResults.length === 0) return null
+            return (
+              <SimilarityHistogram
+                results={allResults}
+                selectedRange={pdfGlobalFilter.similarityRange}
+                onRangeSelect={(range) => setPdfGlobalFilter((prev) => ({ ...prev, similarityRange: range }))}
+              />
+            )
+          })()}
 
-            const minVal = pdfSimilarityMin === '' ? null : Number(pdfSimilarityMin)
-            const maxVal = pdfSimilarityMax === '' ? null : Number(pdfSimilarityMax)
-            const hasMin = Number.isFinite(minVal)
-            const hasMax = Number.isFinite(maxVal)
+          {(() => {
+            const pagesTotalRaw =
+              polledPdfTaskStatus?.pages_total ?? pdfTaskStatus?.pages_total ?? polledPdfTaskResult?.pages_total
+            const pagesTotal = Number(pagesTotalRaw)
 
-            const scoreOf = (x) => (x?.mask_based_similarity ?? x?.structure_similarity ?? x?.similarity ?? 0)
-            const normalizeResults = (page) => (Array.isArray(page?.results) ? page.results : [])
-            const inRange = (score) => {
-              if (hasMin && score < minVal) return false
-              if (hasMax && score > maxVal) return false
-              return true
+            const pagesFromProcessed = Array.isArray(pdfComparisonResults) ? pdfComparisonResults : []
+            const pagesFromResult = Array.isArray(polledPdfTaskResult?.results_by_page) ? polledPdfTaskResult.results_by_page : []
+            let pages = pagesFromProcessed.length > 0 ? [...pagesFromProcessed] : [...pagesFromResult]
+
+            if (pages.length === 0 && Number.isFinite(pagesTotal) && pagesTotal > 0) {
+              // 沒拿到 results_by_page 前也先把頁級 UI 架起來（避免 UI 空白）
+              pages = Array.from({ length: pagesTotal }, (_, idx) => ({
+                page_index: idx + 1,
+                page_image_id: `pending-${idx + 1}`,
+                detected: false,
+                count: 0,
+                results: [],
+                reason: '等待結果',
+              }))
             }
+
+            pages.sort((a, b) => (a?.page_index || 0) - (b?.page_index || 0))
+
+            const normalizeResults = (page) => (Array.isArray(page?.results) ? page.results : [])
+            const scoreOf = (x) => (x?.mask_based_similarity ?? x?.structure_similarity ?? x?.similarity ?? 0)
 
             return (
               <Box sx={{ mt: 2 }}>
                 {pages.map((p) => {
                   const normalized = normalizeResults(p)
-                  const filtered = normalized.filter(x => inRange(scoreOf(x)))
                   const best = normalized.length > 0 ? Math.max(...normalized.map(x => scoreOf(x))) : 0
                   const suffix = p.detected
                     ? `（${p.count} 個，最佳 ${(best * 100).toFixed(1)}%）`
-                    : '（未偵測到）'
+                    : (p.reason ? `（${p.reason}）` : '（未偵測到）')
 
                   return (
                     <Box key={`${p.page_index}-${p.page_image_id}`} sx={{ mt: 3 }}>
@@ -2102,22 +2231,25 @@ function MultiSealTest() {
                         第 {p.page_index} 頁 {suffix}
                       </Typography>
 
-                      {filtered.length > 0 ? (
+                      {normalized.length > 0 ? (
                         <Box sx={{ mt: 2 }}>
                           <MultiSealComparisonResults
-                            results={filtered}
+                            results={normalized}
                             image1Id={image1EffectiveId}
-                            similarityRange={null}
                             threshold={threshold}
                             overlapWeight={overlapWeight}
                             pixelDiffPenaltyWeight={pixelDiffPenaltyWeight}
                             uniqueRegionPenaltyWeight={uniqueRegionPenaltyWeight}
                             calculateMaskBasedSimilarity={calculateMaskBasedSimilarity}
+                            controlsMode="external"
+                            filterState={pdfGlobalFilter}
+                            onFilterStateChange={setPdfGlobalFilter}
+                            hideControls={true}
                           />
                         </Box>
                       ) : (
                         <Alert severity="info" sx={{ mt: 2 }}>
-                          第 {p.page_index} 頁沒有比對結果：{p.reason || '未檢測到印鑑或在目前相似度區間下無符合結果'}
+                          第 {p.page_index} 頁沒有比對結果：{p.reason || '未檢測到印鑑'}
                         </Alert>
                       )}
                     </Box>

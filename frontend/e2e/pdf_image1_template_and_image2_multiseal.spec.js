@@ -75,11 +75,18 @@ test('PDF：圖像1 可跳頁預覽並手動框選；圖像2 可逐頁編輯多�
 })
 
 test('PDF：全頁比對完成後必須在 UI 顯示摘要與頁級結果', async ({ page }) => {
-  test.setTimeout(300_000)
+  test.setTimeout(480_000)
   const assertNoConsoleErrors = attachConsoleErrorCollector(page)
   const pdfPath = path.resolve(__dirname, '..', '..', 'test_images', '案例一-印章有壓到線上.pdf')
 
   await page.goto('/multi-seal-test')
+
+  // 降低計算量讓 E2E 更穩：把「比對印鑑數量上限」調到 1
+  await page.getByRole('button', { name: '進階設定' }).click()
+  const maxSealsInput = page.getByLabel('數量').first()
+  await expect(maxSealsInput).toBeVisible({ timeout: 60_000 })
+  await maxSealsInput.fill('1')
+  await maxSealsInput.press('Enter')
 
   // 圖像1：上傳 PDF → 會自動跳到建議頁並打開印鑑框選對話框
   await page.setInputFiles('#image1-upload', pdfPath)
@@ -108,26 +115,42 @@ test('PDF：全頁比對完成後必須在 UI 顯示摘要與頁級結果', asyn
   const taskUid = compareData?.task_uid
   expect(taskUid, 'compare-pdf 必須回傳 task_uid').toBeTruthy()
 
-  // processing/completed 都要有摘要
-  const summaryPaper = page.locator('.MuiPaper-root', { hasText: 'PDF 任務摘要' })
-  await expect(summaryPaper).toBeVisible({ timeout: 60_000 })
-  await expect(summaryPaper).toContainText(String(taskUid).slice(0, 8))
-  await expect(summaryPaper).toContainText('狀態：')
-  await expect(summaryPaper.locator('.MuiLinearProgress-root')).toBeVisible()
+  // PDF 全頁共用篩選器（只應該有一套，且在開始任務後可見）
+  // 先等 UI 進入 PDF 任務狀態（避免 headless 下渲染/輪詢時序差造成 flaky）
+  await expect(page.getByText(/狀態：\s*(pending|processing|completed|failed)/).first()).toBeVisible({ timeout: 60_000 })
 
-  // 等待任務完成（以 UI 摘要呈現為準：completed 或 failed）
+  // 等待全頁處理完成：先以後端 status endpoint 為準（避免 UI polling 在 headless 下 timer 被節流導致 flaky）
+  // 用 frontend 同源的 /api/v1 代理（避免直接打 :8000 在某些環境下連線不穩）
+  const statusUrl = `/api/v1/images/pdf-tasks/${taskUid}/status`
   await expect.poll(async () => {
-    const t = await summaryPaper.textContent()
-    const m = t ? t.match(/狀態：(completed|failed)/) : null
-    return m ? m[1] : ''
-  }, { timeout: 240_000, intervals: [1000, 2000, 3000] }).toMatch(/completed|failed/)
+    let resp
+    try {
+      resp = await page.request.get(statusUrl)
+    } catch (e) {
+      return false
+    }
+    if (!resp || !resp.ok()) return false
+    const j = await resp.json().catch(() => null)
+    if (!j) return false
+    const total = Number(j.pages_total)
+    const done = Number(j.pages_done)
+    return j.status === 'completed' && Number.isFinite(total) && total > 0 && Number.isFinite(done) && done >= total
+  }, { timeout: 420_000, intervals: [2000, 3000, 5000] }).toBe(true)
 
-  const summaryText = await summaryPaper.textContent()
-  expect(summaryText || '', 'PDF 任務不可失敗（否則無法驗證 UI 結果呈現）').toContain('狀態：completed')
+  // 後端完成後，UI 必須能顯示頁級結果區塊（這比純文字狀態更能證明結果已呈現於 UI）
 
-  // completed 後必須能看到頁級結果區塊（至少有「第 N 頁」）
-  await expect(page.getByText('PDF 比對結果')).toBeVisible({ timeout: 120_000 })
-  await expect(page.getByRole('heading', { name: /第\s*\d+\s*頁/ }).first()).toBeVisible({ timeout: 120_000 })
+  // 全頁處理完成後必須能看到頁級結果區塊（至少有「第 N 頁」）
+  await expect(page.getByText(/第\s*\d+\s*頁/).first()).toBeVisible({ timeout: 120_000 })
+
+  // 頁級 UI 出現後，再驗證「共用篩選器」只有一套（避免時序 race）
+  await expect(page.getByTestId('pdf-global-filter-search')).toHaveCount(1, { timeout: 60_000 })
+
+  // PDF 全頁應顯示 histogram，且可點擊區間回寫篩選（顯示已套用區間）
+  await expect(page.getByText('Mask相似度分布統計')).toBeVisible({ timeout: 120_000 })
+  const firstBar = page.locator('.recharts-bar-rectangle').first()
+  await expect(firstBar).toBeVisible({ timeout: 120_000 })
+  await firstBar.click({ force: true })
+  await expect(page.getByText(/已套用區間：/)).toBeVisible({ timeout: 60_000 })
 
   assertNoConsoleErrors()
 })

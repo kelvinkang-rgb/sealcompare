@@ -36,7 +36,11 @@ function MultiSealComparisonResults({
   overlapWeight = 0.5,
   pixelDiffPenaltyWeight = 0.3,
   uniqueRegionPenaltyWeight = 0.2,
-  calculateMaskBasedSimilarity
+  calculateMaskBasedSimilarity,
+  controlsMode = 'internal', // 'internal' | 'external'
+  filterState = null,
+  onFilterStateChange = null,
+  hideControls = false,
 }) {
   // 功能開關
   const showImagePreviewDialog = useFeatureFlag(FEATURE_FLAGS.IMAGE_PREVIEW_DIALOG)
@@ -47,12 +51,28 @@ function MultiSealComparisonResults({
   const [modalImageUrl, setModalImageUrl] = useState('')
   const [modalImage, setModalImage] = useState(null)
   
-  // 篩選、排序、搜尋狀態
-  const [searchText, setSearchText] = useState('')
-  const [matchFilter, setMatchFilter] = useState('all') // 'all', 'match', 'no-match'
-  const [sortBy, setSortBy] = useState('index-asc') // 'index-asc', 'index-desc', 'similarity-asc', 'similarity-desc'
-  const [minSimilarity, setMinSimilarity] = useState('') // mask相似度最小值（0-100）
-  const [maxSimilarity, setMaxSimilarity] = useState('') // mask相似度最大值（0-100）
+  const isExternal = controlsMode === 'external'
+  const external = filterState || {}
+  const updateExternal = (partial) => {
+    if (typeof onFilterStateChange !== 'function') return
+    onFilterStateChange((prev) => ({ ...(prev || {}), ...partial }))
+  }
+
+  // 篩選、排序、搜尋狀態（internal 預設；external 由 props 控制）
+  const [searchTextInternal, setSearchTextInternal] = useState('')
+  const [matchFilterInternal, setMatchFilterInternal] = useState('all') // 'all', 'match', 'no-match'
+  const [sortByInternal, setSortByInternal] = useState('index-asc') // 'index-asc', 'index-desc', 'similarity-asc', 'similarity-desc'
+  const [minSimilarityInternal, setMinSimilarityInternal] = useState('') // mask相似度最小值（0-100）
+  const [maxSimilarityInternal, setMaxSimilarityInternal] = useState('') // mask相似度最大值（0-100）
+
+  const searchText = isExternal ? (external.searchText ?? '') : searchTextInternal
+  const matchFilter = isExternal ? (external.matchFilter ?? 'all') : matchFilterInternal
+  const sortBy = isExternal ? (external.sortBy ?? 'index-asc') : sortByInternal
+  const minSimilarity = isExternal ? (external.minSimilarity ?? '') : minSimilarityInternal
+  const maxSimilarity = isExternal ? (external.maxSimilarity ?? '') : maxSimilarityInternal
+  const effectiveSimilarityRange = isExternal
+    ? (external.similarityRange ?? null)
+    : (similarityRange ?? null)
   
   // 動態計算每個結果的「主分數」與 is_match
   // - 優先使用後端回傳的 structure_similarity（對印泥深淺較不敏感，0-1）
@@ -155,8 +175,8 @@ function MultiSealComparisonResults({
     let filtered = [...processedResults]
 
     // 1. 相似度範圍篩選（來自 histogram）
-    if (similarityRange) {
-      const [minSimilarity, maxSimilarity] = similarityRange
+    if (effectiveSimilarityRange) {
+      const [minSimilarity, maxSimilarity] = effectiveSimilarityRange
       filtered = filtered.filter(result => {
         if (result.mask_based_similarity === null || result.mask_based_similarity === undefined) return false
         return result.mask_based_similarity >= minSimilarity && result.mask_based_similarity <= maxSimilarity
@@ -234,6 +254,7 @@ function MultiSealComparisonResults({
       </Box>
 
       {/* 篩選、排序、搜尋控制項 */}
+      {!hideControls && (
       <Paper sx={{ p: 2, mb: 2 }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           {/* 搜尋框 */}
@@ -241,7 +262,11 @@ function MultiSealComparisonResults({
             size="small"
             placeholder="搜尋印鑑索引..."
             value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value
+              if (isExternal) updateExternal({ searchText: val })
+              else setSearchTextInternal(val)
+            }}
             InputProps={{
               startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
             }}
@@ -258,7 +283,8 @@ function MultiSealComparisonResults({
               onChange={(e) => {
                 const val = e.target.value
                 if (val === '' || (parseFloat(val) >= 0 && parseFloat(val) <= 100)) {
-                  setMinSimilarity(val)
+                  if (isExternal) updateExternal({ minSimilarity: val })
+                  else setMinSimilarityInternal(val)
                 }
               }}
               inputProps={{ min: 0, max: 100, step: 0.1 }}
@@ -276,7 +302,8 @@ function MultiSealComparisonResults({
               onChange={(e) => {
                 const val = e.target.value
                 if (val === '' || (parseFloat(val) >= 0 && parseFloat(val) <= 100)) {
-                  setMaxSimilarity(val)
+                  if (isExternal) updateExternal({ maxSimilarity: val })
+                  else setMaxSimilarityInternal(val)
                 }
               }}
               inputProps={{ min: 0, max: 100, step: 0.1 }}
@@ -291,7 +318,11 @@ function MultiSealComparisonResults({
             <Select
               value={matchFilter}
               label="匹配狀態"
-              onChange={(e) => setMatchFilter(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value
+                if (isExternal) updateExternal({ matchFilter: val })
+                else setMatchFilterInternal(val)
+              }}
             >
               <MenuItem value="all">全部</MenuItem>
               <MenuItem value="match">匹配</MenuItem>
@@ -305,7 +336,11 @@ function MultiSealComparisonResults({
             <Select
               value={sortBy}
               label="排序方式"
-              onChange={(e) => setSortBy(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value
+                if (isExternal) updateExternal({ sortBy: val })
+                else setSortByInternal(val)
+              }}
             >
               <MenuItem value="index-asc">印鑑索引 ↑</MenuItem>
               <MenuItem value="index-desc">印鑑索引 ↓</MenuItem>
@@ -315,6 +350,7 @@ function MultiSealComparisonResults({
           </FormControl>
         </Stack>
       </Paper>
+      )}
       
       <Grid container spacing={2}>
         {filteredAndSortedResults.map((result, index) => (

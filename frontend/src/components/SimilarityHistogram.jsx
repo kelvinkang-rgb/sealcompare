@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react'
-import { Paper, Typography, Box, TextField, Slider } from '@mui/material'
+import { Paper, Typography, Box, TextField, Slider, Chip } from '@mui/material'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-function SimilarityHistogram({ results }) {
+function SimilarityHistogram({ results, selectedRange = null, onRangeSelect = null }) {
   // 間隔設定（百分比），默認5%
   const [binSize, setBinSize] = useState(5)
 
@@ -46,6 +46,15 @@ function SimilarityHistogram({ results }) {
   // 計算總數
   const totalCount = histogramData.reduce((sum, bin) => sum + bin.count, 0)
 
+  const selectedLabel = useMemo(() => {
+    if (!selectedRange || !Array.isArray(selectedRange) || selectedRange.length !== 2) return null
+    const [min, max] = selectedRange
+    if (min === null || min === undefined || max === null || max === undefined) return null
+    const minPct = Math.round(min * 100)
+    const maxPct = Math.round(max * 100)
+    return `${minPct}-${maxPct}%`
+  }, [selectedRange])
+
   if (totalCount === 0) {
     return (
       <Paper sx={{ p: 3, mt: 3 }}>
@@ -65,6 +74,14 @@ function SimilarityHistogram({ results }) {
         <Typography variant="h6">
           Mask相似度分布統計
         </Typography>
+        {selectedLabel && (
+          <Chip
+            size="small"
+            color="primary"
+            variant="outlined"
+            label={`已套用區間：${selectedLabel}`}
+          />
+        )}
       </Box>
 
       {/* 間隔設定 */}
@@ -136,7 +153,19 @@ function SimilarityHistogram({ results }) {
             formatter={(value) => [`${value} 個印鑑`, '數量']}
             labelFormatter={(label) => `相似度: ${label}`}
           />
-          <Bar dataKey="count" fill="#1976d2" radius={[4, 4, 0, 0]} />
+          <Bar
+            dataKey="count"
+            fill="#1976d2"
+            radius={[4, 4, 0, 0]}
+            onClick={(data) => {
+              if (!onRangeSelect) return
+              if (!data) return
+              const min = data.min
+              const max = data.max
+              if (min === null || min === undefined || max === null || max === undefined) return
+              onRangeSelect([min, max])
+            }}
+          />
         </BarChart>
       </ResponsiveContainer>
 
