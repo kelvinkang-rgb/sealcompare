@@ -425,7 +425,7 @@ def compare_image1_with_seals(
     
     - **image1_id**: 圖像1 ID
     - **seal_image_ids**: 裁切後的印鑑圖像 ID 列表
-    - **threshold**: 相似度閾值，默認0.83
+    - **threshold**: 相似度閾值，默認0.5（structure_similarity >= threshold 視為匹配）
     
     立即返回任務 ID，比對在後台異步處理。
     使用 GET /images/tasks/{task_uid}/status 查詢任務狀態。
@@ -448,16 +448,12 @@ def compare_image1_with_seals(
     
     logger.info(f"任務 UID: {task.task_uid}")
     
-    # 提取mask權重參數（如果存在），否則使用預設值
-    overlap_weight = request.overlap_weight if request.overlap_weight is not None else 0.5
-    pixel_diff_penalty_weight = request.pixel_diff_penalty_weight if request.pixel_diff_penalty_weight is not None else 0.3
-    unique_region_penalty_weight = request.unique_region_penalty_weight if request.unique_region_penalty_weight is not None else 0.2
     # 提取圖像對齊參數（如果存在），否則使用預設值
     rotation_range = request.rotation_range if request.rotation_range is not None else 15.0
     translation_range = request.translation_range if request.translation_range is not None else 100
     
     # 添加後台任務處理比對
-    def process_comparison_task(task_uid_str: str, overlap_w: float, pixel_diff_penalty_w: float, unique_region_penalty_w: float, rotation_r: float, translation_r: int):
+    def process_comparison_task(task_uid_str: str, rotation_r: float, translation_r: int):
         """後台任務：處理比對"""
         db_task = SessionLocal()
         try:
@@ -525,7 +521,6 @@ def compare_image1_with_seals(
                                 'diff_mask_1_only_path': result.get('diff_mask_1_only_path'),
                                 'gray_diff_path': result.get('gray_diff_path'),
                                 'mask_statistics': result.get('mask_statistics'),
-                                'mask_based_similarity': result.get('mask_based_similarity'),
                                 'structure_similarity': result.get('structure_similarity'),
                                 'alignment_metrics': result.get('alignment_metrics'),
                                 'input_image1_path': result.get('input_image1_path'),
@@ -589,9 +584,6 @@ def compare_image1_with_seals(
                 similarity_template_weight=task_record.similarity_template_weight,
                 pixel_similarity_weight=task_record.pixel_similarity_weight,
                 histogram_similarity_weight=task_record.histogram_similarity_weight,
-                overlap_weight=overlap_w,
-                pixel_diff_penalty_weight=pixel_diff_penalty_w,
-                unique_region_penalty_weight=unique_region_penalty_w,
                 rotation_range=rotation_r,
                 translation_range=translation_r,
                 task_uid=task_uid_str,
@@ -684,7 +676,6 @@ def compare_image1_with_seals(
                                             'diff_mask_1_only_path': retry_result.get('diff_mask_1_only_path'),
                                             'gray_diff_path': retry_result.get('gray_diff_path'),
                                             'mask_statistics': retry_result.get('mask_statistics'),
-                                            'mask_based_similarity': retry_result.get('mask_based_similarity'),
                                             'structure_similarity': retry_result.get('structure_similarity'),
                                             'alignment_metrics': retry_result.get('alignment_metrics'),
                                             'input_image1_path': retry_result.get('input_image1_path'),
@@ -802,7 +793,7 @@ def compare_image1_with_seals(
         finally:
             db_task.close()
     
-    background_tasks.add_task(process_comparison_task, task.task_uid, overlap_weight, pixel_diff_penalty_weight, unique_region_penalty_weight, rotation_range, translation_range)
+    background_tasks.add_task(process_comparison_task, task.task_uid, rotation_range, translation_range)
     
     logger.info(f"任務已創建並加入後台處理: {task.task_uid}")
     
@@ -888,9 +879,6 @@ def compare_image1_with_pdf(
     max_seals_val = request.max_seals
     margin_val = request.margin
     threshold_val = request.threshold
-    overlap_weight_val = request.overlap_weight
-    pixel_diff_penalty_weight_val = request.pixel_diff_penalty_weight
-    unique_region_penalty_weight_val = request.unique_region_penalty_weight
     rotation_range_val = request.rotation_range
     translation_range_val = request.translation_range
 
@@ -944,9 +932,6 @@ def compare_image1_with_pdf(
                             image1_id=task_record.image1_id,
                             seal_image_ids=cropped_ids,
                             threshold=threshold_val,
-                            overlap_weight=overlap_weight_val,
-                            pixel_diff_penalty_weight=pixel_diff_penalty_weight_val,
-                            unique_region_penalty_weight=unique_region_penalty_weight_val,
                             rotation_range=rotation_range_val,
                             translation_range=translation_range_val
                         )

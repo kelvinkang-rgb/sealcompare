@@ -13,7 +13,7 @@ import hashlib
 class SealComparator:
     """印鑑比對器"""
     
-    def __init__(self, threshold: float = 0.83, 
+    def __init__(self, threshold: float = 0.5, 
                  similarity_ssim_weight: float = 0.5,
                  similarity_template_weight: float = 0.35,
                  pixel_similarity_weight: float = 0.1,
@@ -22,7 +22,7 @@ class SealComparator:
         初始化比對器
         
         Args:
-            threshold: 相似度閾值，預設為 0.83（83%）
+            threshold: 相似度閾值，預設為 0.5（50%）
             similarity_ssim_weight: SSIM 權重，預設為 0.5 (50%)
             similarity_template_weight: Template Match 權重，預設為 0.35 (35%)
             pixel_similarity_weight: Pixel Similarity 權重，預設為 0.1 (10%)
@@ -97,6 +97,66 @@ class SealComparator:
         timing['step1b_shading_correction'] = time.time() - shade_start
         
         h, w = corrected_gray.shape
+
+        # === 自適應色偏 mask（用於「保留淡紅/淡藍筆劃」；避免固定閾值吃掉淡色印泥）===
+        def _edge_lab_median(img_bgr: np.ndarray, edge_width: int) -> Tuple[int, int]:
+            hh, ww = img_bgr.shape[:2]
+            ew = max(2, min(int(edge_width), hh // 2, ww // 2))
+            edges = np.concatenate(
+                [
+                    img_bgr[:ew, :, :].reshape(-1, 3),
+                    img_bgr[-ew:, :, :].reshape(-1, 3),
+                    img_bgr[:, :ew, :].reshape(-1, 3),
+                    img_bgr[:, -ew:, :].reshape(-1, 3),
+                ],
+                axis=0,
+            )
+            lab = cv2.cvtColor(edges.reshape(-1, 1, 3), cv2.COLOR_BGR2LAB).reshape(-1, 3)
+            bg_a = int(np.median(lab[:, 1]))
+            bg_b = int(np.median(lab[:, 2]))
+            return bg_a, bg_b
+
+        def _adaptive_red_mask(img_bgr: np.ndarray) -> np.ndarray:
+            gray_local = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            hh, ww = img_bgr.shape[:2]
+            ew = max(3, min(hh, ww) // 30)
+            bg_a, _bg_b = _edge_lab_median(img_bgr, ew)
+
+            hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+            # 寬鬆 HSV + Lab delta_a（以背景為基準，能抓到淡紅）
+            r1 = cv2.inRange(hsv, np.array([0, 8, 15], np.uint8), np.array([15, 255, 255], np.uint8))
+            r2 = cv2.inRange(hsv, np.array([165, 8, 15], np.uint8), np.array([179, 255, 255], np.uint8))
+            red_hsv = cv2.bitwise_or(r1, r2)
+
+            lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+            a = lab[:, :, 1].astype(np.int16)
+            delta_a = a - int(bg_a)
+            red_lab = ((delta_a >= 6) & (gray_local < 252)).astype(np.uint8) * 255
+
+            return cv2.bitwise_or(red_hsv, red_lab)
+
+        def _adaptive_blue_mask(img_bgr: np.ndarray) -> np.ndarray:
+            gray_local = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            hh, ww = img_bgr.shape[:2]
+            ew = max(3, min(hh, ww) // 30)
+            _bg_a, bg_b = _edge_lab_median(img_bgr, ew)
+
+            hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+            blue_hsv = cv2.inRange(hsv, np.array([90, 8, 15], np.uint8), np.array([140, 255, 255], np.uint8))
+
+            lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+            b = lab[:, :, 2].astype(np.int16)
+            delta_b = int(bg_b) - b
+            blue_lab = ((delta_b >= 6) & (gray_local < 252)).astype(np.uint8) * 255
+
+            return cv2.bitwise_or(blue_hsv, blue_lab)
+
+        def _adaptive_ink_mask(img_bgr: np.ndarray) -> np.ndarray:
+            red = _adaptive_red_mask(img_bgr)
+            blue = _adaptive_blue_mask(img_bgr)
+            if int(np.sum(blue > 0)) > int(np.sum(red > 0)):
+                return blue
+            return red
         
         # 步驟2：檢測背景顏色（分析圖像邊緣）
         step2_start = time.time()
@@ -157,6 +217,13 @@ class SealComparator:
         
         # 結合兩個條件：既是背景顏色，又是 OTSU 識別的背景
         bg_mask = bg_mask_color & bg_mask_otsu
+        # 保護淡紅/淡藍筆劃：即使灰階接近背景，也不可被歸類為背景（避免裁切時被切掉）
+        if len(image.shape) == 3:
+            try:
+                ink_mask = _adaptive_ink_mask(image) > 0
+                bg_mask = bg_mask & (~ink_mask)
+            except Exception:
+                pass
         timing['step4_combine_masks'] = time.time() - step4_start
         
         # 步驟6：輪廓檢測找到實際內容的邊界框
@@ -174,18 +241,7 @@ class SealComparator:
             if len(image.shape) == 3:
                 try:
                     fallback_start = time.time()
-                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
-                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
-                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
-                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
-                    mask1 = cv2.inRange(hsv, lower1, upper1)
-                    mask2 = cv2.inRange(hsv, lower2, upper2)
-                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
-                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-                    a = lab[:, :, 1]
-                    red_mask_lab = (a > 150).astype(np.uint8) * 255
-                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+                    red_mask = _adaptive_red_mask(image)
                     if float(np.mean(red_mask > 0)) >= 0.008:
                         result = image.copy()
                         result[red_mask == 0] = [255, 255, 255]
@@ -211,18 +267,7 @@ class SealComparator:
             if len(image.shape) == 3:
                 try:
                     fallback_start = time.time()
-                    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-                    lower1 = np.array([0, 50, 40], dtype=np.uint8)
-                    upper1 = np.array([10, 255, 255], dtype=np.uint8)
-                    lower2 = np.array([170, 50, 40], dtype=np.uint8)
-                    upper2 = np.array([180, 255, 255], dtype=np.uint8)
-                    mask1 = cv2.inRange(hsv, lower1, upper1)
-                    mask2 = cv2.inRange(hsv, lower2, upper2)
-                    red_mask_hsv = cv2.bitwise_or(mask1, mask2)
-                    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-                    a = lab[:, :, 1]
-                    red_mask_lab = (a > 150).astype(np.uint8) * 255
-                    red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
+                    red_mask = _adaptive_red_mask(image)
                     if float(np.mean(red_mask > 0)) >= 0.008:
                         result = image.copy()
                         result[red_mask == 0] = [255, 255, 255]
@@ -283,39 +328,15 @@ class SealComparator:
         # 將非紅色區域全部視為背景並設為白色，避免黑線/陰影被保留。
         if len(cropped.shape) == 3:
             try:
-                hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
-                # HSV 紅色兩段（hue 0-10, 170-180）
-                lower1 = np.array([0, 50, 40], dtype=np.uint8)
-                upper1 = np.array([10, 255, 255], dtype=np.uint8)
-                lower2 = np.array([170, 50, 40], dtype=np.uint8)
-                upper2 = np.array([180, 255, 255], dtype=np.uint8)
-                mask1 = cv2.inRange(hsv, lower1, upper1)
-                mask2 = cv2.inRange(hsv, lower2, upper2)
-                red_mask_hsv = cv2.bitwise_or(mask1, mask2)
-
-                # Lab 的 a-channel：紅色偏向 a > 128（越紅越高）
-                lab = cv2.cvtColor(cropped, cv2.COLOR_BGR2LAB)
-                a = lab[:, :, 1]
-                red_mask_lab = (a > 150).astype(np.uint8) * 255
-
-                red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_lab)
-
-                # 過濾小型紅噪點（保留主要連通元件）
-                num_labels, labels, stats, _ = cv2.connectedComponentsWithStats((red_mask > 0).astype(np.uint8), connectivity=8)
-                if num_labels > 1:
-                    areas = stats[1:, cv2.CC_STAT_AREA]
-                    max_area = int(areas.max()) if areas.size else 0
-                    keep = np.zeros_like(red_mask, dtype=np.uint8)
-                    # 保留面積接近最大者（避免保留散落小紅點）
-                    for i in range(1, num_labels):
-                        area = int(stats[i, cv2.CC_STAT_AREA])
-                        if max_area > 0 and area >= max(80, int(max_area * 0.02)):
-                            keep[labels == i] = 255
-                    red_mask = keep
+                red_mask = _adaptive_red_mask(cropped)
+                blue_mask = _adaptive_blue_mask(cropped)
 
                 red_ratio = float(np.mean(red_mask > 0))
+                red_cnt = int(np.sum(red_mask > 0))
+                blue_cnt = int(np.sum(blue_mask > 0))
                 # 紅色比例太低則視為非紅章，走 fallback
-                if red_ratio >= 0.008:
+                # 並要求「紅明顯多於藍」，避免藍章/藍字被誤套用紅章專用去背景而被抹掉
+                if red_ratio >= 0.008 and red_cnt >= int(blue_cnt * 1.2):
                     result = cropped.copy()
                     result[red_mask == 0] = [255, 255, 255]
                     timing['step9_remove_bg_final'] = time.time() - step9_start
@@ -344,8 +365,15 @@ class SealComparator:
                     bg_color_crop = np.median(np.array(edge_pixels_crop))
                     bg_threshold_crop = max(200, int(bg_color_crop - 30))
                     
-                    # 創建背景遮罩
-                    bg_mask_crop = (cropped_gray >= bg_threshold_crop)
+                    # 創建背景遮罩（並保護淡紅/淡藍筆劃不要被當背景抹掉）
+                    if len(cropped.shape) == 3:
+                        ink_mask = _adaptive_ink_mask(cropped) > 0
+                        # 再加一道「低飽和」條件：避免非常淡的彩色筆劃灰階接近背景時被誤抹掉
+                        cropped_hsv = cv2.cvtColor(cropped, cv2.COLOR_BGR2HSV)
+                        low_sat = (cropped_hsv[:, :, 1] < 20)
+                        bg_mask_crop = (cropped_gray >= bg_threshold_crop) & low_sat & (~ink_mask)
+                    else:
+                        bg_mask_crop = (cropped_gray >= bg_threshold_crop)
                     
                     # 將背景設為白色
                     result = cropped.copy()
@@ -371,6 +399,96 @@ class SealComparator:
         return result, timing
     
     def _align_image2_to_image1(
+        self,
+        image1: np.ndarray,
+        image2: np.ndarray,
+        rotation_range: float = 15.0,
+        translation_range: int = 100
+    ) -> Tuple[np.ndarray, float, Tuple[int, int], float, Dict[str, float], Dict[str, float]]:
+        """
+        將圖像2對齊到圖像1（含 0/90/180/270 右角旋轉 fallback）。
+        
+        設計原則：
+        - 盡量不改既有對齊演算法：把原本流程下放到 `_align_image2_to_image1_impl`
+        - 只在「base=0 結果不夠好」時，才嘗試右角旋轉候選，避免每次都 4 倍成本
+        """
+        import time
+
+        # 先跑原本流程（base=0）
+        base0_aligned, base0_angle, base0_offset, base0_sim, base0_metrics, base0_timing = self._align_image2_to_image1_impl(
+            image1,
+            image2,
+            rotation_range=rotation_range,
+            translation_range=translation_range
+        )
+
+        # 右角旋轉 fallback gating：相似度已很高則不再嘗試，避免額外耗時
+        # 注意：這裡故意使用較高門檻，避免 base=0 尚可但仍可被更佳右角解「明顯改善」的情況被跳過。
+        RIGHT_ANGLE_GOOD_ENOUGH = 0.97
+        RIGHT_ANGLE_MIN_IMPROVEMENT = 0.02
+
+        best = (0, base0_aligned, float(base0_angle), base0_offset, float(base0_sim), base0_metrics, base0_timing)
+        if base0_sim is not None and float(base0_sim) >= RIGHT_ANGLE_GOOD_ENOUGH:
+            # 補上可觀測性 key（保持穩定 schema）
+            if isinstance(base0_metrics, dict):
+                base0_metrics.setdefault('right_angle_fallback_used', False)
+                base0_metrics.setdefault('right_angle_base_rotation', 0)
+            return base0_aligned, base0_angle, base0_offset, base0_sim, base0_metrics, base0_timing
+
+        # 依序嘗試 90/180/270（以 CCW 為正；OpenCV 正角度亦為 CCW）
+        candidates = [90, 180, 270]
+        fallback_start = time.time()
+        tried = [0]
+        for base in candidates:
+            tried.append(base)
+            try:
+                if base == 90:
+                    img2_rot = cv2.rotate(image2, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                elif base == 180:
+                    img2_rot = cv2.rotate(image2, cv2.ROTATE_180)
+                else:  # 270
+                    img2_rot = cv2.rotate(image2, cv2.ROTATE_90_CLOCKWISE)
+
+                aligned, angle, offset, sim, metrics, timing = self._align_image2_to_image1_impl(
+                    image1,
+                    img2_rot,
+                    rotation_range=rotation_range,
+                    translation_range=translation_range
+                )
+
+                # 把「候選 base 旋轉」納入回傳角度（角度以 CCW 為正）
+                angle_total = float(angle) + float(base)
+                sim_f = float(sim) if sim is not None else float('-inf')
+                best_sim_f = float(best[4]) if best[4] is not None else float('-inf')
+
+                if sim_f > best_sim_f:
+                    best = (base, aligned, angle_total, offset, sim_f, metrics, timing)
+            except Exception:
+                # 任何候選失敗都忽略，保留目前 best
+                continue
+
+        # 避免因噪聲/對稱造成「微小提升」就切錯方向：需要明顯改善才採用非 0 base
+        base0_sim_f = float(base0_sim) if base0_sim is not None else float('-inf')
+        base_best, aligned_best, angle_best, offset_best, sim_best, metrics_best, timing_best = best
+        use_best = (base_best != 0) and (sim_best >= base0_sim_f + RIGHT_ANGLE_MIN_IMPROVEMENT)
+
+        # 可觀測性：在 metrics 補上右角資訊
+        def _decorate_metrics(m: Optional[Dict[str, float]], used: bool, base_deg: int) -> Dict:
+            out = dict(m) if isinstance(m, dict) else {}
+            out['right_angle_fallback_used'] = bool(used)
+            out['right_angle_base_rotation'] = int(base_deg)
+            out['right_angle_candidates_tried'] = tried
+            out['right_angle_fallback_time'] = float(time.time() - fallback_start)
+            return out
+
+        if use_best:
+            metrics_best = _decorate_metrics(metrics_best, True, int(base_best))
+            return aligned_best, angle_best, offset_best, sim_best, metrics_best, timing_best
+
+        base0_metrics = _decorate_metrics(base0_metrics, False, 0)
+        return base0_aligned, float(base0_angle), base0_offset, float(base0_sim), base0_metrics, base0_timing
+
+    def _align_image2_to_image1_impl(
         self, 
         image1: np.ndarray, 
         image2: np.ndarray,

@@ -27,16 +27,13 @@ import {
 import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, ExpandMore as ExpandMoreIcon, Search as SearchIcon } from '@mui/icons-material'
 import ImagePreviewDialog from './ImagePreviewDialog'
 import { useFeatureFlag, FEATURE_FLAGS } from '../config/featureFlags'
+import TimingDetailsTable from './TimingDetailsTable'
 
 function MultiSealComparisonResults({ 
   results, 
   image1Id, 
   similarityRange,
-  threshold = 0.83,
-  overlapWeight = 0.5,
-  pixelDiffPenaltyWeight = 0.3,
-  uniqueRegionPenaltyWeight = 0.2,
-  calculateMaskBasedSimilarity,
+  threshold = 0.5,
   controlsMode = 'internal', // 'internal' | 'external'
   filterState = null,
   onFilterStateChange = null,
@@ -62,8 +59,8 @@ function MultiSealComparisonResults({
   const [searchTextInternal, setSearchTextInternal] = useState('')
   const [matchFilterInternal, setMatchFilterInternal] = useState('all') // 'all', 'match', 'no-match'
   const [sortByInternal, setSortByInternal] = useState('index-asc') // 'index-asc', 'index-desc', 'similarity-asc', 'similarity-desc'
-  const [minSimilarityInternal, setMinSimilarityInternal] = useState('') // mask相似度最小值（0-100）
-  const [maxSimilarityInternal, setMaxSimilarityInternal] = useState('') // mask相似度最大值（0-100）
+  const [minSimilarityInternal, setMinSimilarityInternal] = useState('') // 結構相似度最小值（0-100）
+  const [maxSimilarityInternal, setMaxSimilarityInternal] = useState('') // 結構相似度最大值（0-100）
 
   const searchText = isExternal ? (external.searchText ?? '') : searchTextInternal
   const matchFilter = isExternal ? (external.matchFilter ?? 'all') : matchFilterInternal
@@ -86,48 +83,24 @@ function MultiSealComparisonResults({
         return result
       }
 
-      // 新主指標：structure_similarity
+      // 主指標：structure_similarity
       if (result.structure_similarity !== null && result.structure_similarity !== undefined) {
         const primary = result.structure_similarity
         const dynamicIsMatch = primary >= threshold
         return {
           ...result,
-          // 將 UI 既有使用的欄位覆寫成主分數，避免改動太大
-          mask_based_similarity: primary,
           is_match: dynamicIsMatch,
           _primary_metric: 'structure_similarity'
         }
       }
       
-      // 如果有 mask_statistics 和計算函數，使用當前設定的權重參數重新計算
-      if (result.mask_statistics && calculateMaskBasedSimilarity) {
-        const dynamicMaskSimilarity = calculateMaskBasedSimilarity(
-          result.mask_statistics,
-          overlapWeight,
-          pixelDiffPenaltyWeight,
-          uniqueRegionPenaltyWeight
-        )
-        
-        // 使用當前設定的閾值重新判斷匹配狀態
-        const dynamicIsMatch = dynamicMaskSimilarity >= threshold
-        
-        return {
-          ...result,
-          mask_based_similarity: dynamicMaskSimilarity,
-          is_match: dynamicIsMatch,
-          _primary_metric: 'mask_based_similarity'
-        }
-      }
-      
-      // 如果沒有 mask_statistics，使用結果中已有的值（向後兼容）
-      const fallback = result.mask_based_similarity
+      // 如果沒有 structure_similarity，保持原有 is_match 狀態
       return {
         ...result,
-        is_match: fallback !== null && fallback !== undefined ? fallback >= threshold : result.is_match,
-        _primary_metric: 'mask_based_similarity'
+        _primary_metric: 'structure_similarity'
       }
     })
-  }, [results, threshold, overlapWeight, pixelDiffPenaltyWeight, uniqueRegionPenaltyWeight, calculateMaskBasedSimilarity])
+  }, [results, threshold])
 
   const handleImageClick = (imagePath, title) => {
     if (!imagePath) return
@@ -178,8 +151,8 @@ function MultiSealComparisonResults({
     if (effectiveSimilarityRange) {
       const [minSimilarity, maxSimilarity] = effectiveSimilarityRange
       filtered = filtered.filter(result => {
-        if (result.mask_based_similarity === null || result.mask_based_similarity === undefined) return false
-        return result.mask_based_similarity >= minSimilarity && result.mask_based_similarity <= maxSimilarity
+        if (result.structure_similarity === null || result.structure_similarity === undefined) return false
+        return result.structure_similarity >= minSimilarity && result.structure_similarity <= maxSimilarity
       })
     }
 
@@ -195,11 +168,11 @@ function MultiSealComparisonResults({
       })
     }
 
-    // 3. Mask相似度範圍篩選
+    // 3. 結構相似度範圍篩選
     if (minSimilarity !== '' || maxSimilarity !== '') {
       filtered = filtered.filter(result => {
-        if (result.mask_based_similarity === null || result.mask_based_similarity === undefined) return false
-        const similarityPercent = result.mask_based_similarity * 100
+        if (result.structure_similarity === null || result.structure_similarity === undefined) return false
+        const similarityPercent = result.structure_similarity * 100
         const min = minSimilarity !== '' ? parseFloat(minSimilarity) : 0
         const max = maxSimilarity !== '' ? parseFloat(maxSimilarity) : 100
         return similarityPercent >= min && similarityPercent <= max
@@ -210,24 +183,28 @@ function MultiSealComparisonResults({
     if (searchText.trim()) {
       const searchLower = searchText.toLowerCase().trim()
       filtered = filtered.filter(result => {
-        return result.seal_index.toString().includes(searchLower)
+        const idx = result?.seal_index
+        if (idx === null || idx === undefined) return false
+        return String(idx).includes(searchLower)
       })
     }
 
     // 5. 排序
     filtered.sort((a, b) => {
+      const aIdx = Number(a?.seal_index ?? 0)
+      const bIdx = Number(b?.seal_index ?? 0)
       switch (sortBy) {
         case 'index-asc':
-          return a.seal_index - b.seal_index
+          return aIdx - bIdx
         case 'index-desc':
-          return b.seal_index - a.seal_index
+          return bIdx - aIdx
         case 'similarity-asc':
-          const simA = a.mask_based_similarity ?? 0
-          const simB = b.mask_based_similarity ?? 0
+          const simA = a.structure_similarity ?? 0
+          const simB = b.structure_similarity ?? 0
           return simA - simB
         case 'similarity-desc':
-          const simA2 = a.mask_based_similarity ?? 0
-          const simB2 = b.mask_based_similarity ?? 0
+          const simA2 = a.structure_similarity ?? 0
+          const simB2 = b.structure_similarity ?? 0
           return simB2 - simA2
         default:
           return 0
@@ -359,7 +336,7 @@ function MultiSealComparisonResults({
               <CardContent>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2 }}>
                   <Typography variant="h6" component="span">
-                    印鑑 {result.seal_index}
+                    印鑑 {result.seal_index ?? '—'}
                   </Typography>
                   
                   {result.error ? (
@@ -369,7 +346,7 @@ function MultiSealComparisonResults({
                       color="error"
                       size="small"
                     />
-                  ) : result.mask_based_similarity !== null && result.mask_based_similarity !== undefined ? (
+                  ) : result.structure_similarity !== null && result.structure_similarity !== undefined ? (
                     <>
                       <Chip
                         icon={result.is_match ? <CheckCircleIcon /> : <CancelIcon />}
@@ -378,7 +355,7 @@ function MultiSealComparisonResults({
                         size="small"
                       />
                       <Chip
-                        label={`${result._primary_metric === 'structure_similarity' ? '結構相似度' : 'Mask相似度'}: ${(result.mask_based_similarity * 100).toFixed(2)}%`}
+                        label={`結構相似度: ${(result.structure_similarity * 100).toFixed(2)}%`}
                         color={result.is_match ? 'success' : 'info'}
                         size="small"
                         variant="outlined"
@@ -1060,281 +1037,7 @@ function MultiSealComparisonResults({
                         </Typography>
                       </AccordionSummary>
                       <AccordionDetails>
-                        <TableContainer component={Paper} variant="outlined">
-                          <Table size="small">
-                            <TableBody>
-                              {(() => {
-                                const timing = result.timing || {}
-                                const alignmentStages = timing.alignment_stages || {}
-                                const hasAlignmentStages = alignmentStages && typeof alignmentStages === 'object'
-
-                                const formatSeconds = (v) => {
-                                  const n = typeof v === 'number' ? v : 0
-                                  return `${n.toFixed(3)} 秒`
-                                }
-
-                                const formatPercent = (part, total) => {
-                                  const p = typeof part === 'number' ? part : 0
-                                  const t = typeof total === 'number' ? total : 0
-                                  if (!t || t <= 0) return ''
-                                  return ` (${((p / t) * 100).toFixed(1)}%)`
-                                }
-
-                                // === 任務級主 key（維持現有顯示順序） ===
-                                const displayedTimingKeys = new Set([
-                                  'total',
-                                  'load_images',
-                                  'remove_bg_image1',
-                                  'remove_bg_align_image2',
-                                  'save_aligned_images',
-                                  'similarity_calculation',
-                                  'save_corrected_images',
-                                  'create_overlay',
-                                  'calculate_mask_stats',
-                                  'create_heatmap',
-                                  'alignment_stages',
-                                ])
-
-                                // === alignment_stages（依 seal_compare.py 結構化） ===
-                                const bgStepDefs = [
-                                  ['step1_convert_to_gray', '轉換灰度'],
-                                  ['step1b_shading_correction', '陰影/摺痕抑制（光照校正）'],
-                                  ['step2_detect_bg_color', '偵測背景色'],
-                                  ['step3_otsu_threshold', 'OTSU二值化'],
-                                  ['step3b_remove_thin_lines', '線條型雜訊抑制'],
-                                  ['step4_combine_masks', '結合遮罩'],
-                                  ['step6_contour_detection', '輪廓偵測'],
-                                  ['step6_fallback_red_seal_segmentation', 'fallback：紅章分割（無輪廓）'],
-                                  ['step7_calculate_bbox', '計算邊界框'],
-                                  ['step7_fallback_red_seal_segmentation', 'fallback：紅章分割（輪廓太小）'],
-                                  ['step8_crop_image', '裁切圖像'],
-                                  ['step9_remove_bg_final', '最終移除背景'],
-                                ]
-
-                                const stageDefs = [
-                                  ['stage12_joint_coarse_total', '階段1+2：joint 粗搜尋（總計）'],
-                                  ['stage1_translation_coarse', '階段1：平移粗調'],
-                                  ['stage2_rotation_coarse', '階段2：旋轉粗調'],
-                                  ['stage3_translation_fine', '階段3：平移細調'],
-                                  ['stage4_total', '階段4：旋轉細調與平移細調（總計）'],
-                                  ['stage5_global_verification', '階段5：全局驗證'],
-                                ]
-
-                                const stage4SubDefs = [
-                                  ['stage4_rotation_fine', '└─ 旋轉細調'],
-                                  ['stage4_translation_fine', '└─ 平移細調'],
-                                ]
-
-                                const knownAlignmentKeys = new Set([
-                                  'remove_background_total',
-                                  'remove_background',
-                                  ...bgStepDefs.map(([k]) => k),
-                                  ...stageDefs.map(([k]) => k),
-                                  ...stage4SubDefs.map(([k]) => k),
-                                ])
-
-                                const otherAlignmentEntries = hasAlignmentStages
-                                  ? Object.entries(alignmentStages).filter(([k]) => !knownAlignmentKeys.has(k))
-                                  : []
-
-                                const otherTimingEntries = Object.entries(timing).filter(([k]) => !displayedTimingKeys.has(k))
-
-                                const renderKeyValueRows = (entries, parentTotal) => {
-                                  if (!entries || entries.length === 0) return null
-                                  return entries.map(([k, v]) => (
-                                    <TableRow key={k}>
-                                      <TableCell sx={{ color: 'text.secondary' }}>{k}</TableCell>
-                                      <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                        {typeof v === 'number' ? formatSeconds(v) : JSON.stringify(v)}
-                                        {typeof v === 'number' ? formatPercent(v, parentTotal) : ''}
-                                      </TableCell>
-                                    </TableRow>
-                                  ))
-                                }
-
-                                return (
-                                  <>
-                                    {/* 總時間 */}
-                                    {timing.total !== undefined && (
-                                      <TableRow>
-                                        <TableCell colSpan={2} sx={{ backgroundColor: 'primary.light', fontWeight: 'bold', color: 'primary.contrastText' }}>
-                                          總時間: {typeof timing.total === 'number' ? timing.total.toFixed(3) : '0.000'} 秒
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-
-                                    {/* 任務級主階段 */}
-                                    {timing.load_images !== undefined && (
-                                      <TableRow>
-                                        <TableCell>載入圖像</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.load_images)}{formatPercent(timing.load_images, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-                                    {timing.remove_bg_image1 !== undefined && (
-                                      <TableRow>
-                                        <TableCell>圖像1去背景</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.remove_bg_image1)}{formatPercent(timing.remove_bg_image1, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-
-                                    {/* 圖像2去背景 + 對齊（細節） */}
-                                    {timing.remove_bg_align_image2 !== undefined && (
-                                      <>
-                                        <TableRow>
-                                          <TableCell sx={{ fontWeight: 'medium' }}>圖像2去背景和對齊</TableCell>
-                                          <TableCell align="right" sx={{ fontWeight: 'medium' }}>
-                                            {formatSeconds(timing.remove_bg_align_image2)}{formatPercent(timing.remove_bg_align_image2, timing.total)}
-                                          </TableCell>
-                                        </TableRow>
-
-                                        {hasAlignmentStages && (
-                                          <>
-                                            {/* 去背景（9步驟 + total） */}
-                                            <TableRow>
-                                              <TableCell sx={{ pl: 4, color: 'text.secondary', fontWeight: 'medium' }}>
-                                                ├─ 去背景
-                                              </TableCell>
-                                              <TableCell align="right" sx={{ color: 'text.secondary', fontWeight: 'medium' }}>
-                                                {formatSeconds(
-                                                  alignmentStages.remove_background_total ??
-                                                    alignmentStages.remove_background ??
-                                                    0
-                                                )}
-                                                {formatPercent(
-                                                  alignmentStages.remove_background_total ??
-                                                    alignmentStages.remove_background ??
-                                                    0,
-                                                  timing.remove_bg_align_image2
-                                                )}
-                                              </TableCell>
-                                            </TableRow>
-
-                                            {bgStepDefs.map(([k, label], idx) => {
-                                              const v = alignmentStages[k]
-                                              const prefix = idx === bgStepDefs.length - 1 ? '│  └─' : '│  ├─'
-                                              return (
-                                                <TableRow key={k}>
-                                                  <TableCell sx={{ pl: 6, color: 'text.secondary' }}>
-                                                    {prefix} {label}
-                                                  </TableCell>
-                                                  <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                                    {formatSeconds(v)}
-                                                  </TableCell>
-                                                </TableRow>
-                                              )
-                                            })}
-
-                                            {/* 對齊階段 1-5 */}
-                                            {stageDefs.map(([k, label]) => (
-                                              <TableRow key={k}>
-                                                <TableCell sx={{ pl: 4, color: 'text.secondary' }}>
-                                                  ├─ {label}
-                                                </TableCell>
-                                                <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                                  {formatSeconds(alignmentStages[k])}
-                                                  {formatPercent(alignmentStages[k], timing.remove_bg_align_image2)}
-                                                </TableCell>
-                                              </TableRow>
-                                            ))}
-
-                                            {/* 階段4子步驟 */}
-                                            {stage4SubDefs.map(([k, label]) => (
-                                              <TableRow key={k}>
-                                                <TableCell sx={{ pl: 6, color: 'text.secondary' }}>
-                                                  │  {label}
-                                                </TableCell>
-                                                <TableCell align="right" sx={{ color: 'text.secondary' }}>
-                                                  {formatSeconds(alignmentStages[k])}
-                                                </TableCell>
-                                              </TableRow>
-                                            ))}
-
-                                            {/* alignment_stages 其他未識別 key */}
-                                            {otherAlignmentEntries.length > 0 && (
-                                              <>
-                                                <TableRow>
-                                                  <TableCell colSpan={2} sx={{ pl: 4, backgroundColor: 'grey.100', fontWeight: 'bold' }}>
-                                                    其他（alignment_stages）
-                                                  </TableCell>
-                                                </TableRow>
-                                                {renderKeyValueRows(otherAlignmentEntries, timing.remove_bg_align_image2)}
-                                              </>
-                                            )}
-                                          </>
-                                        )}
-                                      </>
-                                    )}
-
-                                    {timing.save_aligned_images !== undefined && (
-                                      <TableRow>
-                                        <TableCell>保存對齊圖像</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.save_aligned_images)}{formatPercent(timing.save_aligned_images, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-                                    {timing.similarity_calculation !== undefined && (
-                                      <TableRow>
-                                        <TableCell>相似度計算</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.similarity_calculation)}{formatPercent(timing.similarity_calculation, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-                                    {timing.save_corrected_images !== undefined && (
-                                      <TableRow>
-                                        <TableCell>保存校正圖像</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.save_corrected_images)}{formatPercent(timing.save_corrected_images, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-                                    {timing.create_overlay !== undefined && (
-                                      <TableRow>
-                                        <TableCell>生成疊圖</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.create_overlay)}{formatPercent(timing.create_overlay, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-                                    {timing.calculate_mask_stats !== undefined && (
-                                      <TableRow>
-                                        <TableCell>計算Mask統計</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.calculate_mask_stats)}{formatPercent(timing.calculate_mask_stats, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-                                    {timing.create_heatmap !== undefined && (
-                                      <TableRow>
-                                        <TableCell>生成熱力圖</TableCell>
-                                        <TableCell align="right">
-                                          {formatSeconds(timing.create_heatmap)}{formatPercent(timing.create_heatmap, timing.total)}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-
-                                    {/* timing 其他未識別 key（全量呈現） */}
-                                    {otherTimingEntries.length > 0 && (
-                                      <>
-                                        <TableRow>
-                                          <TableCell colSpan={2} sx={{ backgroundColor: 'grey.100', fontWeight: 'bold' }}>
-                                            其他（timing）
-                                          </TableCell>
-                                        </TableRow>
-                                        {renderKeyValueRows(otherTimingEntries, timing.total)}
-                                      </>
-                                    )}
-                                  </>
-                                )
-                              })()}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
+                        <TimingDetailsTable timing={result.timing} />
                       </AccordionDetails>
                     </Accordion>
                   </Box>

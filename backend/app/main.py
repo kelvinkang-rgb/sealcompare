@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import engine, Base
 from app.api import images
+from app.api import config as config_api
 from app.exceptions import (
     ImageNotFoundError,
     ImageFileNotFoundError,
@@ -142,7 +143,7 @@ def add_missing_columns():
                     progress REAL,
                     progress_message VARCHAR(500),
                     seal_image_ids JSONB NOT NULL,
-                    threshold REAL NOT NULL DEFAULT 0.83,
+                    threshold REAL NOT NULL DEFAULT 0.5,
                     similarity_ssim_weight REAL NOT NULL DEFAULT 0.5,
                     similarity_template_weight REAL NOT NULL DEFAULT 0.35,
                     pixel_similarity_weight REAL NOT NULL DEFAULT 0.1,
@@ -189,6 +190,7 @@ app.add_middleware(
 
 # 註冊路由
 app.include_router(images.router, prefix=settings.API_V1_PREFIX)
+app.include_router(config_api.router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/")

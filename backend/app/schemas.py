@@ -124,16 +124,12 @@ class CropSealsResponse(BaseModel):
 class MultiSealComparisonRequest(BaseModel):
     """多印鑑比對請求"""
     seal_image_ids: list[UUID] = Field(..., description="裁切後的印鑑圖像 ID 列表")
-    threshold: Optional[float] = Field(0.83, ge=0.0, le=1.0, description="相似度閾值")
+    threshold: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="相似度閾值（structure_similarity >= threshold 視為匹配）")
     # 傳統相似度權重參數（保留以向後兼容，但不再使用）
     similarity_ssim_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="SSIM 權重")
     similarity_template_weight: Optional[float] = Field(0.35, ge=0.0, le=1.0, description="Template Match 權重")
     pixel_similarity_weight: Optional[float] = Field(0.1, ge=0.0, le=1.0, description="Pixel Similarity 權重")
     histogram_similarity_weight: Optional[float] = Field(0.05, ge=0.0, le=1.0, description="Histogram Similarity 權重")
-    # Mask相似度權重參數
-    overlap_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="重疊區域權重")
-    pixel_diff_penalty_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0, description="像素差異懲罰權重")
-    unique_region_penalty_weight: Optional[float] = Field(0.2, ge=0.0, le=1.0, description="獨有區域懲罰權重")
     # 圖像對齊參數
     rotation_range: Optional[float] = Field(15.0, ge=0.0, le=180.0, description="旋轉角度搜索範圍（度）")
     translation_range: Optional[int] = Field(100, ge=0, le=1000, description="平移偏移搜索範圍（像素）")
@@ -154,7 +150,6 @@ class SealComparisonResult(BaseModel):
     diff_mask_1_only_path: Optional[str] = Field(None, description="圖像1獨有區域mask路徑")
     gray_diff_path: Optional[str] = Field(None, description="灰度差異圖路徑（熱力圖視覺化）")
     mask_statistics: Optional[Dict[str, Any]] = Field(None, description="Mask統計資訊")
-    mask_based_similarity: Optional[float] = Field(None, description="基於mask的相似度")
     structure_similarity: Optional[float] = Field(None, description="結構相似度（對印泥深淺較不敏感，0-1）")
     alignment_metrics: Optional[Dict[str, Any]] = Field(None, description="對齊過程指標（角度/偏移/救援/符號判別等）")
     input_image1_path: Optional[str] = Field(None, description="疊圖前的圖像1路徑（去背景後的裁切圖像）")
@@ -177,7 +172,7 @@ class MultiSealComparisonTaskCreate(BaseModel):
     task_uid: str = Field(..., description="任務 UID（用於追蹤）")
     image1_id: UUID = Field(..., description="圖像1 ID")
     seal_image_ids: list[UUID] = Field(..., description="裁切後的印鑑圖像 ID 列表")
-    threshold: Optional[float] = Field(0.83, ge=0.0, le=1.0, description="相似度閾值")
+    threshold: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="相似度閾值（structure_similarity >= threshold 視為匹配）")
     similarity_ssim_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="SSIM 權重")
     similarity_template_weight: Optional[float] = Field(0.35, ge=0.0, le=1.0, description="Template Match 權重")
     pixel_similarity_weight: Optional[float] = Field(0.1, ge=0.0, le=1.0, description="Pixel Similarity 權重")
@@ -226,10 +221,7 @@ class PdfCompareRequest(BaseModel):
     image2_pdf_id: UUID = Field(..., description="圖像2 的 PDF Image ID")
     max_seals: int = Field(160, ge=1, le=160, description="每頁最多偵測印鑑數")
     margin: int = Field(10, ge=0, le=50, description="裁切邊距（像素）")
-    threshold: Optional[float] = Field(0.83, ge=0.0, le=1.0, description="相似度閾值")
-    overlap_weight: Optional[float] = Field(0.5, ge=0.0, le=1.0)
-    pixel_diff_penalty_weight: Optional[float] = Field(0.3, ge=0.0, le=1.0)
-    unique_region_penalty_weight: Optional[float] = Field(0.2, ge=0.0, le=1.0)
+    threshold: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="相似度閾值（structure_similarity >= threshold 視為匹配）")
     rotation_range: Optional[float] = Field(15.0, ge=0.0, le=180.0)
     translation_range: Optional[int] = Field(100, ge=0, le=1000)
 

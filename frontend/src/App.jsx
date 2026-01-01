@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import MultiSealTest from './pages/MultiSealTest'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // 確保 React Router 的 useSearchParams 可以正常工作
 
@@ -24,7 +25,14 @@ function App() {
       <Router>
         <Routes>
           <Route path="/" element={<Navigate to="/multi-seal-test" replace />} />
-          <Route path="/multi-seal-test" element={<MultiSealTest />} />
+          <Route
+            path="/multi-seal-test"
+            element={
+              <ErrorBoundary>
+                <MultiSealTest />
+              </ErrorBoundary>
+            }
+          />
         </Routes>
       </Router>
     </ThemeProvider>

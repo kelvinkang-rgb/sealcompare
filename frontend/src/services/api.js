@@ -80,7 +80,7 @@ export const imageAPI = {
   },
   
   // 多印鑑比對相關 API（測試功能）- 異步任務模式
-  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.83, similaritySsimWeight = 0.5, similarityTemplateWeight = 0.35, pixelSimilarityWeight = 0.1, histogramSimilarityWeight = 0.05, overlapWeight = 0.5, pixelDiffPenaltyWeight = 0.3, uniqueRegionPenaltyWeight = 0.2) => {
+  compareImage1WithSeals: async (image1Id, sealImageIds, threshold = 0.5, similaritySsimWeight = 0.5, similarityTemplateWeight = 0.35, pixelSimilarityWeight = 0.1, histogramSimilarityWeight = 0.05) => {
     // 創建比對任務（異步模式）
     const response = await api.post(`/images/${image1Id}/compare-with-seals`, {
       seal_image_ids: sealImageIds,
@@ -88,10 +88,7 @@ export const imageAPI = {
       similarity_ssim_weight: similaritySsimWeight,
       similarity_template_weight: similarityTemplateWeight,
       pixel_similarity_weight: pixelSimilarityWeight,
-      histogram_similarity_weight: histogramSimilarityWeight,
-      overlap_weight: overlapWeight,
-      pixel_diff_penalty_weight: pixelDiffPenaltyWeight,
-      unique_region_penalty_weight: uniqueRegionPenaltyWeight
+      histogram_similarity_weight: histogramSimilarityWeight
     })
     return response.data // 返回任務信息，包含 task_uid
   },
@@ -100,10 +97,7 @@ export const imageAPI = {
   comparePdf: async (image1Id, image2PdfId, {
     maxSeals = 160,
     margin = 10,
-    threshold = 0.83,
-    overlapWeight = 0.5,
-    pixelDiffPenaltyWeight = 0.3,
-    uniqueRegionPenaltyWeight = 0.2,
+    threshold = 0.5,
     rotationRange = 15.0,
     translationRange = 100
   } = {}) => {
@@ -112,9 +106,6 @@ export const imageAPI = {
       max_seals: maxSeals,
       margin,
       threshold,
-      overlap_weight: overlapWeight,
-      pixel_diff_penalty_weight: pixelDiffPenaltyWeight,
-      unique_region_penalty_weight: uniqueRegionPenaltyWeight,
       rotation_range: rotationRange,
       translation_range: translationRange
     })
@@ -140,6 +131,12 @@ export const imageAPI = {
   // 獲取任務完整結果
   getTaskResult: async (taskUid) => {
     const response = await api.get(`/images/tasks/${taskUid}`)
+    return response.data
+  },
+
+  // 前端 runtime config（由後端 config.yml 提供）
+  getFrontendConfig: async () => {
+    const response = await api.get(`/config/frontend`)
     return response.data
   },
 }

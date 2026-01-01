@@ -22,7 +22,7 @@ flowchart TD
 
 ## 重要預設值（程式碼現況）
 
-- **threshold**：0.83
+- **threshold**：0.5（structure_similarity >= threshold 視為匹配）
 - **maxSeals**：3（UI 可調；PDF 全頁比對另有 max_seals 預設）
 - **PDF 全頁比對**：會把圖像1（模板頁）與圖像2（PDF）所有頁面進行自動偵測與比對
 
