@@ -58,24 +58,94 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api/v1
-        # 功能開關配置（true = 顯示，false = 隱藏）
-        # 預設所有功能啟用，如需隱藏特定組件，將對應值設為 "false"
+        
+        # ====================================================================
+        # 前端功能開關配置
+        # ====================================================================
+        # 說明：控制前端組件的顯示/隱藏
+        # 值：true = 顯示組件，false = 隱藏組件
+        # 預設：所有功能預設啟用（true），未設置時保持可見
+        # ====================================================================
+        
+        # --------------------------------------------------------------------
+        # 組件級功能開關（主要 UI 組件）
+        # --------------------------------------------------------------------
+        
+        # 批次印鑑調整組件：允許用戶手動調整多個印鑑的檢測框位置
+        # 用途：當自動檢測不準確時，提供手動校正功能
         VITE_FEATURE_BATCH_SEAL_ADJUSTMENT: "true"
-        VITE_FEATURE_METRICS_EXPLANATION_DIALOG: "false"
+        
+        # 指標說明對話框：顯示比對指標（SSIM、結構相似度等）的詳細說明
+        # 用途：幫助用戶理解各種相似度指標的計算方式和意義
+        VITE_FEATURE_METRICS_EXPLANATION_DIALOG: "true"
+        
+        # 相似度分佈直方圖：以直方圖形式展示所有印鑑比對的相似度分佈
+        # 用途：視覺化分析比對結果的整體質量分佈
         VITE_FEATURE_SIMILARITY_HISTOGRAM: "true"
+        
+        # 比對結果編輯對話框：允許用戶編輯單個比對結果的標記或註解
+        # 用途：提供比對結果的手動標記和註解功能
         VITE_FEATURE_COMPARISON_EDIT_DIALOG: "true"
+        
+        # 刪除確認對話框：刪除比對結果前顯示確認提示
+        # 用途：防止誤刪重要比對結果
         VITE_FEATURE_DELETE_CONFIRM_DIALOG: "true"
+        
+        # 處理階段顯示：顯示比對任務的處理進度階段（如：去背景、對齊、比對等）
+        # 用途：讓用戶了解當前任務的處理進度和狀態
         VITE_FEATURE_PROCESSING_STAGES: "true"
+        
+        # 驗證視圖：顯示比對結果的驗證相關資訊
+        # 用途：提供比對結果的驗證和審核功能
         VITE_FEATURE_VERIFICATION_VIEW: "true"
-        VITE_FEATURE_IMAGE_MODAL: "false"
+        
+        # 圖片模態框：點擊圖片時顯示的彈出式圖片查看器
+        # 用途：提供大圖查看功能
+        VITE_FEATURE_IMAGE_MODAL: "true"
+        
+        # 圖片預覽對話框：顯示比對圖片的詳細預覽（含印鑑標記框）
+        # 用途：在對話框中查看比對圖片和印鑑位置標記
         VITE_FEATURE_IMAGE_PREVIEW_DIALOG: "true"
-        # UI 元素開關配置（true = 顯示，false = 隱藏）
-        VITE_FEATURE_MASK_STATISTICS: "false"
+        
+        # --------------------------------------------------------------------
+        # UI 元素開關（細部 UI 組件和設定）
+        # --------------------------------------------------------------------
+        
+        # 遮罩統計資訊：顯示比對過程中的像素遮罩統計數據
+        # 內容：重疊像素、差異像素、僅圖1/圖2的像素等統計
+        # 用途：提供比對過程的詳細像素級分析數據
+        VITE_FEATURE_MASK_STATISTICS: "true"
+        
+        # 時間詳情表格：顯示比對任務各階段的執行時間詳情
+        # 內容：去背景、對齊、相似度計算等各步驟的耗時
+        # 用途：性能分析和調試
         VITE_FEATURE_TIMING_DETAILS: "true"
-        VITE_FEATURE_TASK_TIMING_STATISTICS: "false"
+        
+        # 任務時間統計：顯示整個任務的總體時間統計
+        # 用途：了解任務整體執行效率
+        VITE_FEATURE_TASK_TIMING_STATISTICS: "true"
+        
+        # 進階設定面板：顯示/隱藏進階設定區域（可摺疊的 Accordion）
+        # 用途：提供進階用戶更多配置選項
         VITE_FEATURE_ADVANCED_SETTINGS: "true"
+        
+        # 最大印鑑數量設定：在進階設定中顯示「比對印鑑數量上限」滑桿
+        # 範圍：1-160 個印鑑
+        # 用途：限制單次比對中檢測的印鑑數量，提升性能
         VITE_FEATURE_MAX_SEALS_SETTING: "true"
-        VITE_FEATURE_THRESHOLD_SETTING: "false"
+        
+        # 相似度閾值設定：在進階設定中顯示「相似度閾值」滑桿
+        # 範圍：0-1（0-100%）
+        # 用途：設定判斷為「匹配」的相似度門檻值
+        VITE_FEATURE_THRESHOLD_SETTING: "true"
+        
+        # 遮罩權重設定：在進階設定中顯示遮罩權重相關配置
+        # 用途：調整比對演算法中不同遮罩的權重參數
+        VITE_FEATURE_MASK_WEIGHTS_SETTING: "true"
+        
+        # 對齊時間詳情：在時間詳情中顯示對齊階段的詳細時間分解
+        # 內容：stage1-5 各階段的耗時、coarse search、fine tuning 等
+        # 用途：深入分析對齊演算法的性能瓶頸
         VITE_FEATURE_ALIGNMENT_TIMING_DETAILS: "true"
     container_name: sealcompare-frontend
     ports:

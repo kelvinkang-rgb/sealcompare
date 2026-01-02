@@ -1,5 +1,5 @@
-threshold_default: 0.5
-max_seals_default: 3
+threshold_default: 0.45
+max_seals_default: 50
 
 # PDF / 對齊預設（若前端未顯示 UI 仍可由這裡統一調整）
 rotation_range_default: 15.0

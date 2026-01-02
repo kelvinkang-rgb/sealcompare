@@ -222,9 +222,32 @@ def detect_seal(
             best_result = None
             best_conf = -1.0
             best_page = None
+            pages_results = []
 
             for p in pages:
-                r = image_service.detect_seal(p.id)
+                try:
+                    r = image_service.detect_seal(p.id)
+                except Exception as e:
+                    r = {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "bbox": None,
+                        "center": None,
+                        "reason": f"檢測失敗: {str(e)}",
+                    }
+
+                pages_results.append(
+                    {
+                        "page_index": int(p.page_index or 0),
+                        "page_image_id": p.id,
+                        "detected": bool(r.get("detected")),
+                        "confidence": float(r.get("confidence") or 0.0),
+                        "bbox": r.get("bbox"),
+                        "center": r.get("center"),
+                        "reason": r.get("reason"),
+                    }
+                )
+
                 if not r or not r.get("detected"):
                     continue
                 conf = float(r.get("confidence") or 0.0)
@@ -238,6 +261,9 @@ def detect_seal(
                     **best_result,
                     "page_image_id": best_page.id,
                     "page_index": int(best_page.page_index or 0),
+                    "pages": pages_results,
+                    "total_pages": len(pages_results),
+                    "detected_pages": sum(1 for x in pages_results if x.get("detected")),
                 }
 
             return {
@@ -248,6 +274,9 @@ def detect_seal(
                 "reason": "未檢測到印鑑",
                 "page_image_id": None,
                 "page_index": None,
+                "pages": pages_results,
+                "total_pages": len(pages_results),
+                "detected_pages": sum(1 for x in pages_results if x.get("detected")),
             }
 
         # 一般圖片：沿用既有行為

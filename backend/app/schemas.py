@@ -57,6 +57,17 @@ class PdfPageInfo(BaseModel):
         from_attributes = True
 
 
+class PdfPageSealDetectionResult(BaseModel):
+    """PDF 單頁「單印鑑」偵測結果（用於 /detect-seal 的 pages[]）"""
+    page_index: int
+    page_image_id: UUID
+    detected: bool
+    confidence: float
+    bbox: Optional[Dict[str, int]] = None
+    center: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+
+
 class SealDetectionResponse(BaseModel):
     """印鑑檢測響應模型"""
     detected: bool
@@ -67,6 +78,10 @@ class SealDetectionResponse(BaseModel):
     # PDF：若 image_id 是 PDF，本次最佳偵測所在頁
     page_image_id: Optional[UUID] = None
     page_index: Optional[int] = None
+    # PDF：逐頁偵測結果（每頁最多 1 顆）
+    pages: Optional[list[PdfPageSealDetectionResult]] = None
+    total_pages: Optional[int] = None
+    detected_pages: Optional[int] = None
 
 
 class SealLocationUpdate(BaseModel):

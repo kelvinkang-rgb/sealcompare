@@ -45,6 +45,29 @@ def test_pdf_detect_seal_returns_best_page_and_persists_bbox():
     # schema 應該永遠包含這兩個欄位（非 PDF 也會是 null）
     assert "page_image_id" in det
     assert "page_index" in det
+    # 新行為：PDF detect-seal 也要回傳每頁偵測結果（pages[]）
+    assert "pages" in det
+    assert isinstance(det.get("pages"), list)
+    assert len(det["pages"]) == len(payload["pages"])
+    # 可選摘要欄位（但應存在）
+    assert det.get("total_pages") == len(payload["pages"])
+    assert isinstance(det.get("detected_pages"), int)
+
+    # pages[] 結構檢查：每頁最多 1 顆印鑑 bbox
+    # 以 page_index 對齊檢查（避免順序差異造成 flaky）
+    pages_by_index = {int(p["page_index"]): p for p in det["pages"]}
+    assert len(pages_by_index) == len(payload["pages"])
+    for p in payload["pages"]:
+        idx = int(p["page_index"])
+        assert idx in pages_by_index
+        pr = pages_by_index[idx]
+        assert pr.get("page_image_id") == p["id"]
+        assert pr.get("page_index") == idx
+        assert "detected" in pr
+        assert "confidence" in pr
+        assert "bbox" in pr
+        assert "center" in pr
+        assert "reason" in pr
 
     if det.get("detected") is True:
         assert det.get("bbox") is not None

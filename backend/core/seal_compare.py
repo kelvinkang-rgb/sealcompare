@@ -56,6 +56,37 @@ class SealComparator:
         
         return image
     
+    def _compute_ink_bbox_center(
+        self,
+        img_gray: np.ndarray,
+        *,
+        white_threshold: int = 245
+    ) -> Tuple[float, float]:
+        """
+        計算「去背景後印鑑」的 bbox 中心點（以灰階前景像素 < white_threshold 視為印泥）。
+
+        - 目標：提供穩定的旋轉支點，避免以影像中心旋轉造成等效平移過大，導致 stage4/5 無法收斂到 1px/0.2°。
+        - Fallback：若找不到前景像素，回傳影像中心。
+        """
+        if img_gray is None or img_gray.size == 0:
+            return 0.0, 0.0
+        if img_gray.ndim != 2:
+            raise ValueError("expects a 2D grayscale image")
+
+        h, w = img_gray.shape[:2]
+        ys, xs = np.where(img_gray < int(white_threshold))
+        if xs.size == 0 or ys.size == 0:
+            return float(w // 2), float(h // 2)
+
+        x_min = int(xs.min())
+        x_max = int(xs.max())
+        y_min = int(ys.min())
+        y_max = int(ys.max())
+
+        cx = (x_min + x_max) / 2.0
+        cy = (y_min + y_max) / 2.0
+        return float(cx), float(cy)
+    
     def _auto_detect_bounds_and_remove_background(self, image: np.ndarray, return_timing: bool = False) -> Tuple[np.ndarray, Dict[str, float]]:
         """
         自動偵測圖像外框並移除背景顏色
@@ -400,8 +431,8 @@ class SealComparator:
         return result, timing
     
     def _align_image2_to_image1(
-        self,
-        image1: np.ndarray,
+        self, 
+        image1: np.ndarray, 
         image2: np.ndarray,
         rotation_range: float = 15.0,
         translation_range: int = 100
@@ -473,6 +504,11 @@ class SealComparator:
         fallback_start = time.time()
         tried = [0]
         candidate_eval_seconds = {}  # base(deg) -> seconds (含 stage4~5-only 的評估成本)
+        
+        # 方案 D：低 similarity 回退閾值
+        LOW_SIMILARITY_THRESHOLD = 0.35
+        LOW_OVERLAP_THRESHOLD = 0.5
+        
         for base in candidates:
             tried.append(base)
             try:
@@ -491,6 +527,76 @@ class SealComparator:
                     rotation_range=rotation_range,
                     translation_range=translation_range
                 )
+                
+                # === 方案 D：檢測低 similarity 並回退到完整流程 ===
+                sim_f = float(sim) if sim is not None else float('-inf')
+                should_fallback_to_full = False
+                fallback_reason = None
+                
+                # 檢查是否需要回退
+                if sim_f < LOW_SIMILARITY_THRESHOLD:
+                    should_fallback_to_full = True
+                    fallback_reason = f"low_similarity_{sim_f:.3f}"
+                else:
+                    # 額外檢查 overlap ratio（如果 metrics 中有）
+                    try:
+                        # 快速計算 overlap ratio
+                        if len(image1.shape) == 3:
+                            img1_gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
+                        else:
+                            img1_gray = image1.copy()
+                        if len(aligned.shape) == 3:
+                            aligned_gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+                        else:
+                            aligned_gray = aligned.copy()
+                        
+                        _, img1_bin = cv2.threshold(img1_gray, 245, 255, cv2.THRESH_BINARY_INV)
+                        _, aligned_bin = cv2.threshold(aligned_gray, 245, 255, cv2.THRESH_BINARY_INV)
+                        
+                        overlap = np.logical_and(img1_bin > 0, aligned_bin > 0)
+                        union = np.logical_or(img1_bin > 0, aligned_bin > 0)
+                        overlap_ratio = float(np.sum(overlap)) / float(np.sum(union)) if np.sum(union) > 0 else 0.0
+                        
+                        if overlap_ratio < LOW_OVERLAP_THRESHOLD:
+                            should_fallback_to_full = True
+                            fallback_reason = f"low_overlap_{overlap_ratio:.3f}"
+                    except Exception:
+                        pass  # overlap 計算失敗不影響主流程
+                
+                # 如果需要回退，改用完整流程
+                if should_fallback_to_full:
+                    print(f"  右角候選 {base}° stage45_only 結果不佳 ({fallback_reason})，回退到完整流程")
+                    full_start = time.time()
+                    aligned_full, angle_full, offset_full, sim_full, metrics_full, timing_full = self._align_image2_to_image1_impl(
+                        image1,
+                        img2_rot,
+                        rotation_range=rotation_range,
+                        translation_range=translation_range
+                    )
+                    full_cost = float(time.time() - full_start)
+                    
+                    # 記錄回退行為到 metrics
+                    if isinstance(metrics_full, dict):
+                        metrics_full['low_sim_fallback_triggered'] = True
+                        metrics_full['low_sim_fallback_reason'] = fallback_reason
+                        metrics_full['stage45_only_similarity'] = float(sim_f)
+                        metrics_full['full_flow_similarity'] = float(sim_full) if sim_full is not None else 0.0
+                        metrics_full['low_sim_fallback_improvement'] = float(sim_full - sim_f) if sim_full is not None else 0.0
+                        metrics_full['low_sim_fallback_cost_seconds'] = float(full_cost)
+                    
+                    # 使用完整流程的結果
+                    aligned = aligned_full
+                    angle = angle_full
+                    offset = offset_full
+                    sim = sim_full
+                    metrics = metrics_full
+                    timing = timing_full
+                    sim_f = float(sim) if sim is not None else float('-inf')
+                else:
+                    # 未觸發回退，在 metrics 中標記
+                    if isinstance(metrics, dict):
+                        metrics['low_sim_fallback_triggered'] = False
+                
                 candidate_eval_seconds[int(base)] = float(time.time() - cand_start)
 
                 # 把「候選 base 旋轉」納入回傳角度（角度以 CCW 為正）
@@ -574,6 +680,16 @@ class SealComparator:
         max_dimension = max(w1, h1, w2, h2)
         dynamic_translation_range = max_dimension
 
+        # 右角候選的關鍵：改用「去背景後印鑑 bbox 中心」作為旋轉支點
+        # 避免以影像中心旋轉導致等效平移過大，讓 stage4/5 無法收斂到 1px / 0.2°
+        pivot1_x, pivot1_y = self._compute_ink_bbox_center(img1_gray, white_threshold=245)
+        pivot2_x, pivot2_y = self._compute_ink_bbox_center(img2_gray, white_threshold=245)
+        rotation_center = (float(pivot2_x), float(pivot2_y))
+        best_metrics['stage45_rotation_center_mode'] = 'bbox_center'
+        best_metrics['stage45_rotation_center'] = {'x': float(pivot2_x), 'y': float(pivot2_y)}
+        best_metrics['stage45_pivot1'] = {'x': float(pivot1_x), 'y': float(pivot1_y)}
+        best_metrics['stage45_pivot2'] = {'x': float(pivot2_x), 'y': float(pivot2_y)}
+
         # stage1~3 在此流程中不執行：填 0，保持 timing schema 穩定
         alignment_timing['stage12_joint_coarse_total'] = 0.0
         alignment_timing['stage1_translation_coarse'] = 0.0
@@ -583,12 +699,25 @@ class SealComparator:
         alignment_timing['post_fine_rescue_guardrail_total'] = 0.0
 
         best_angle = 0.0
-        best_offset_x = 0
-        best_offset_y = 0
+        # 最小改動但關鍵：用 pivot1 - pivot2 做平移初始化，先消掉 30~100px 級別的大平移誤差
+        init_offset_x = int(round(float(pivot1_x) - float(pivot2_x)))
+        init_offset_y = int(round(float(pivot1_y) - float(pivot2_y)))
+        best_offset_x = init_offset_x
+        best_offset_y = init_offset_y
+        best_metrics['stage45_initial_offset_from_pivot'] = {'x': int(init_offset_x), 'y': int(init_offset_y)}
 
         # 初始相似度（以 0°/0,0 作起點）
         try:
-            best_similarity = float(self._fast_rotation_match(img1_gray, img2_gray))
+            # 注意：stage45_only 以「已是右角候選」為前提，這裡要從 pivot 初始化後的狀態開始評估
+            M_trans0 = np.float32([[1, 0, float(best_offset_x)], [0, 1, float(best_offset_y)]])
+            img2_t0 = cv2.warpAffine(
+                img2_gray,
+                M_trans0,
+                (w2, h2),
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=255,
+            )
+            best_similarity = float(self._fast_rotation_match(img1_gray, img2_t0))
         except Exception:
             best_similarity = 0.0
 
@@ -608,7 +737,8 @@ class SealComparator:
                 best_offset_y,
                 rotation_range=2.0,
                 translation_range=3,
-                iterations=iterations
+                iterations=iterations,
+                rotation_center=rotation_center
             )
             alignment_timing.update(stage4_timing or {})
 
@@ -642,7 +772,8 @@ class SealComparator:
                         best_offset_x,
                         best_offset_y,
                         rotation_range=adaptive_rotation_range,
-                        translation_range=adaptive_translation_range
+                        translation_range=adaptive_translation_range,
+                        rotation_center=rotation_center
                     )
                 else:
                     verified_angle, verified_offset_x, verified_offset_y, verified_similarity, verification_metrics = self._global_verification_search(
@@ -652,7 +783,8 @@ class SealComparator:
                         best_offset_x,
                         best_offset_y,
                         rotation_range=float(rotation_range),
-                        translation_range=int(dynamic_translation_range)
+                        translation_range=int(dynamic_translation_range),
+                        rotation_center=rotation_center
                     )
 
                 best_angle = float(verified_angle)
@@ -671,8 +803,7 @@ class SealComparator:
         else:
             img2_final = cv2.cvtColor(image2, cv2.COLOR_GRAY2BGR)
 
-        center = (w2 // 2, h2 // 2)
-        M = cv2.getRotationMatrix2D(center, best_angle, 1.0).astype(np.float32)
+        M = cv2.getRotationMatrix2D(rotation_center, best_angle, 1.0).astype(np.float32)
         M[0, 2] += float(best_offset_x)
         M[1, 2] += float(best_offset_y)
 
@@ -1869,7 +2000,7 @@ class SealComparator:
             iw = int(iw)
             ih = int(ih)
             if iw <= 0 or ih <= 0:
-                continue
+                            continue
             ref_pts = np.array([[0, 0], [iw, 0], [0, ih], [iw, ih]], dtype=np.float32)
             all_pts.append(ref_pts)
 
@@ -1899,7 +2030,7 @@ class SealComparator:
             M_adj,
             (out_w, out_h),
             flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
+                                                         borderMode=cv2.BORDER_CONSTANT,
             borderValue=border_value
         )
 
@@ -1992,10 +2123,14 @@ class SealComparator:
         # 應用旋轉
         center = (w2 // 2, h2 // 2)
         M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
-        img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                 borderMode=cv2.BORDER_CONSTANT,
-                                 borderValue=255)
-        
+        img2_rot = cv2.warpAffine(
+            img2_gray,
+            M_rot,
+            (w2, h2),
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255,
+        )
+                
         # 在初始偏移附近進行精細搜索
         best_offset_x = initial_offset_x
         best_offset_y = initial_offset_y
@@ -2031,7 +2166,8 @@ class SealComparator:
         initial_offset_y: int,
         rotation_range: float = 2.0,
         translation_range: int = 3,
-        iterations: int = 2
+        iterations: int = 2,
+        rotation_center: Optional[Tuple[float, float]] = None
     ) -> Tuple[float, int, int, float, Dict[str, float]]:
         """
         階段4：旋轉細調與平移細調（交替優化）
@@ -2062,15 +2198,26 @@ class SealComparator:
         h2, w2 = img2_gray.shape[:2]
         
         # 初始評估
-        center = (w2 // 2, h2 // 2)
+        if rotation_center is not None:
+            center = (float(rotation_center[0]), float(rotation_center[1]))
+        else:
+            center = (w2 // 2, h2 // 2)
         M_rot = cv2.getRotationMatrix2D(center, best_angle, 1.0)
-        img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                 borderMode=cv2.BORDER_CONSTANT,
-                                 borderValue=255)
+        img2_rot = cv2.warpAffine(
+            img2_gray,
+            M_rot,
+            (w2, h2),
+                                          borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255,
+        )
         M_trans = np.float32([[1, 0, float(best_offset_x)], [0, 1, float(best_offset_y)]])
-        img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
-                                         borderMode=cv2.BORDER_CONSTANT,
-                                         borderValue=255)
+        img2_transformed = cv2.warpAffine(
+            img2_rot,
+            M_trans,
+            (w2, h2),
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255,
+        )
         best_similarity = self._fast_rotation_match(img1_gray, img2_transformed)
         
         rotation_time_total = 0.0
@@ -2096,16 +2243,20 @@ class SealComparator:
                     img2_rot = rotation_cache[angle]
                 else:
                     M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
-                    img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                             borderMode=cv2.BORDER_CONSTANT,
-                                             borderValue=255)
+                    img2_rot = cv2.warpAffine(
+                        img2_gray,
+                        M_rot,
+                        (w2, h2),
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=255,
+                    )
                     rotation_cache[angle] = img2_rot
                 
                 # 應用當前最佳平移
                 M_trans = np.float32([[1, 0, float(best_offset_x)], [0, 1, float(best_offset_y)]])
                 img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
-                                                 borderMode=cv2.BORDER_CONSTANT,
-                                                 borderValue=255)
+                                         borderMode=cv2.BORDER_CONSTANT,
+                                         borderValue=255)
                 
                 # 計算相似度
                 similarity = self._fast_rotation_match(img1_gray, img2_transformed)
@@ -2125,20 +2276,24 @@ class SealComparator:
             else:
                 M_rot = cv2.getRotationMatrix2D(center, best_angle, 1.0)
                 img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                         borderMode=cv2.BORDER_CONSTANT,
-                                         borderValue=255)
+                                                          borderMode=cv2.BORDER_CONSTANT,
+                                                          borderValue=255)
                 rotation_cache[best_angle] = img2_rot
             
             for dx in range(-translation_range, translation_range + 1):
                 for dy in range(-translation_range, translation_range + 1):
                     offset_x = best_offset_x + dx
                     offset_y = best_offset_y + dy
-                    
+
                     # 應用平移
                     M_trans = np.float32([[1, 0, float(offset_x)], [0, 1, float(offset_y)]])
-                    img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
-                                                     borderMode=cv2.BORDER_CONSTANT,
-                                                     borderValue=255)
+                    img2_transformed = cv2.warpAffine(
+                        img2_rot,
+                        M_trans,
+                        (w2, h2),
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=255,
+                    )
                     
                     # 計算相似度
                     similarity = self._fast_rotation_match(img1_gray, img2_transformed)
@@ -2164,7 +2319,8 @@ class SealComparator:
         best_offset_x: int,
         best_offset_y: int,
         rotation_range: float,
-        translation_range: int
+        translation_range: int,
+        rotation_center: Optional[Tuple[float, float]] = None
     ) -> Tuple[float, int, int, float, Dict[str, Any]]:
         """
         全局驗證搜索：在整個搜索空間進行稀疏採樣，確認沒有遺漏更好的解
@@ -2197,13 +2353,16 @@ class SealComparator:
         }
         
         h2, w2 = img2_gray.shape[:2]
-        center = (w2 // 2, h2 // 2)
+        if rotation_center is not None:
+            center = (float(rotation_center[0]), float(rotation_center[1]))
+        else:
+                center = (w2 // 2, h2 // 2)
         
         # 初始評估當前最佳解
         M_rot = cv2.getRotationMatrix2D(center, best_angle, 1.0)
         img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                 borderMode=cv2.BORDER_CONSTANT,
-                                 borderValue=255)
+                                  borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=255)
         M_trans = np.float32([[1, 0, float(best_offset_x)], [0, 1, float(best_offset_y)]])
         img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
                                          borderMode=cv2.BORDER_CONSTANT,
@@ -2233,51 +2392,55 @@ class SealComparator:
         for angle_offset in np.arange(-sparse_rotation_range, sparse_rotation_range + 1.0, 1.0):
             if early_terminated:
                 break
-                
+
             angle = best_angle + angle_offset
             if angle < -80 or angle > 80:
                 continue
-            
+                
             for dx in range(-sparse_translation_range, sparse_translation_range + 1, 2):
                 if early_terminated:
                     break
                     
                 for dy in range(-sparse_translation_range, sparse_translation_range + 1, 2):
-                    offset_x = best_offset_x + dx
-                    offset_y = best_offset_y + dy
-                    
-                    metrics['verification_samples'] += 1
-                    
-                    # 應用變換（使用緩存）
-                    if angle in rotation_cache:
-                        img2_rot = rotation_cache[angle]
-                    else:
-                        M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
-                        img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                                 borderMode=cv2.BORDER_CONSTANT,
-                                                 borderValue=255)
-                        rotation_cache[angle] = img2_rot
-                    
-                    M_trans = np.float32([[1, 0, float(offset_x)], [0, 1, float(offset_y)]])
-                    img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
-                                                     borderMode=cv2.BORDER_CONSTANT,
-                                                     borderValue=255)
-                    
-                    # 計算相似度
-                    similarity = self._fast_rotation_match(img1_gray, img2_transformed)
-                    
-                    # 如果發現更好的候選（相似度提升超過0.01），記錄它
-                    if similarity > current_best_similarity + 0.01:
-                        candidates.append((angle, offset_x, offset_y, similarity))
-                        metrics['candidates_found'] += 1
-                        no_improvement_count = 0  # 重置計數器
-                    else:
-                        no_improvement_count += 1
-                        if no_improvement_count >= max_no_improvement:
-                            # 提前終止稀疏採樣
-                            early_terminated = True
-                            print(f"全局驗證：連續 {max_no_improvement} 個採樣無改進，提前終止稀疏採樣")
-                            break
+                        offset_x = best_offset_x + dx
+                        offset_y = best_offset_y + dy
+                        
+                        metrics['verification_samples'] += 1
+                        
+                        # 應用變換（使用緩存）
+                        if angle in rotation_cache:
+                            img2_rot = rotation_cache[angle]
+                        else:
+                            M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
+                            img2_rot = cv2.warpAffine(
+                                img2_gray,
+                                M_rot,
+                                (w2, h2),
+                                borderMode=cv2.BORDER_CONSTANT,
+                                borderValue=255,
+                            )
+                            rotation_cache[angle] = img2_rot
+                        
+                        M_trans = np.float32([[1, 0, float(offset_x)], [0, 1, float(offset_y)]])
+                        img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
+                                                          borderMode=cv2.BORDER_CONSTANT,
+                                                          borderValue=255)
+                        
+                        # 計算相似度
+                        similarity = self._fast_rotation_match(img1_gray, img2_transformed)
+                        
+                        # 如果發現更好的候選（相似度提升超過0.01），記錄它
+                        if similarity > current_best_similarity + 0.01:
+                            candidates.append((angle, offset_x, offset_y, similarity))
+                            metrics['candidates_found'] += 1
+                            no_improvement_count = 0  # 重置計數器
+                        else:
+                            no_improvement_count += 1
+                            if no_improvement_count >= max_no_improvement:
+                                # 提前終止稀疏採樣
+                                early_terminated = True
+                                print(f"全局驗證：連續 {max_no_improvement} 個採樣無改進，提前終止稀疏採樣")
+                                break
         
         # 階段2：對候選解進行精細搜索
         # 如果發現候選解，在每個候選解附近進行精細搜索（0.2度旋轉，1像素平移）
@@ -2299,65 +2462,73 @@ class SealComparator:
                     angle = candidate_angle + angle_offset
                     if angle < -80 or angle > 80:
                         continue
-                    
+
+                    # 應用旋轉（使用緩存）
+                    if angle in rotation_cache:
+                        img2_rot = rotation_cache[angle]
+                    else:
+                        M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
+                        img2_rot = cv2.warpAffine(
+                            img2_gray,
+                            M_rot,
+                            (w2, h2),
+                            borderMode=cv2.BORDER_CONSTANT,
+                            borderValue=255,
+                        )
+                        rotation_cache[angle] = img2_rot
+
                     for dx in range(-fine_translation_range, fine_translation_range + 1):
                         for dy in range(-fine_translation_range, fine_translation_range + 1):
                             offset_x = candidate_offset_x + dx
                             offset_y = candidate_offset_y + dy
-                            
+
                             metrics['verification_samples'] += 1
-                            
-                            # 應用變換（使用緩存）
-                            if angle in rotation_cache:
-                                img2_rot = rotation_cache[angle]
-                            else:
-                                M_rot = cv2.getRotationMatrix2D(center, angle, 1.0)
-                                img2_rot = cv2.warpAffine(img2_gray, M_rot, (w2, h2),
-                                                         borderMode=cv2.BORDER_CONSTANT,
-                                                         borderValue=255)
-                                rotation_cache[angle] = img2_rot
-                            
+
                             M_trans = np.float32([[1, 0, float(offset_x)], [0, 1, float(offset_y)]])
-                            img2_transformed = cv2.warpAffine(img2_rot, M_trans, (w2, h2),
-                                                             borderMode=cv2.BORDER_CONSTANT,
-                                                             borderValue=255)
-                            
+                            img2_transformed = cv2.warpAffine(
+                                img2_rot,
+                                M_trans,
+                                (w2, h2),
+                                     borderMode=cv2.BORDER_CONSTANT,
+                                borderValue=255,
+                            )
+
                             # 計算相似度
                             similarity = self._fast_rotation_match(img1_gray, img2_transformed)
-                            
+
                             if similarity > verified_similarity:
                                 verified_similarity = similarity
                                 verified_angle = angle
                                 verified_offset_x = offset_x
                                 verified_offset_y = offset_y
                 
-                # 計算改進幅度
-                improvement = verified_similarity - current_best_similarity
-                metrics['verification_improvement'] = improvement
-                metrics['verification_best_similarity'] = verified_similarity
-                
-                if improvement > 0.001:  # 如果改進超過0.1%，認為找到了更好的解
-                    metrics['is_global_optimal'] = False
-                    print(f"全局驗證：發現更好的解，改進幅度: {improvement:.4f}, "
-                          f"新角度: {verified_angle:.2f}度, 新偏移: ({verified_offset_x}, {verified_offset_y})")
+                    # 計算改進幅度
+                    improvement = verified_similarity - current_best_similarity
+                    metrics['verification_improvement'] = improvement
+                    metrics['verification_best_similarity'] = verified_similarity
+                    
+                    if improvement > 0.001:  # 如果改進超過0.1%，認為找到了更好的解
+                        metrics['is_global_optimal'] = False
+                        print(f"全局驗證：發現更好的解，改進幅度: {improvement:.4f}, "
+                              f"新角度: {verified_angle:.2f}度, 新偏移: ({verified_offset_x}, {verified_offset_y})")
+                    else:
+                        metrics['is_global_optimal'] = True
+                        print(f"全局驗證：確認當前解為全局最優，相似度: {verified_similarity:.4f}")
                 else:
-                    metrics['is_global_optimal'] = True
-                    print(f"全局驗證：確認當前解為全局最優，相似度: {verified_similarity:.4f}")
+                    # 候選解改進幅度不夠，跳過精細搜索
+                    verified_angle = candidate_angle
+                    verified_offset_x = candidate_offset_x
+                    verified_offset_y = candidate_offset_y
+                    verified_similarity = candidate_similarity
+                    improvement = verified_similarity - current_best_similarity
+                    metrics['verification_improvement'] = improvement
+                    metrics['verification_best_similarity'] = verified_similarity
+                    metrics['fine_search_skipped'] = True
+                    print(f"全局驗證：候選解改進幅度 {improvement:.4f} 未達精細搜索閾值 {improvement_threshold:.2f}，跳過精細搜索")
             else:
-                # 候選解改進幅度不夠，跳過精細搜索
-                verified_angle = candidate_angle
-                verified_offset_x = candidate_offset_x
-                verified_offset_y = candidate_offset_y
-                verified_similarity = candidate_similarity
-                improvement = verified_similarity - current_best_similarity
-                metrics['verification_improvement'] = improvement
-                metrics['verification_best_similarity'] = verified_similarity
-                metrics['fine_search_skipped'] = True
-                print(f"全局驗證：候選解改進幅度 {improvement:.4f} 未達精細搜索閾值 {improvement_threshold:.2f}，跳過精細搜索")
-        else:
-            # 沒有發現更好的候選解，確認當前解為全局最優
-            metrics['is_global_optimal'] = True
-            print(f"全局驗證：未發現更好的候選解，確認當前解為全局最優，相似度: {verified_similarity:.4f}")
+                # 沒有發現更好的候選解，確認當前解為全局最優
+                metrics['is_global_optimal'] = True
+                print(f"全局驗證：未發現更好的候選解，確認當前解為全局最優，相似度: {verified_similarity:.4f}")
         
         metrics['verification_time'] = time.time() - verification_start
         
@@ -2403,7 +2574,7 @@ class SealComparator:
         center_medium = (medium_w2 // 2, medium_h2 // 2)
         M_rot = cv2.getRotationMatrix2D(center_medium, best_angle, 1.0)
         img2_rot_medium = cv2.warpAffine(img2_medium, M_rot, (medium_w2, medium_h2),
-                                         borderMode=cv2.BORDER_CONSTANT,
+                                     borderMode=cv2.BORDER_CONSTANT,
                                          borderValue=255)
         
         # 使用多方法模板匹配估算平移
@@ -2423,7 +2594,7 @@ class SealComparator:
         return offset_x_refined, offset_y_refined, confidence
     
     def _refine_translation_fine(
-        self,
+        self, 
         img1_gray: np.ndarray,
         img2_gray: np.ndarray,
         angle: float,
